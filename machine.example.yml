@@ -1,0 +1,3 @@
+# Copy to machine.yml (untracked) and list the domains to install on this machine.
+domains:
+  - global

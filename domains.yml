@@ -1,0 +1,19 @@
+# Domains this repo can install. A domain holds what no single repo owns: global assets, or the shared assets of a
+# workspace that spans many repos. Single-repo projects keep their Claude config in their own repo.
+#
+# Each domain's folder mirrors its target folder: folders are created, files are linked one at a time, and skill
+# folders (anything containing SKILL.md) are linked whole.
+#
+# Which domains install on a given machine is set in machine.yml (untracked; copy machine.example.yml).
+#
+# Per-domain keys:
+#   source    folder in this repo
+#   target    folder on disk the domain mirrors (sessions launch here)
+#   prefix    required name prefix for the domain's rules, skills and agents (global has none)
+#   ignore    optional globs, relative to source, that are never linked
+#   external  optional links to sources outside this repo: {source: <path>, target: <path relative to target>}
+
+domains:
+  global:
+    source: global
+    target: ~/.claude

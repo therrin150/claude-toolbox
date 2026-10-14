@@ -1,0 +1,18 @@
+# Per-machine installer files
+machine.yml
+.install-state.json
+install-plan.txt
+
+# Claude Code writes permission approvals here; never commit one
+**/settings.local.json
+
+# IntelliJ
+.idea/
+*.iml
+
+# Python
+__pycache__/
+
+# OS clutter
+.DS_Store
+Thumbs.db
