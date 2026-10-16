@@ -46,12 +46,9 @@ Pick the one that fits the change:
    calling `billing-ingest`, which is contributing to our stuck order problem." Further changes follow as short
    imperative sentences, one per change: "Upgrade to Jackson 3. Collapse validation properties into single
    `application.yml`. Replace lingering `LegacyClient` usage with `CatalogRestClient`."
-2. **Problem first.** How things behave today or what went wrong, then the fix: "It was confusing to QA (and the rest
-   of us at first) receiving an empty 200 response from the service. … Improve the `OrderStatusSqsExceptionHandler`
-   logic to return an error response body that better communicates what happened."
-3. **Narrative.** For an investigation, a design choice or a trade-off: what was needed, what was tried, what was
-   chosen and why. "I opted to create `PlatformRestClientConfig` instead, to avoid any future breaking API changes."
-4. **That ^.** When the subject says everything, the body can be just "That ^." or "That ^, and …" plus the one extra
+2. **Narrative.** For a design choice or a trade-off: what was needed, the options, what was chosen and why. "I opted
+   to create `PlatformRestClientConfig` instead, to avoid any future breaking API changes."
+3. **That ^.** When the subject says everything, the body can be just "That ^." or "That ^, and …" plus the one extra
    thing.
 
 ### What Goes In
@@ -68,32 +65,38 @@ and most messages use only the first one or two.
   "Sonar fixes."
 - **An unrelated fix** that rode along gets its own paragraph, opening with "Also": "Also found that we were setting
   the wrong resource type on the predict message."
-- **Caveats a reviewer or deployer must act on,** in a paragraph opening "Note that": deploy order, a merge hold, a
-  local rebuild step, something deliberately left in place ("Note that I did NOT yet drop the DynamoDB table."). An
-  FYI nobody has to act on (a new deprecation warning in a consumer, an unused method kept) is not a caveat.
-- **Follow-up,** one sentence at most, and only when it explains a half-finished state or a dependency on another repo:
-  "`gatekeeper` will need to be updated to set this flag when creating a `submission`."
+- **A merge or deploy prerequisite,** in a paragraph opening "Note that": a deploy order, a merge hold, a local rebuild
+  step. Only what merging or deploying this commit safely depends on (see "What Stays Out").
 - **Tests** by what they cover: "Add a validation test to exercise the `/evaluate` endpoint." Say where something was
   tested by hand only when the change is risky and the reviewer would want to know ("Tested this locally in
   `assemble-legal`, `predict`, and `person`"). Never report a test run's pass/fail.
-- **Numbers** when they're the reason: before and after ("down from 1.5-2.5s to about 250-350ms"), or the capacity
-  math behind a setting.
+- **Numbers** when they're the reason, such as the capacity math behind a setting.
 - **Credit and decisions:** "Per Sam, …", "Per discussion, …", "After discussing with Sam, …", "as requested by
-  Jordan", "Riley ran into an issue where …".
+  Jordan".
 - **An invitation to push back** when the change makes a call another dev owns: "See inline comments, and please let
   me know if I'm wrong."
+
+### What Stays Out
+
+These win over anything above, including the examples.
+
+- **No history or incident detail.** No account of how the code behaved before or what went wrong, and no dates,
+  counts, services or symptoms from the incident or investigation that prompted the story. The body says what the
+  change does now and why, in present terms. The story and the vault keep the record.
+- **No rollout consequences or follow-up.** Nothing about what dashboards, alerts or failure rates will show once it
+  ships, what to check before consumers pick it up, work left for later, or other to-dos. No "Note that" paragraph for
+  any of these.
 
 ## Tone
 
 - **First person is normal in a commit body,** an exception to `voice.md`. Use "I" for Allen's own decisions,
   attempts and findings ("I tried to", "I opted for", "I looked at X, but", "I think this'll be more useful"), and "we"
   for the team and the system.
-- **Own a mistake plainly and move on:** "My bad.", "I missed having to check …", "I messed up a line of config for
-  dev."
+- **Own a mistake plainly and move on,** in a few words ("My bad."), without recounting what went wrong.
 - **Be candid about confidence.** "should", "hopefully" and "I'm pretty sure" when that's the truth. State it flatly
   when it's verified.
-- **Wry asides are welcome in moderation:** a trailing ellipsis on an exasperated aside ("which we thought we already
-  did..."), or a dry parenthetical. One per message at most, and never in the subject.
+- **Wry asides are welcome in moderation:** a trailing ellipsis on an exasperated aside, or a dry parenthetical. One
+  per message at most, and never in the subject.
 - **Plain prose.** No headings, no bullet lists (a short numbered list only for steps that happen in sequence), no
   bold, no em dashes. A caveat is a plain "Note that", not a `**Note:**` label.
 
@@ -123,12 +126,6 @@ These show shape and density, not wording to copy.
 > Upgrade to Jackson 3. Collapse validation properties into single `application.yml`. Replace lingering `LegacyClient`
 > usage with `CatalogRestClient`.
 
-**Problem first** (`PROJ-1557 improve exception handling`):
-
-> It was confusing to QA (and the rest of us at first) receiving an empty 200 response from the service. Only when we
-> looked at logs did we realize something was indeed wrong. Improve the `OrderStatusSqsExceptionHandler` logic to return
-> an error response body that better communicates what happened with the request.
-
 **A decision** (`PROJ-4050 rest client config`):
 
 > I needed to make the connection pool configurable to support the `fulfillment-worker` overhaul. It would have required
@@ -139,7 +136,7 @@ These show shape and density, not wording to copy.
 > I looked at using `@ConfigurationProperties` to build the config object automatically, but the dynamic key makes that
 > real tricky. Leaving things mostly as-was for now.
 
-**Longer, with a caveat** (`PROJ-1609 migrate summary data to redis`):
+**Longer, with a design reason** (`PROJ-1609 migrate summary data to redis`):
 
 > Due to hot partition throttling on the reporting table under heavy load, we decided to move the summary data, which
 > represents a fraction of the report data and is pretty much just incremented counts, out of DynamoDB and into Redis.
@@ -148,15 +145,11 @@ These show shape and density, not wording to copy.
 >
 > See `OrderSummaryCacheRepository` for the details on this, which replaces the DynamoDB `OrderSummaryRepository`. I
 > tried to do it as "drop-in-replacement" as possible, but this also ended up cleaning up quite a bit of related code.
->
-> Note that I did NOT yet drop the DynamoDB table. I decided to leave it in place so as to not pull the rug out from
-> under the existing reporting services. I'll pull the table out soon.
 
 **A mistake** (`PROJ-3915 disable legacy tasks in prod`):
 
-> I disabled the legacy tasks everywhere BUT prod... My bad. The tasks are now disabled in prod, too.
+> Disable the legacy tasks in prod, too. My bad.
 
 **A consumer bump** (`PROJ-4109 update dependencies`):
 
-> Update to latest `platform-common` with the interceptor change. Let's see if it makes any noticeable difference over
-> the JVM arg we added yesterday.
+> Update to latest `platform-common` with the interceptor change.
