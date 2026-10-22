@@ -30,3 +30,5 @@ Slack is looser than a ticket. It reads like talking to the team, not like relea
 - Say what the change means for us, in everyday words, rather than cataloguing what the diff does. One idea per
   sentence. Don't stack three fixes into a clause list.
 - Keep the specifics a reviewer needs (the service, the behavior that changes) and drop the rest. The PR has the detail.
+- A PR announcement is one very brief sentence that ends with a period. No Jira key, and no parenthetical asides (an
+  exception to "Everywhere"). Open with the change itself, never a softener ("Just", "Real quick").
