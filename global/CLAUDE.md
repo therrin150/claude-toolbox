@@ -20,3 +20,6 @@ question gets a one-line answer. Lead with the conclusion, then evidence — nev
 **Priority when cutting.** Findings, file paths with line numbers, exact commands, error text, and caveats that change
 my decision survive the cut. Concision means deleting words, not withholding facts: if forced to choose, drop the
 explanation and keep the fact.
+
+**No next-step box.** Never put a question or buttons in the end-of-turn wrap-up (omit `ask` and `actions`); send the
+recap only. If I need to decide something, ask it as the last line of your message and I'll type my answer.
