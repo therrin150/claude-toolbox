@@ -3,8 +3,8 @@
 Allen's commit message conventions, drawn from his own commits written before he used any commit skill (June 2025 to
 August 2026). The examples are invented, but they keep the shape and density of the real ones. It overrides the calling
 skill's defaults for what a subject and body say, how long they run and how they sound. Mechanics stay with the skill:
-the Jira key, a required body (it becomes the PR description), one message per repo, unwrapped paragraphs, and no
-trailers.
+the Jira key when the change has one, a required body (it becomes the PR description), one message per repo, unwrapped
+paragraphs, and no trailers.
 
 ## Voice
 
@@ -13,11 +13,12 @@ and body, with one exception for commits (see "Tone").
 
 ## Subject
 
-`<KEY> <phrase>`. Lowercase after the key, except names that carry their own case: acronyms (`SQS`, `DTO`, `TTL`,
-`NPE`), products (Jackson, Dynatrace, Redis) and class or enum names as spelled (`OrderHydrator`, `NOT_SHIPPABLE`).
-No backticks and no period.
+`<KEY> <phrase>`, or just `<phrase>` for a change with no ticket (tooling and skill tweaks often have none; never
+invent a key or ask for one). Lowercase after the key, except names that carry their own case: acronyms (`SQS`, `DTO`,
+`TTL`, `NPE`), products (Jackson, Dynatrace, Redis) and class or enum names as spelled (`OrderHydrator`,
+`NOT_SHIPPABLE`). No backticks and no period.
 
-- **Length:** 2–6 words after the key, usually 3. About 25–50 characters in all.
+- **Length:** 2–6 words after the key (or in all, with no key), usually 3. About 25–50 characters in all.
 - **Two shapes,** roughly two to one:
   - imperative verb + object: `fix duplicate lookup call`, `stop swallowing ingest failures`, `remove legacy-profiling`
   - a noun phrase naming the change: `hydrator overhaul`, `rest client config`, `order status race condition`
