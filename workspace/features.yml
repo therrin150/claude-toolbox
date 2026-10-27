@@ -1,0 +1,52 @@
+# Which parts of the workspace domain need a feature. install.py installs a listed path into a workspace only when
+# that workspace's .claude/toolbox.local.yml lists the feature under `features`; anything unlisted always installs.
+#
+# Format: {<feature>: [paths relative to workspace/]}. A path names a file, or a folder and everything under it (a
+# skill folder, say: .claude/skills/lock-local-services). A path listed under more than one feature needs all of them.
+# Dropping a feature from a workspace's config and re-syncing removes those links, like any stale link. A template
+# (a .tmpl file, rendered rather than linked) is listed by its own name, suffix included.
+#
+# Example:
+#   services-lock:
+#     - .claude/skills/lock-local-services
+#     - .claude/skills/unlock-local-services
+#     - .claude/toolbox/bin/lock.py
+
+intellij:
+  - .claude/skills/intellij-open-worktree
+
+services-lock:
+  - .claude/agents/services-runner.md
+  - .claude/skills/lock-local-services
+  - .claude/skills/run-integration-tests
+  - .claude/skills/start-local-services
+  - .claude/skills/stop-local-services
+  - .claude/skills/unlock-local-services
+  - .claude/toolbox/bin/services_lock.py
+
+review-ui:
+  - .claude/skills/local-review-ui
+
+worktrees:
+  - .claude/skills/git-worktrees
+
+pr:
+  - .claude/skills/gh-create-pull-request
+  - .claude/skills/gh-merge-pull-request
+
+tasks:
+  - .claude/rules/ticket-docs.md
+  - .claude/skills/create-defect
+  - .claude/skills/create-tickets
+  - .claude/skills/propose-tickets
+  - .claude/skills/work-task
+
+jira:
+  - .claude/agents/jira-filer.md.tmpl
+
+jira-sprints:
+  - .claude/skills/jira-find-current-sprint
+
+dispatcher:
+  - .claude/skills/work-tasks
+  - .claude/toolbox/bin/dispatch.py

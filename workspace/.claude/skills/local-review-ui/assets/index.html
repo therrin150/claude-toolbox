@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Local Review</title>
+  <script>
+    try {
+      var saved = localStorage.getItem("lrui-theme");
+      if (saved === "light" || saved === "dark") document.documentElement.dataset.theme = saved;
+    } catch (e) {}
+  </script>
+  <link rel="stylesheet" href="/assets/app.css">
+</head>
+<body>
+  <div id="app"></div>
+  <script src="/assets/highlight.js"></script>
+  <script src="/assets/app.js"></script>
+</body>
+</html>

@@ -60,17 +60,17 @@ and most messages use only the first one or two.
 - **The why,** nearly always. A lead sentence, or a clause with "because", "so that" or "in order to". Leave it out
   rather than invent one.
 - **The names that matter,** in backticks: the central classes, services, queues, enum values, tables, endpoints and
-  properties. Short service names (`predict`, `gatekeeper`, `task-manager`) are fine. Don't enumerate every file
+  properties. Short service names (`orders`, `billing`, `fulfillment-worker`) are fine. Don't enumerate every file
   touched.
 - **Ancillary work** as one terse trailing sentence: "Update `rest-client` and Bruno files.", "Update dependencies.",
   "Sonar fixes."
 - **An unrelated fix** that rode along gets its own paragraph, opening with "Also": "Also found that we were setting
-  the wrong resource type on the predict message."
+  the wrong order type on the fulfillment message."
 - **A merge or deploy prerequisite,** in a paragraph opening "Note that": a deploy order, a merge hold, a local rebuild
   step. Only what merging or deploying this commit safely depends on (see "What Stays Out").
-- **Tests** by what they cover: "Add a validation test to exercise the `/evaluate` endpoint." Say where something was
+- **Tests** by what they cover: "Add a validation test to exercise the `/checkout` endpoint." Say where something was
   tested by hand only when the change is risky and the reviewer would want to know ("Tested this locally in
-  `assemble-legal`, `predict`, and `person`"). Never report a test run's pass/fail.
+  `orders`, `billing`, and `inventory`"). Never report a test run's pass/fail.
 - **Numbers** when they're the reason, such as the capacity math behind a setting.
 - **Credit and decisions:** "Per Sam, …", "Per discussion, …", "After discussing with Sam, …", "as requested by
   Jordan".

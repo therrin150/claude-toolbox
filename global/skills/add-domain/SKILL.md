@@ -5,8 +5,9 @@ description: Create a new domain in a Claude toolbox repo — the domains.yml en
 
 # Add Domain
 
-A domain holds what no single repo owns: global assets, or the shared assets of a workspace that spans many repos
-(like `~/_workspace`). A single-repo project keeps its Claude config in its own repo instead.
+A domain holds what no single repo owns: global assets, the shared assets of a workspace that spans many repos, or a
+project's glue (its domain knowledge, under its prefix) that extends the generic tools. A single-repo project that
+tracks its own `.claude/` keeps its conventions there instead, and needs no domain.
 
 Creates the domain; it doesn't install it. `/install-domain <name>` does that afterwards. Never commits.
 
@@ -18,8 +19,8 @@ Creates the domain; it doesn't install it. `/install-domain <name>` does that af
 
 Ask for anything missing:
 
-- **name**: kebab-case, e.g. `rights-management`.
-- **prefix**: two or three lowercase letters plus a hyphen, e.g. `rm-`. Every rule, skill and agent in the domain
+- **name**: kebab-case, e.g. `data-platform`.
+- **prefix**: two or three lowercase letters plus a hyphen, e.g. `dp-`. Every rule, skill and agent in the domain
   carries it.
 - **target**: the folder the domain mirrors, where Allen launches its sessions, e.g. `~/_workspace`.
 
@@ -27,16 +28,25 @@ Ask for anything missing:
 
 ### 1. Choose the toolbox
 
-Toolboxes are folders at `~/*/*/` containing both `domains.yml` and `install.py`. Work domains go in the work toolbox
-(today `~/_workspace/asudweeks-claude-toolbox`, which stays with the job); everything else goes in
-`~/_personal/claude-toolbox`. Ask if it isn't obvious.
+The installer lives in `claude-toolbox` (resolve `~/.claude/skills/add-domain` and go up three levels). Every other
+toolbox is a repo with a `domains.yml` and its domain folders, listed under `toolboxes:` in `claude-toolbox`'s
+`machine.yml`. Pick one, and ask if it isn't obvious:
+
+- **`claude-toolbox`**: Allen's own, generic tools only. Nothing proprietary goes here: no employer, product or team
+  names, host names, org or repo names, channel ids, Jira sites or ids. Generic workspace tools belong in its
+  per-workspace `workspace` domain, gated by `workspace/features.yml`, not in a new domain.
+- **Another toolbox** (such as the work toolbox, which stays with the job): glue for that toolbox's workspace.
+- **A project's own repo**: glue that belongs with the project but must install outside its tracked `.claude/` (for
+  example into the folder above it). If the repo has no `domains.yml` yet, create one with the same header comment as
+  `claude-toolbox`'s, and add the repo to `toolboxes:` in `claude-toolbox`'s `machine.yml`.
 
 ### 2. Check before creating
 
 Stop and explain if any of these fail:
 
-- The name isn't already a domain in any toolbox, and the prefix isn't used by any domain in any toolbox.
-- No other domain in any toolbox already targets the same folder.
+- The name isn't already a domain in `claude-toolbox` or any listed toolbox (the installer rejects a name defined
+  twice), and the prefix isn't used by any domain in them.
+- No other domain already targets the same folder.
 - The target folder exists. If it doesn't, ask whether to create it.
 
 Then check whether the target is a git repo that already tracks its own Claude config (`git ls-files` for
@@ -58,10 +68,10 @@ the domain must not ship a file the project tracks (a domain `CLAUDE.md` would c
       prefix: <prefix>
   ```
 
-- **`README.md`**: add the domain to the Layout block.
+- **`README.md`**: add the domain to the toolbox's Layout block, if it has one.
 
 ### 4. Hand off
 
-Run the installer's preview from the toolbox to confirm the new entry parses (`python3 install.py`, or `py -3` on
+Run the installer's preview from `claude-toolbox` to confirm the new entry parses (`python3 install.py`, or `py -3` on
 Windows). Report what was created, and that `/install-domain <name>` installs it on this machine. Remind Allen that the
 toolbox changes are uncommitted.

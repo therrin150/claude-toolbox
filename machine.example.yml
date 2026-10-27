@@ -1,3 +1,15 @@
-# Copy to machine.yml (untracked) and list the domains to install on this machine.
+# Copy to machine.yml (untracked) and list what to install on this machine.
+
+# Domains to install, from this repo's domains.yml or any toolbox's below. Per-workspace domains need no entry here:
+# they install into every workspace listed below.
 domains:
   - global
+
+# Other toolbox repos whose domains.yml this installer also reads; each domain's source resolves against its own repo.
+toolboxes: []
+#  - ~/path/to/another-claude-toolbox
+
+# Workspaces the per-workspace domains install into. Each needs a .claude/toolbox.local.yml; /setup-workspace writes it
+# and adds the workspace here.
+workspaces: []
+#  - ~/path/to/workspace

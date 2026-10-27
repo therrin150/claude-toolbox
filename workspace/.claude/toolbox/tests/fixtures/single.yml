@@ -1,0 +1,27 @@
+version: 1
+features: [tasks, worktrees, pr]
+
+workspace:
+  name: pantry
+  layout: single
+  default_branch: master
+  areas:
+    pantry-app: {format: ./gradlew spotlessApply, unit: ./gradlew test, start: docker compose up -d}
+    pantry-web: {unit: npm test}
+
+user:
+  handle: jdoe
+  name: Jordan
+
+vault:
+  path: vault
+
+tracker:
+  kind: vault
+  key_prefix: PT
+
+pr:
+  required: false
+
+extensions:
+  work-task: [.claude/extensions/release-wait.md]

@@ -1,0 +1,40 @@
+version: 1
+features: [tasks, worktrees, pr, services-lock]
+
+workspace:
+  name: fleet
+  layout: nested
+  worktrees: .worktrees
+  areas:
+    "*": {format: make format, unit: make test, integration: make it}
+    billing: {unit: make unit-fast}
+
+user:
+  handle: jdoe
+  name: Jordan
+
+vault:
+  path: ~/Notes/Work
+  tasks: Tasks
+  discussions: Discussions
+
+tracker:
+  kind: jira
+  jira:
+    site: example.atlassian.net
+    cloud_id: 00000000-0000-0000-0000-000000000000
+    project: FLT
+    account: jdoe@example.com
+    fields: {acceptance_criteria: customfield_example}
+
+git:
+  org: example-org
+
+pr:
+  review_required: true
+  announce:
+    channel: C00000000
+
+work:
+  dispatch: chips
+  wip: {jordan: 2}

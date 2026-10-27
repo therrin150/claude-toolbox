@@ -1,0 +1,116 @@
+# A workspace's toolbox config. Copy to <workspace>/.claude/toolbox.local.yml (never tracked), or let /setup-workspace
+# write it. Values in <angle brackets> are placeholders. Keys marked "default" may be left out; the rest are required,
+# some only in the case their comment names. Credentials never go here: they stay in Keychain or 1Password.
+#
+# Check it with `.claude/toolbox/bin/toolbox.py config validate`; the installer renders .claude/rules/toolbox-config.md
+# from it on every sync.
+
+version: 1
+
+# What installs: a generic skill, rule or agent gated on a feature (workspace/features.yml) installs only when its
+# feature is listed here. Ungated items always install.
+features: [tasks, worktrees, pr, services-lock, review-ui, dispatcher]
+
+workspace:
+  name: <name>                     # shown in the generated rule
+  layout: single                   # single: one repo at the root | nested: a folder of repos
+  default_branch: main             # default: main
+  worktrees: .worktrees            # relative to the workspace root; default: .worktrees
+  # Folders with their own build (single) or repos (nested: discovered, so list one only to override it). Every
+  # command is optional. "*" is the fallback for any area without its own, such as every repo of a nested workspace.
+  areas:
+    <area>:
+      format: <command>            # formats the area's changed files
+      unit: <command>              # runs its unit tests
+      integration: <command>       # runs its integration tests against running services
+      start: <command>             # starts its local services
+      stop: <command>              # stops them
+      files: []                    # globs (from the area's folder) of the changed files that make its checks apply,
+                                   # such as ["*.java", "pom.xml"]; default: any changed file in the area
+    "*":
+      unit: <command>
+
+user:
+  handle: <handle>                 # branch prefix, and the GitHub account gh should be signed in as
+  name: <Name>                     # its lowercase is your value for a task record's owner (the other is claude)
+
+vault:
+  path: <path>                     # the Obsidian vault: relative to the workspace root, or ~/...
+  tasks: Tasks                     # task records, inside the vault; default: Tasks
+  discussions: Discussions         # discussions, inside the vault; default: Discussions
+
+tracker:
+  kind: vault                      # vault: the task record is the ticket | jira | none: no keys
+  key_prefix: <PREFIX>             # vault: required, the counter's keys are <PREFIX>-<n>; jira: default the project
+  jira:                            # required when kind is jira
+    mcp_server: atlassian          # tools are mcp__<server>__<tool>; default: atlassian
+    site: <site>.atlassian.net
+    cloud_id: <uuid>
+    project: <KEY>
+    account: <email>               # checked before every Jira write
+    fields:                        # Jira field ids by name, from the discover tool
+      acceptance_criteria: customfield_<n>
+      sprint: customfield_<n>
+    write_back: none               # none | transitions: move the issue as the task's status changes; default: none
+    statuses:                      # transitions: the Jira status each task status moves the issue to; default:
+      in-progress: In Progress     # in-progress In Progress, review In Review, done Done (todo and stopped move
+      review: In Review            # nothing unless named)
+      done: Done
+    issue_types:                   # the Jira issue type each draft type files as; default: Story, Epic, Bug
+      story: Story
+      epic: Epic
+      defect: Bug
+    labels: []                     # labels every filed issue gets; default: none
+    estimates: false               # file a draft's `estimate` as the issue's original estimate; default: false
+    board: <n>                     # the board whose sprints jira-find-current-sprint reads; default: any board
+
+git:
+  branch: "{handle}/{key}-{slug}"  # {key} and its separator drop out when a task has none; default as shown
+  org: <org>                       # the GitHub org or user that owns the repos
+
+pr:
+  required: true                   # false: a change may go straight to the default branch; default: true
+  review_required: false           # default: false
+  merge: squash                    # squash | merge | rebase; default: squash
+  wait_for_ci: true                # default: true
+  bots: []                         # logins whose PR comments work-task's watcher ignores, beyond GitHub apps and
+                                   # *[bot] accounts, such as a code-scanning integration; default: none
+  announce:                        # leave out for no announcement
+    mcp_server: slack              # default: slack
+    channel: <channel id>          # the id, not the name
+
+services:
+  agent_lock_minutes: 30           # a session's local-services lock expires after this; default: 30
+  manual_lock_minutes: 60          # a lock you take by hand; default: 60
+
+work:
+  session_model: sonnet            # model for the sessions /work-tasks starts; default: sonnet
+  dispatch: direct                 # direct: start sessions | chips: propose them; default: direct
+  wip:                             # tasks in progress at once, per owner; default: claude 5, you 3
+    claude: 5
+    <name>: 3                      # your owner value, user.name in lowercase
+  stages: []                       # task stage values beyond the generic ones (an extension's, such as
+                                   # awaiting-release); default: none
+  dependencies: isolate            # a task whose depends_on aren't done: isolate (work it anyway; overlaps settle at
+                                   # merge) or block (work-task stops); default: isolate
+  extra_fields: {}                 # task-record fields beyond the built-in ones, which tasks.py set and get then take:
+                                   # name -> a list of allowed values, or text; default: none
+    # pending_release: text        # e.g., one an extension writes while a task waits on another's release
+
+# Repos (nested) or areas (single) that other repos or areas build against and pick up as a released version. A task
+# that changes one runs work-task's shared-library cycle first (publish, merge, wait for the default branch's CI run
+# to release it), then the consumers cycle. Leave out for one cycle per task.
+shared_libraries:
+  names: []                        # repo names (nested) or areas from workspace.areas (single); default: none
+  update:                          # required with names: how each consumer checkout picks up a release, one of
+    command: <command>             # run in the consumer checkout; {libraries} is the released libraries' names
+    skill: <skill>                 # a skill the session runs on the consumer checkout
+
+verify:
+  ignore_bumps: []                 # dependency names (or prefixes ending in *) whose version bumps the change-verifier
+                                   # doesn't flag as out of scope, such as libraries a team updates in lockstep; default: none
+
+# Glue docs that replace or add to a generic skill's sections, per skill, relative to the workspace root. See
+# .claude/toolbox/references/extensions.md.
+extensions:
+  work-task: [.claude/extensions/<extension>.md]

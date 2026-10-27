@@ -1,0 +1,171 @@
+{
+  "issues": {
+    "nodes": [
+      {
+        "id": "900012",
+        "self": "https://api.atlassian.com/ex/jira/00000000-test-4000-8000-000000000001/rest/api/3/issue/900012",
+        "key": "ACME-12",
+        "fields": {
+          "summary": "Show Pantry Shelf Counts",
+          "issuetype": {
+            "id": "1",
+            "name": "User Story"
+          },
+          "status": {
+            "name": "Ready",
+            "statusCategory": {
+              "id": 2,
+              "key": "new",
+              "name": "To Do"
+            }
+          },
+          "parent": {
+            "id": "900010",
+            "key": "ACME-10",
+            "fields": {
+              "summary": "Pantry Shelves",
+              "issuetype": {
+                "id": "3",
+                "name": "Epic"
+              }
+            }
+          },
+          "description": "Households can't see how full a shelf is.\n\nAdd a `count` to each shelf on `GET /shelves`.",
+          "customfield_54321": {
+            "version": 1,
+            "type": "doc",
+            "content": [
+              {
+                "type": "paragraph",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Scenario: Shelf with Items",
+                    "marks": [
+                      {
+                        "type": "strong"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "paragraph",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "GIVEN a shelf holding "
+                  },
+                  {
+                    "type": "text",
+                    "text": "3",
+                    "marks": [
+                      {
+                        "type": "code"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "text",
+                    "text": " items"
+                  },
+                  {
+                    "type": "hardBreak"
+                  },
+                  {
+                    "type": "text",
+                    "text": "WHEN the shelves are listed"
+                  },
+                  {
+                    "type": "hardBreak"
+                  },
+                  {
+                    "type": "text",
+                    "text": "THEN its "
+                  },
+                  {
+                    "type": "text",
+                    "text": "count",
+                    "marks": [
+                      {
+                        "type": "code"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "text",
+                    "text": " is 3"
+                  }
+                ]
+              }
+            ]
+          },
+          "customfield_54322": [
+            {
+              "id": 777,
+              "name": "Sprint 4",
+              "state": "active",
+              "boardId": 55
+            }
+          ],
+          "labels": [
+            "acme-backlog"
+          ],
+          "issuelinks": [
+            {
+              "id": "1",
+              "type": {
+                "id": "10",
+                "name": "Blocks",
+                "inward": "is blocked by",
+                "outward": "blocks"
+              },
+              "inwardIssue": {
+                "key": "ACME-11",
+                "fields": {
+                  "summary": "Add Shelf Model"
+                }
+              }
+            },
+            {
+              "id": "2",
+              "type": {
+                "id": "10",
+                "name": "Blocks",
+                "inward": "is blocked by",
+                "outward": "blocks"
+              },
+              "outwardIssue": {
+                "key": "ACME-13",
+                "fields": {
+                  "summary": "Sort Shelves"
+                }
+              }
+            },
+            {
+              "id": "3",
+              "type": {
+                "id": "11",
+                "name": "Relates",
+                "inward": "relates to",
+                "outward": "relates to"
+              },
+              "inwardIssue": {
+                "key": "ACME-9",
+                "fields": {
+                  "summary": "Pantry Setup"
+                }
+              }
+            }
+          ]
+        },
+        "webUrl": "https://acme-test.atlassian.net/browse/ACME-12"
+      }
+    ]
+  },
+  "context": {
+    "atlassianAccountId": "000000:test-account",
+    "cloudId": "00000000-test-4000-8000-000000000001",
+    "toolName": "getJiraIssue"
+  }
+}

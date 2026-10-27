@@ -1,19 +1,37 @@
-# Domains this repo can install. A domain holds what no single repo owns: global assets, or the shared assets of a
-# workspace that spans many repos. Single-repo projects keep their Claude config in their own repo.
+# Domains this repo can install. A domain holds what no single repo owns: global assets, the shared assets of a
+# workspace that spans many repos, or the generic tools installed into every workspace. A project's own conventions
+# stay in its own repo.
 #
 # Each domain's folder mirrors its target folder: folders are created, files are linked one at a time, and skill
 # folders (anything containing SKILL.md) are linked whole.
 #
-# Which domains install on a given machine is set in machine.yml (untracked; copy machine.example.yml).
+# Which domains install on a given machine is set in machine.yml (untracked; copy machine.example.yml), which also
+# lists other toolbox repos whose domains.yml this installer reads, and the workspaces per-workspace domains go into.
 #
 # Per-domain keys:
 #   source    folder in this repo
-#   target    folder on disk the domain mirrors (sessions launch here)
+#   target    folder on disk the domain mirrors (sessions launch here), or per-workspace: installed into every
+#             workspace machine.yml lists that has a .claude/toolbox.local.yml, gated by the source's features.yml,
+#             with the workspace's generated .claude/rules/toolbox-config.md. Its features.yml is never linked, and
+#             each *.tmpl file is rendered from the workspace's config to its name without the suffix, not linked.
 #   prefix    required name prefix for the domain's rules, skills and agents (global has none)
 #   ignore    optional globs, relative to source, that are never linked
 #   external  optional links to sources outside this repo: {source: <path>, target: <path relative to target>}
+#
+# Top-level keys beside `domains`, read by the global ship-toolbox-change skill:
+#   ship           how a change to this repo lands: `pr` (a branch and a merged PR, the default) or `direct` (a push
+#                  straight to the default branch)
+#   branch_prefix  names a new branch in `pr` mode: <prefix>/<subject>; default `toolbox`
+
+ship: direct
 
 domains:
   global:
     source: global
     target: ~/.claude
+  workspace:
+    source: workspace
+    target: per-workspace
+    ignore:
+      # The toolbox scripts' tests and fixtures, run from this repo.
+      - .claude/toolbox/tests

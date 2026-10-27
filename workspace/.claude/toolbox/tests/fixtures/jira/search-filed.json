@@ -1,0 +1,67 @@
+{
+  "issues": {
+    "totalCount": 3,
+    "nodes": [
+      {
+        "id": "900020",
+        "self": "https://api.atlassian.com/ex/jira/00000000-test-4000-8000-000000000001/rest/api/3/issue/900020",
+        "key": "ACME-20",
+        "fields": {
+          "summary": "Pantry Shelves",
+          "issuetype": {
+            "name": "Epic"
+          },
+          "labels": [
+            "acme-backlog"
+          ],
+          "issuelinks": []
+        },
+        "webUrl": "https://acme-test.atlassian.net/browse/ACME-20"
+      },
+      {
+        "id": "900021",
+        "self": "https://api.atlassian.com/ex/jira/00000000-test-4000-8000-000000000001/rest/api/3/issue/900021",
+        "key": "ACME-21",
+        "fields": {
+          "summary": "Add Shelf Model",
+          "issuetype": {
+            "name": "User Story"
+          },
+          "labels": [
+            "acme-backlog"
+          ],
+          "issuelinks": [],
+          "parent": {
+            "key": "ACME-20"
+          }
+        },
+        "webUrl": "https://acme-test.atlassian.net/browse/ACME-21"
+      },
+      {
+        "id": "900022",
+        "self": "https://api.atlassian.com/ex/jira/00000000-test-4000-8000-000000000001/rest/api/3/issue/900022",
+        "key": "ACME-22",
+        "fields": {
+          "summary": "Show Shelves: List",
+          "issuetype": {
+            "name": "User Story"
+          },
+          "labels": [],
+          "issuelinks": [],
+          "parent": {
+            "key": "ACME-20"
+          }
+        },
+        "webUrl": "https://acme-test.atlassian.net/browse/ACME-22"
+      }
+    ],
+    "pageInfo": {
+      "hasNextPage": false
+    }
+  },
+  "context": {
+    "atlassianAccountId": "000000:test-account",
+    "cloudId": "00000000-test-4000-8000-000000000001",
+    "toolName": "searchJiraIssuesUsingJql"
+  }
+}
