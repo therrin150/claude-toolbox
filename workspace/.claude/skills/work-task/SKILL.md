@@ -7,9 +7,12 @@ allowed-tools: Bash(*), Read, Edit, Write, Grep, Glob, Agent, Skill
 # Work Task
 
 **Extensions.** Before anything else, run `.claude/toolbox/bin/toolbox.py config extensions work-task` from the
-workspace root (its absolute path is in the toolbox-config rule) and read every file it lists. Each `##` section of an
-extension names a heading of this skill: follow a `Replaces` section instead of that heading's text, and an `Adds to`
-section after it. If two extensions replace the same heading, stop and ask the user which applies.
+workspace root (its absolute path is in the toolbox-config rule) and read every doc it lists. Each `##` section of a doc
+is a verb and one of this skill's hook ids ("Extension Points" below): at that hook, follow an `add` section after the
+hook's own text and a `replace` section instead of it; for a `skip` section, don't run the step, and list it wherever
+this skill reports its steps as `⏭️ <step>: skipped by <doc>: <reason>`. An added step that fails stops the skill for
+the user, unless its doc says otherwise, and what a step reports goes in this skill's next report. If two docs replace
+or skip the same hook, stop and ask the user which applies.
 
 Drives one task to a merged change, stopping for the user only where a mistake would be hard to undo. The **work id**
 names the task everywhere: its ticket key, else the slug of its summary (the toolbox-config rule's tracker line says
@@ -68,6 +71,7 @@ worktree (the workspace's skills and rules load only from there). `work-tasks` l
   (a branch's, or another checkout's) against local services without the user's go-ahead, and that includes installing
   it into a local build cache so a consumer's build picks it up: parallel sessions share that cache, so one session's
   install silently changes what another's build runs. A checkout's own modules are fine.
+- **Extensions' rules** (hook `ground-rules`) hold for the whole task, like these.
 
 ## STOP Conditions
 
@@ -84,7 +88,9 @@ STOP (record it, notify, explain in a few lines, wait) when:
 - a third attempt of a check fails in any area;
 - testing would need an unreleased build of a shared library against local services (Ground Rules);
 - a lock, worktree, git, publish or watcher step reports something unexpected (`not-owner`, `refused`, `failed`,
-  conflicts) that its skill or script says to report.
+  conflicts) that its skill or script says to report;
+- a step an extension added fails, unless its doc says otherwise;
+- an extension's own condition holds (hook `stop-conditions`).
 
 To record a STOP: `<bin>/tasks.py set <work id> owner=<user> "work_note=<the question, in a line>"` and `<bin>/tasks.py
 log <work id> "STOP: <the question>"` (the owner value is in the toolbox-config rule). Status and stage stay as they
@@ -141,8 +147,8 @@ are, so a resume lands back here. On the user's answer, log it (`tasks.py log <w
 | `stopped` | nothing yet | show `work_note` and ask the user; their answer names the phase |
 
 A `work_note` with `owner` the user's (a STOP still open) is shown and asked about first, whatever the row. A stage
-this table doesn't list comes from an extension, whose section for this heading says where it starts. Paths are
-relative to this skill's folder, `.claude/skills/work-task/`.
+this table doesn't list comes from an extension: its rows (hook `dispatch`) say what to read and where to start. Paths
+are relative to this skill's folder, `.claude/skills/work-task/`.
 
 ## Hand-offs
 
@@ -208,10 +214,36 @@ What each phase resumes from, with nothing from an earlier session:
 
 ## Extension Points
 
-Workspace knowledge (a network check before integration tests, a wait on another task's release, a fix for a known
-local-services failure) lives in extensions, not here. They attach to the headings below, and to "Ground Rules",
-"STOP Conditions" and "Dispatch" above; keep these headings stable, since an extension names them exactly and
-`toolbox-doctor` checks they still exist. The phase files follow each one at the step that names it.
+Workspace knowledge (a scan before the review stop, a network check before integration tests, a wait on another
+task's release) lives in extension docs (`.claude/extensions/README.md`), not here. Each hook has a fixed id, named at
+its step as `hook <id>`; rename headings freely, never an id. The `###` sections below are the longer defaults.
+
+| Id | Runs | Default | Verbs |
+|---|---|---|---|
+| `ground-rules` | "Ground Rules" above, for the whole task | those rules | add |
+| `stop-conditions` | "STOP Conditions" above | those conditions | add |
+| `dispatch` | "Dispatch" above: rows for an extension's own stages | that table | add |
+| `before-first-cycle` | `work.md` "Before the First Cycle", once on a fresh start: after the record and its context are loaded, before any worktree | nothing | add |
+| `plan-the-cycles` | `work.md` "Before the First Cycle", step 4 | "### Plan the cycles" | add, replace |
+| `after-implementing` | `work.md` "Each Cycle", after step 2, before format and tests | nothing | add |
+| `format` | `work.md` "Each Cycle", step 3 | `run_tests.py format` | add, skip |
+| `unit-tests` | `work.md` "Each Cycle", step 4 | `run-unit-tests` | add, skip |
+| `before-integration-tests` | `work.md` "Each Cycle", step 5, before the first runner | "### Before integration tests" | add |
+| `integration-tests` | `work.md` "Each Cycle", step 5 | `services-runner` brackets | add, skip |
+| `blocked-bracket` | `work.md` "Each Cycle", step 5: a runner's `blocked` result | "### A blocked bracket" | add, replace |
+| `code-review` | `work.md` "Each Cycle", step 6 | `/code-review` | add, skip |
+| `verify` | `work.md` "Each Cycle", step 6 | `verify-change` | add, skip |
+| `review-checks` | `work.md` "Each Cycle", step 6, beside `/code-review` and `verify-change`; findings join the triage | nothing | add |
+| `needs-a-release` | `other-tasks.md` "Needs a Release": the task needs another task's release | "### Needs a release" | add, replace |
+| `before-publishing` | `merge.md` "Publish", after stop 2's approval, before `publish.py` | nothing | add |
+| `after-the-merge` | `merge.md` "Merge", step 3 | "### After the merge" | add |
+| `before-done` | `merge.md` "Done", after the cleanup (`publish.py` has set `status=done`), before the done line and "Usage" | nothing | add |
+
+Built-in steps (`format`, `unit-tests`, `integration-tests`, `code-review`, `verify`) take `add` and `skip`, never
+`replace`, since replacing one would bypass its record updates. A skipped step is listed at both stops beside the
+skipped checks (`work.md`, "Which Checks Apply"), and an `add` on a skipped step still runs. What an added step reports
+goes on the next stop's Testing list (`code-review.md`), and an added step that fails is a STOP unless its doc says
+otherwise.
 
 ### Plan the cycles
 

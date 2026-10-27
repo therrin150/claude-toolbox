@@ -24,4 +24,4 @@ pr:
   required: false
 
 extensions:
-  work-task: [.claude/extensions/release-wait.md]
+  disabled: [old-release-wait.md]

@@ -7,9 +7,12 @@ allowed-tools: Bash(*), Read, Grep, Glob, Agent
 # Verify Change
 
 **Extensions.** Before anything else, run `.claude/toolbox/bin/toolbox.py config extensions verify-change` from the
-workspace root (its absolute path is in the toolbox-config rule) and read every file it lists. Each `##` section of an
-extension names a heading of this skill: follow a `Replaces` section instead of that heading's text, and an `Adds to`
-section after it. If two extensions replace the same heading, stop and ask the user which applies.
+workspace root (its absolute path is in the toolbox-config rule) and read every doc it lists. Each `##` section of a doc
+is a verb and one of this skill's hook ids ("Extension Points" below): at that hook, follow an `add` section after the
+hook's own text and a `replace` section instead of it; for a `skip` section, don't run the step, and list it wherever
+this skill reports its steps as `⏭️ <step>: skipped by <doc>: <reason>`. An added step that fails stops the skill for
+the user, unless its doc says otherwise, and what a step reports goes in this skill's next report. If two docs replace
+or skip the same hook, stop and ask the user which applies.
 
 A second pair of eyes that didn't watch the work happen. Its value comes from what it **doesn't** know: it gets the
 requirement and the diff, and has to judge the change on its own.
@@ -51,11 +54,20 @@ That's the whole point.
 
 ### 2. Spawn the verifier
 
-Use the `Agent` tool (`subagent_type: change-verifier`, `run_in_background: false`). The prompt is only the inputs
-file's path, plus the task text when there's no task record, plus any extra checks an extension adds to this step. The
-agent reads the file itself; it can't run git, so everything it needs from git is in that file.
+Hook `spawn-the-verifier`. Use the `Agent` tool (`subagent_type: change-verifier`, `run_in_background: false`). The
+prompt is only the inputs file's path, plus the task text when there's no task record, plus any extra checks an
+extension adds here. The agent reads the file itself; it can't run git, so everything it needs from git is in that file.
 
 ### 3. Report
 
 Pass the verifier's findings through as they are: no rewording, no softening, no extra commentary. If you disagree with
 a finding, add one line saying so and why, under it. Don't fix anything here; the caller decides.
+
+## Extension Points
+
+Hooks for extension docs (`.claude/extensions/README.md`). Only checks join the verifier's prompt: never a summary of
+the change, which would cost the verifier its independence.
+
+| Id | Runs | Default | Verbs |
+|---|---|---|---|
+| `spawn-the-verifier` | "2. Spawn the verifier": extra checks for the verifier's prompt | the inputs file's path, plus the task text without a record | add |

@@ -110,7 +110,7 @@ verify:
   ignore_bumps: []                 # dependency names (or prefixes ending in *) whose version bumps the change-verifier
                                    # doesn't flag as out of scope, such as libraries a team updates in lockstep; default: none
 
-# Glue docs that replace or add to a generic skill's sections, per skill, relative to the workspace root. See
-# .claude/toolbox/references/extensions.md.
+# Extension docs hook a project's steps into a generic skill. Every doc in .claude/extensions/ is found by the skill
+# its `extends:` names, so none is listed here; see .claude/extensions/README.md. `disabled` leaves some out.
 extensions:
-  work-task: [.claude/extensions/<extension>.md]
+  disabled: []                     # doc file names in .claude/extensions/, such as sonar-scan.md; default: none

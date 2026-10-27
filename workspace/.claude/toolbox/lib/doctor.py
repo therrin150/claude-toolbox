@@ -8,7 +8,8 @@ Each check returns {"check", "status", "detail"}, status `ok`, `fail` or `skip` 
   rendered    every file the installer renders from a template (`.tmpl`) is there and what the config renders today
   gh          gh is signed in, as the GitHub account user.handle names
   vault       the vault, tasks and discussions folders exist
-  extensions  every listed extension doc parses, and every skill heading it names is in that skill's SKILL.md
+  extensions  every doc in .claude/extensions/ (but the README) parses, and each section's verb and hook id are
+              ones the extended skill's Extension Points table allows; at most one doc replaces or skips a hook
 
 What needs an MCP tool (the Jira account and cloud id, the Slack channel) is the toolbox-doctor skill's: `mcp_checks()`
 lists what it should check. The installer is the claude-toolbox repo's install.py, found from this file's resolved
@@ -17,6 +18,7 @@ location; TOOLBOX_INSTALLER names another (for tests).
 
 from __future__ import annotations
 
+import difflib
 import json
 import os
 import re
@@ -149,36 +151,55 @@ def headings(path: Path) -> set[str]:
 
 
 def check_extensions(cfg: config.Config) -> dict:
-    listed = cfg.data["extensions"]
-    if not any(listed.values()):
-        return result("extensions", "ok", "none listed")
-    problems, count = [], 0
-    skills: dict[str, set | None] = {}
-    for skill, docs in listed.items():
-        for doc in docs:
-            path = cfg.root / doc
-            if not path.is_file():
-                problems.append(f"extensions.{skill}: {doc} doesn't exist")
-                continue
-            sections, parse_problems = extensions.parse(path.read_text(encoding="utf-8"))
-            problems.extend(f"{doc}: {problem}" for problem in parse_problems)
-            for section in sections:
-                count += 1
-                where = f"{doc} line {section.line}"
-                if section.skill not in listed or doc not in listed[section.skill]:
-                    problems.append(f"{where}: changes {section.skill}, but extensions.{section.skill} doesn't list "
-                                    f"{doc}, so {section.skill} never reads it")
-                if section.skill not in skills:
-                    skill_md = cfg.root / ".claude" / "skills" / section.skill / "SKILL.md"
-                    skills[section.skill] = headings(skill_md) if skill_md.is_file() else None
-                found = skills[section.skill]
-                if found is None:
-                    problems.append(f"{where}: {section.skill} isn't installed in this workspace")
-                elif section.heading not in found:
-                    problems.append(f"{where}: {section.skill} has no heading {section.heading!r}")
+    docs = extensions.docs(cfg.root)
+    names = {path.name for path in docs}
+    disabled = cfg.disabled_extensions
+    problems = [f"extensions.disabled: {name} isn't in {extensions.FOLDER}/" for name in disabled if name not in names]
+    if not docs and not problems:
+        return result("extensions", "ok", "none")
+    tables: dict[str, tuple | None] = {}
+    claims: dict[tuple[str, str], list[str]] = {}  # (skill, hook) -> the replace and skip sections that take it over
+    count = 0
+    for path in docs:
+        doc = extensions.load(path)
+        problems.extend(f"{doc.name}: {problem}" for problem in doc.problems)
+        if doc.extends is None or doc.name in disabled:  # a disabled doc is checked for form only
+            continue
+        skill = doc.extends
+        if skill not in tables:
+            skill_md = cfg.root / ".claude" / "skills" / skill / "SKILL.md"
+            tables[skill] = extensions.points(skill_md.read_text(encoding="utf-8")) if skill_md.is_file() else None
+        if tables[skill] is None:
+            problems.append(f"{doc.name}: extends {skill}, which isn't installed in this workspace (disable the doc "
+                            "with extensions.disabled if that's intended)")
+            continue
+        points, table_problems = tables[skill]
+        problems.extend(f"{doc.name}: {skill}'s Extension Points: {problem}" for problem in table_problems)
+        if not points:
+            if not table_problems:
+                problems.append(f"{doc.name}: {skill} has no Extension Points table, so it can't be extended")
+            continue
+        allowed = {point.id: point.verbs for point in points}
+        for section in doc.sections:
+            count += 1
+            where = f"{doc.name} line {section.line}"
+            if section.hook not in allowed:
+                near = difflib.get_close_matches(section.hook, allowed, n=1)
+                hint = f"; did you mean {near[0]!r}?" if near else f"; its hooks are {', '.join(allowed)}"
+                problems.append(f"{where}: {skill} has no hook {section.hook!r}{hint}")
+            elif section.verb not in allowed[section.hook]:
+                problems.append(f"{where}: {skill}'s hook {section.hook!r} allows {', '.join(allowed[section.hook])}, "
+                                f"not {section.verb}")
+            elif section.verb in ("replace", "skip"):
+                claims.setdefault((skill, section.hook), []).append(f"{where} ({section.verb})")
+    for (skill, hook), sections in claims.items():
+        if len(sections) > 1:
+            problems.append(f"{skill}'s hook {hook!r} is replaced or skipped more than once: {', '.join(sections)}; "
+                            "keep one, or disable a doc with extensions.disabled")
     if problems:
         return result("extensions", "fail", problems)
-    return result("extensions", "ok", f"{count} section(s), every heading found")
+    off = f", {len(disabled)} disabled" if disabled else ""
+    return result("extensions", "ok", f"{len(docs)} doc(s){off}, {count} section(s), every hook allowed")
 
 
 # ---------------------------------------------------------------------------------------------------------------------

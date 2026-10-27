@@ -54,8 +54,9 @@ Wording changes stay here; a code change goes back through the checks and both s
 Per worktree: path, `Diff` (from `worktrees.py changes`), the **final** `Testing` list, `Changed since review` and
 `Pending` when they apply, and the commit message. No `Changed` or `Decided alone` lines: the user saw those at stop 1.
 The Testing list names every check that ran against the final code, in order, with its result in a few words, and lists
-one that didn't run as skipped with the reason (`work.md`, "Which Checks Apply"). Never list one as passing without
-having run it in this cycle against the final code. Each worktree gets its own `###` section, and a `---` rule goes
+one that didn't run as skipped with the reason, an extension's skips included (`work.md`, "Which Checks Apply"), and
+gives each step an extension added that reported something a line of its own. Never list one as passing without having
+run it in this cycle against the final code. Each worktree gets its own `###` section, and a `---` rule goes
 before every worktree section and before the announcement.
 
 ## The User's Answer

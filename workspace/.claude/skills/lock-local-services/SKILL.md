@@ -7,9 +7,12 @@ disable-model-invocation: true
 # Lock Local Services
 
 **Extensions.** Before anything else, run `.claude/toolbox/bin/toolbox.py config extensions lock-local-services` from
-the workspace root (its absolute path is in the toolbox-config rule) and read every file it lists. Each `##` section of
-an extension names a heading of this skill: follow a `Replaces` section instead of that heading's text, and an `Adds to`
-section after it. If two extensions replace the same heading, stop and ask the user which applies.
+the workspace root (its absolute path is in the toolbox-config rule) and read every doc it lists. Each `##` section of a
+doc is a verb and one of this skill's hook ids ("Extension Points" below): at that hook, follow an `add` section after
+the hook's own text and a `replace` section instead of it; for a `skip` section, don't run the step, and list it
+wherever this skill reports its steps as `⏭️ <step>: skipped by <doc>: <reason>`. An added step that fails stops the
+skill for the user, unless its doc says otherwise, and what a step reports goes in this skill's next report. If two docs
+replace or skip the same hook, stop and ask the user which applies.
 
 One lock per name, shared by Claude and the user: two sessions on the same name wait for each other, and different
 names run in parallel. All lock logic lives in one script; never create, edit or delete lock files by hand:
@@ -35,15 +38,15 @@ need it. Lock times are the config's `services.agent_lock_minutes` and `services
 
 ### Lock name
 
-The lock is named after what shares ports. In a `single` workspace, leave the name out: it is the workspace's name, one
-lock for the whole stack. In a `nested` workspace, pass the repo's folder name (also for a worktree of it), so
-different repos run in parallel.
+Hook `lock-name`. The lock is named after what shares ports. In a `single` workspace, leave the name out: it is the
+workspace's name, one lock for the whole stack. In a `nested` workspace, pass the repo's folder name (also for a
+worktree of it), so different repos run in parallel.
 
 ### Acquire
 
-`services_lock.py acquire [name] --task <work id> --worktree <path> --ports <ports>`, plus `--manual` when the user runs
-it by hand. Pass every app and management port the services use: a takeover stops what the entry lists, and `stop` frees
-those ports.
+Hook `acquire`. `services_lock.py acquire [name] --task <work id> --worktree <path> --ports <ports>`, plus `--manual`
+when the user runs it by hand. Pass every app and management port the services use: a takeover stops what the entry
+lists, and `stop` frees those ports.
 
 | Exit | `result` | Meaning | Do |
 |---|---|---|---|
@@ -53,9 +56,9 @@ those ports.
 
 ### Wait for the lock
 
-Don't poll in the conversation. Run `services_lock.py wait [name] --max-seconds 540` in the foreground with a Bash
-timeout of 600000. Exit 3 means still held: run it again. After 45 minutes of waiting in total, stop waiting and tell
-the user whose lock it is (`owner`: task, worktree, expiry).
+Hook `wait-for-the-lock`. Don't poll in the conversation. Run `services_lock.py wait [name] --max-seconds 540` in the
+foreground with a Bash timeout of 600000. Exit 3 means still held: run it again. After 45 minutes of waiting in total,
+stop waiting and tell the user whose lock it is (`owner`: task, worktree, expiry).
 
 - Exit 0, `free` or `expired`: acquire again. An expired lock is taken over by that acquire; say so in your report.
 
@@ -71,3 +74,14 @@ the session wakes when it exits.
 - **Never take over or break a lock any other way.** The script's takeover is the only one, and only for an expired
   lock.
 - `services_lock.py status [name]` lists the workspace's locks, `services_lock.py mine --task <work id>` a task's.
+
+## Extension Points
+
+Hooks for extension docs (`.claude/extensions/README.md`). All are `add` only: the script's lock logic is never
+replaced.
+
+| Id | Runs | Default | Verbs |
+|---|---|---|---|
+| `lock-name` | "Lock name" | the workspace's name (`single`) or the repo's (`nested`) | add |
+| `acquire` | "Acquire", before `services_lock.py acquire` | the acquire alone | add |
+| `wait-for-the-lock` | "Wait for the lock", while another session holds it | the bounded `wait` loop | add |

@@ -24,7 +24,7 @@ Read these skills first and follow them; they hold the commands, ports, health c
 3. `.claude/skills/stop-local-services/SKILL.md`, section "Stop and release" only (with your token)
 4. `.claude/skills/lock-local-services/SKILL.md` (lock results and rules)
 
-Each skill's **Extensions** paragraph applies to you too: read the extensions it lists. The scripts are in
+Each skill's **Extensions** paragraph applies to you too: read the extension docs it lists. The scripts are in
 `.claude/toolbox/bin/`; the toolbox-config rule gives the workspace's absolute path, so use it if your shell is in a
 worktree. Where a skill says to ask the user, report to them, notify them, or stop, you stop the bracket cleanly (see
 "Always") and return `blocked` with the reason instead. You can't reach the user; your caller can.

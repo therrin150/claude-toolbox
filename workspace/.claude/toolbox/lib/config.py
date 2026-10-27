@@ -171,7 +171,10 @@ SCHEMA = Section({
     "verify": Section({
         "ignore_bumps": ListOf(str),  # dependency names whose version bumps verify-change doesn't count as scope creep
     }),
-    "extensions": MapOf(ListOf(str)),  # skill -> extension docs, relative to the workspace root
+    # Extension docs are found in .claude/extensions/ (lib/extensions.py); `disabled` names the ones to leave out
+    "extensions": Section({
+        "disabled": ListOf(str),  # doc file names in .claude/extensions/, `.md` optional
+    }),
 })
 
 DEFAULT_WIP = {"claude": 5, "user": 3}
@@ -267,10 +270,10 @@ def _check_values(data: dict, errors: list[str]) -> None:
     worktrees = data["workspace"]["worktrees"]
     if isinstance(worktrees, str) and _absolute(worktrees):
         errors.append(f"workspace.worktrees: must be relative to the workspace root; got {worktrees!r}")
-    for skill, docs in data["extensions"].items():
-        for index, doc in enumerate(docs):
-            if isinstance(doc, str) and _absolute(doc):
-                errors.append(f"extensions.{skill}[{index}]: must be relative to the workspace root; got {doc!r}")
+    for index, doc in enumerate(data["extensions"]["disabled"]):
+        if isinstance(doc, str) and ("/" in doc or not doc.strip()):
+            errors.append(f"extensions.disabled[{index}]: must be a doc's file name in .claude/extensions/, like "
+                          f"sonar-scan.md; got {doc!r}")
 
     name = data["user"]["name"]
     if isinstance(name, str):
@@ -561,9 +564,17 @@ class Config:
 
     # Extensions
 
+    @property
+    def disabled_extensions(self) -> list[str]:
+        """The extension docs `extensions.disabled` leaves out, as file names."""
+        import extensions
+        return [extensions.doc_name(entry) for entry in self.data["extensions"]["disabled"]]
+
     def extensions(self, skill: str) -> list[Path]:
-        """The extension docs listed for a skill, as absolute paths. See references/extensions.md."""
-        return [self.root / doc for doc in self.data["extensions"].get(skill, [])]
+        """The extension docs in .claude/extensions/ that extend a skill, in name order, minus the disabled ones, as
+        absolute paths. See .claude/extensions/README.md."""
+        import extensions
+        return extensions.discover(self.root, skill, self.disabled_extensions)
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -598,6 +609,8 @@ def render_rule(config: Config, workspace: Path | None = None) -> str:
         f"- **Slack:** {_slack_text(config)}",
         *_task_lines(config),
         f"- **Features:** {', '.join(f'`{f}`' for f in config.features) or 'none'}.",
+        f"- **Extensions:** a project's steps hooked into these skills, as docs in "
+        f"`{config.root / '.claude/extensions'}`; its `README.md` says how to write one.",
     ]
     return "\n".join(lines) + "\n"
 

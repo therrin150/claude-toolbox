@@ -6,11 +6,6 @@ allowed-tools: Bash(*), Read, Write, Grep, Glob, ToolSearch, PushNotification
 
 # Pull Request
 
-**Extensions.** Before anything else, run `.claude/toolbox/bin/toolbox.py config extensions gh-create-pull-request` from
-the workspace root (its absolute path is in the toolbox-config rule) and read every file it lists. Each `##` section of
-an extension names a heading of this skill: follow a `Replaces` section instead of that heading's text, and an `Adds to`
-section after it. If two extensions replace the same heading, stop and ask the user which applies.
-
 Open PRs for committed work and announce them. The only git write besides the push is `git rebase` onto the latest
 `origin/<default>` when it has new code commits. Never an amend, a branch switch or a stash, and a force-push only
 as `--force-with-lease` against the exact sha seen, only after that rebase rewrote a branch the remote already had.

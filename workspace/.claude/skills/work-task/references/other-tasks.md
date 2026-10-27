@@ -14,5 +14,5 @@ usually merge cleanly.
 ## Needs a Release
 
 **This task needs something the other task will publish** (a library version, an image, a schema in a shared
-registry) that doesn't exist yet. Follow SKILL.md "### Needs a release", which an extension may replace with a
-workspace's own release wait.
+registry) that doesn't exist yet. Hook `needs-a-release`: by default SKILL.md "### Needs a release", which an
+extension may replace with a workspace's own release wait.

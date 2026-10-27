@@ -5,7 +5,8 @@ Commands:
   config show [dotted.key]     The config with defaults applied, or one value, as JSON
   config validate              {"ok": true, "config": <path>} or {"ok": false, "errors": [...]}
   config render                The generated rule's text (.claude/rules/toolbox-config.md)
-  config extensions <skill>    The extension docs listed for a skill, as absolute paths in a JSON list
+  config extensions <skill>    The extension docs in .claude/extensions/ that extend a skill (minus
+                               extensions.disabled), in name order, as absolute paths in a JSON list
   doctor                       Check the workspace's toolbox setup (see lib/doctor.py): JSON, one line per check, and
                                the MCP checks the toolbox-doctor skill makes; exit 1 when any check isn't ok
 
@@ -40,7 +41,7 @@ def main(argv: list[str] | None = None) -> int:
     show.add_argument("key", nargs="?")
     actions.add_parser("validate", help="check the config against the schema")
     actions.add_parser("render", help="print the generated rule")
-    extensions = actions.add_parser("extensions", help="list a skill's extension docs")
+    extensions = actions.add_parser("extensions", help="list the extension docs that extend a skill")
     extensions.add_argument("skill")
     commands.add_parser("doctor", help="check the workspace's toolbox setup")
     args = parser.parse_args(argv)

@@ -154,13 +154,14 @@ class Note(ReviewCase):
         self.assertIn("Keep the literal, or name the constant?", listed)
         self.assertIn("Name it.", listed)
 
-    def test_note_on_the_old_side_reads_the_base_and_a_line_outside_the_diff_warns(self):
+    def test_note_on_the_old_side_reads_the_base_and_a_line_outside_the_diff_needs_no_warning(self):
         self.open()
         _, out, _ = self.cli("note", "DM-7", "--repo", "app", "--path", "App.java", "--line", "2", "--side", "old",
                              "--body", "Why 1?")
         self.assertEqual(self.comments("DM-7")["comments"][0]["lineText"], "  int one() { return 1; }")
+        # The page widens the diff to show a line outside its context, so the note is placed without a warning.
         _, out, _ = self.cli("note", "DM-7", "--repo", "app", "--path", "App.java", "--line", "30", "--body", "Far.")
-        self.assertIn("isn't in the diff's context", json.loads(out)["warning"])
+        self.assertNotIn("warning", json.loads(out))
 
     def test_note_rejects_an_unknown_repo_a_bad_range_and_an_empty_body(self):
         self.open()

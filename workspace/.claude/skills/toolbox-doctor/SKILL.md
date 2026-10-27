@@ -1,6 +1,6 @@
 ---
 name: toolbox-doctor
-description: Check this workspace's toolbox setup in one pass - the config, the install, the generated rule and rendered files, gh's account, the vault folders and every extension's headings, then the Jira and Slack MCP connections and accounts - and report each check with its fix. Read-only. Use when Allen says "toolbox doctor", "check the toolbox", "is the toolbox set up right", after /setup-workspace, or when a toolbox skill or script behaves as if the setup were wrong.
+description: Check this workspace's toolbox setup in one pass - the config, the install, the generated rule and rendered files, gh's account, the vault folders and every extension doc's hooks, then the Jira and Slack MCP connections and accounts - and report each check with its fix. Read-only. Use when Allen says "toolbox doctor", "check the toolbox", "is the toolbox set up right", after /setup-workspace, or when a toolbox skill or script behaves as if the setup were wrong.
 allowed-tools: Bash(*), Read
 ---
 
@@ -30,7 +30,7 @@ the checks below. Exit 1 when any check isn't `ok`.
 | `rendered` | a file rendered from a template (`jira-filer`'s agent, say) is missing, out of date with the config or no longer wanted, or the template names a config key the config lacks | `/install-domain`; for a missing key, add it to the config (the `jira` feature needs `tracker.jira`) |
 | `gh` | `gh` isn't signed in, or not as `user.handle` | `gh auth login` / `gh auth switch`, or correct `user.handle` |
 | `vault` | the vault, tasks or discussions folder is missing | create it, or correct `vault.*` |
-| `extensions` | a listed doc is missing or malformed, a skill it names isn't installed or lacks the heading, or the doc isn't listed under every skill it changes | rename the extension's heading to the skill's current one, or list the doc under that skill |
+| `extensions` | a doc in `.claude/extensions/` lacks `type: extension` or `extends:`, extends a skill that isn't installed or has no Extension Points table, has a `##` heading that isn't `<add\|replace\|skip> <hook id>`, names a hook the skill doesn't have (the nearest is suggested) or a verb the hook doesn't allow, or replaces or skips a hook another doc does; or `extensions.disabled` names a doc that isn't there | fix the doc against the skill's Extension Points table (`.claude/extensions/README.md`), or name it in `extensions.disabled` |
 
 ### MCP checks
 

@@ -109,31 +109,97 @@ class DoctorTest(unittest.TestCase):
         code, checks, _ = self.doctor()
         self.assertEqual(code, 0)
 
-    def test_extension_anchor_gone(self):
-        doc = self.ws / ".claude" / "extensions" / "release-wait.md"
-        doc.parent.mkdir(parents=True)
-        doc.write_text("# Release Wait\n\n"
-                       "## Adds to run-unit-tests's \"### Run\"\n\nWait for the release first.\n\n"
-                       "## Replaces run-unit-tests's \"### Gone\"\n\nThis heading was renamed away.\n")
-        self.config["extensions"] = {"run-unit-tests": [".claude/extensions/release-wait.md"]}
+    def write_doc(self, name: str, skill: str | None, *sections: str, type_: str | None = "extension") -> Path:
+        """An extension doc: frontmatter, a title on line 6, then each `<verb> <id>` section, the first on line 8."""
+        front = ([f"type: {type_}"] if type_ else []) + ([f"extends: {skill}"] if skill else [])
+        while len(front) < 2:
+            front.append("note: padding")  # keep the title on line 6
+        lines = ["---", *front, "---", "", "# Doc", ""]
+        for section in sections:
+            lines += [f"## {section}", "", "Do the thing.", ""]
+        path = self.ws / ".claude" / "extensions" / name
+        path.write_text("\n".join(lines))
+        return path
+
+    def config_extensions(self, skill: str) -> list[str]:
+        script = self.ws / ".claude" / "toolbox" / "bin" / "toolbox.py"
+        proc = subprocess.run([sys.executable, str(script), "config", "extensions", skill], cwd=self.ws,
+                              capture_output=True, text=True, env=self.env)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return json.loads(proc.stdout)
+
+    def test_readme_is_installed_and_never_a_doc(self):
+        readme = self.ws / ".claude" / "extensions" / "README.md"
+        self.assertTrue(readme.is_symlink())
+        self.assertEqual(readme.resolve(), REPO / "workspace" / ".claude" / "extensions" / "README.md")
+        self.assertIn(str(readme), (self.toolbox / "install-plan.txt").read_text())
+        self.assertIn("/.claude/extensions/README.md", (self.ws / ".git" / "info" / "exclude").read_text())
+        self.assertLess(len(readme.read_text().splitlines()), 100)  # a one-screen guide
+        self.assertEqual(self.config_extensions("work-task"), [])
+        _, checks, _ = self.doctor()
+        self.assertEqual(checks["extensions"], {"check": "extensions", "status": "ok", "detail": "none"})
+        rule = (self.ws / ".claude" / "rules" / "toolbox-config.md").read_text()
+        self.assertIn(f"`{self.ws / '.claude/extensions'}`; its `README.md` says how to write one.", rule)
+
+    def test_an_added_check_and_a_skipped_step(self):
+        self.config["features"] = ["tasks"]
         self.write_config()
         self.install()
+        scan = self.write_doc("sonar-scan.md", "work-task", "add review-checks")
+        skip = self.write_doc("no-verify.md", "work-task", "skip verify")
+        self.assertEqual(self.config_extensions("work-task"), [str(skip), str(scan)])
+        self.assertEqual(self.config_extensions("verify-change"), [])
+        code, checks, out = self.doctor()
+        self.assertEqual(code, 0, out)
+        self.assertEqual(checks["extensions"]["detail"], "2 doc(s), 2 section(s), every hook allowed")
+
+        self.write_doc("sonar-scan.md", "work-task", "add review-check")
         code, checks, _ = self.doctor()
         self.assertEqual(code, 1)
-        self.assertEqual(checks["extensions"]["status"], "fail")
-        problems = checks["extensions"]["detail"]
-        self.assertEqual(len(problems), 1, problems)
-        self.assertIn("line 7: run-unit-tests has no heading '### Gone'", problems[0])
+        self.assertEqual(checks["extensions"]["detail"],
+                         ["sonar-scan.md line 8: work-task has no hook 'review-check'; did you mean 'review-checks'?"])
 
-    def test_extension_for_an_unlisted_skill(self):
-        doc = self.ws / ".claude" / "extensions" / "x.md"
-        doc.parent.mkdir(parents=True)
-        doc.write_text("## Adds to run-unit-tests's \"### Run\"\n\nx\n")
-        self.config["extensions"] = {"stop-local-services": [".claude/extensions/x.md"]}
+        self.config["extensions"] = {"disabled": ["sonar-scan"]}  # a disabled doc is checked for form only
         self.write_config()
         self.install()
-        _, checks, _ = self.doctor()
-        self.assertIn("extensions.run-unit-tests doesn't list", checks["extensions"]["detail"][0])
+        self.assertEqual(self.config_extensions("work-task"), [str(skip)])
+        code, checks, out = self.doctor()
+        self.assertEqual(code, 0, out)
+        self.assertEqual(checks["extensions"]["detail"], "2 doc(s), 1 disabled, 1 section(s), every hook allowed")
+
+    def test_every_extension_failure(self):
+        self.config["features"] = ["tasks"]  # work-task installed; start-local-services (services-lock) isn't
+        self.config["extensions"] = {"disabled": ["ghost.md", "disabled-broken"]}
+        self.write_config()
+        self.install()
+        self.write_doc("a-replace.md", "work-task", "replace needs-a-release")
+        self.write_doc("b-replace.md", "work-task", "replace needs-a-release", "replace format")
+        self.write_doc("bad-heading.md", "work-task", "Run the scan")
+        self.write_doc("disabled-broken.md", "start-local-services", "nope")
+        self.write_doc("no-extends.md", None, "add dispatch")
+        self.write_doc("no-table.md", "git-commit", "add run")
+        self.write_doc("no-type.md", "work-task", "add dispatch", type_=None)
+        self.write_doc("typo.md", "work-task", "add review-check")
+        self.write_doc("uninstalled.md", "start-local-services", "add preflight")
+        code, checks, _ = self.doctor()
+        self.assertEqual(code, 1)
+        problems = checks["extensions"]["detail"]
+        self.assertEqual(problems[:2], [
+            "extensions.disabled: ghost.md isn't in .claude/extensions/",
+            "b-replace.md line 12: work-task's hook 'format' allows add, skip, not replace"])
+        self.assertTrue(problems[2].startswith("bad-heading.md: line 8: ") and "isn't `## <add|replace|skip> <hook id>`"
+                        in problems[2], problems[2])
+        self.assertEqual(problems[3:], [
+            "disabled-broken.md: line 8: '## nope' isn't `## <add|replace|skip> <hook id>`",
+            "no-extends.md: frontmatter: no extends; name the one skill this doc extends",
+            "no-table.md: git-commit has no Extension Points table, so it can't be extended",
+            "no-type.md: frontmatter: type must be extension; got None",
+            "typo.md line 8: work-task has no hook 'review-check'; did you mean 'review-checks'?",
+            "uninstalled.md: extends start-local-services, which isn't installed in this workspace (disable the doc "
+            "with extensions.disabled if that's intended)",
+            "work-task's hook 'needs-a-release' is replaced or skipped more than once: a-replace.md line 8 (replace), "
+            "b-replace.md line 8 (replace); keep one, or disable a doc with extensions.disabled",
+        ])
 
     def use_jira(self, server: str) -> None:
         self.config["features"] = ["jira"]

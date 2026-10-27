@@ -70,7 +70,9 @@ skipped checks for its areas (`work.md`, "Which Checks Apply"). No diffs beyond 
 and the user asks for a file's diff in chat when they want it there.
 
 The **Testing** list names every check that actually ran, in order, with its result in a few words: counts, attempts,
-what failed and how it was fixed. Never list one as passing without having run it in this cycle against the code as it
+what failed and how it was fixed. A step an extension added, at any hook, that reported something gets a line of its
+own, by its name (`✅ Sonar scan: no new issues`), and a step an extension skipped is listed as `⏭️ <step>: skipped
+by <doc>: <reason>`. Never list one as passing without having run it in this cycle against the code as it
 stands: after any fix, re-run the unit tests (and integration tests, if they apply) before presenting. Leave out
 `Decided alone`, `Declined`, `Overlaps` and `Pending` when there's nothing to say.
 

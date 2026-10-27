@@ -6,11 +6,6 @@ disable-model-invocation: true
 
 # Unlock Local Services
 
-**Extensions.** Before anything else, run `.claude/toolbox/bin/toolbox.py config extensions unlock-local-services` from
-the workspace root (its absolute path is in the toolbox-config rule) and read every file it lists. Each `##` section of
-an extension names a heading of this skill: follow a `Replaces` section instead of that heading's text, and an `Adds to`
-section after it. If two extensions replace the same heading, stop and ask the user which applies.
-
 Releases the lock taken by `lock-local-services`. It doesn't stop services: `stop-local-services` stops them and then
 releases in one step, which is what agents normally use.
 

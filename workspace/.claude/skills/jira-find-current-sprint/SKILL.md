@@ -5,11 +5,6 @@ description: Resolve the current sprint, the next sprint, or a sprint by name to
 
 # Find Current Sprint
 
-**Extensions.** Before anything else, run `.claude/toolbox/bin/toolbox.py config extensions jira-find-current-sprint`
-from the workspace root (its absolute path is in the toolbox-config rule) and read every file it lists. Each `##`
-section of an extension names a heading of this skill: follow a `Replaces` section instead of that heading's text, and
-an `Adds to` section after it. If two extensions replace the same heading, stop and ask the user which applies.
-
 Resolves a sprint reference to its name, id, state and dates. It never moves an issue or touches a sprint; the only
 thing it writes is its own cache. Other skills call this rather than working sprints out themselves.
 

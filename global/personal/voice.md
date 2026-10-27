@@ -18,7 +18,9 @@ mechanics. This file covers voice only.
 - Include numbers when they drive the decision (current value vs target value). Don't use them as rhetorical evidence.
 - Now and then, a light Star Wars, Star Trek, Lord of the Rings, or Harry Potter reference is welcome. Stay
   professional, and never put humor in a title or subject line.
-- Backtick service, queue, field, enum, table, endpoint, property and class names where the medium renders them.
+- Backtick repository (project), service, queue, field, enum, table, endpoint, property and class names where the medium
+  renders them: `platform-common`, not platform-common. That includes repo names in link text
+  (`` [`platform-common` README] ``), but never inside a URL.
 - Every quoted phrase in this file illustrates a pattern. None is a template or required wording, so vary the phrasing
   naturally and never reuse a quote as a stock line.
 - Never invent facts, and don't add justification the source didn't give. If you infer a cause, mark it as likely.

@@ -7,14 +7,17 @@ allowed-tools: Bash(*), Read, Grep, Glob
 # Start Local Services
 
 **Extensions.** Before anything else, run `.claude/toolbox/bin/toolbox.py config extensions start-local-services` from
-the workspace root (its absolute path is in the toolbox-config rule) and read every file it lists. Each `##` section of
-an extension names a heading of this skill: follow a `Replaces` section instead of that heading's text, and an `Adds to`
-section after it. If two extensions replace the same heading, stop and ask the user which applies.
+the workspace root (its absolute path is in the toolbox-config rule) and read every doc it lists. Each `##` section of a
+doc is a verb and one of this skill's hook ids ("Extension Points" below): at that hook, follow an `add` section after
+the hook's own text and a `replace` section instead of it; for a `skip` section, don't run the step, and list it
+wherever this skill reports its steps as `⏭️ <step>: skipped by <doc>: <reason>`. An added step that fails stops the
+skill for the user, unless its doc says otherwise, and what a step reports goes in this skill's next report. If two docs
+replace or skip the same hook, stop and ask the user which applies.
 
 Every run holds the lock (`lock-local-services`) from before the first service starts until `stop-local-services` stops
 them, so two sessions never run the same services at once. The commands to run are the config's, per area:
 `workspace.areas.<area>.start` and `.stop` (the `"*"` area's when an area has none). A workspace whose services start
-some other way replaces "Start the services" in an extension; the lock steps around it stay.
+some other way replaces hook `start-the-services` in an extension; the lock steps around it stay.
 
 ## Arguments
 
@@ -45,8 +48,8 @@ If no area has a `start` command, report that `workspace.areas.<area>.start` isn
 
 ### Preflight
 
-Nothing by default. A workspace adds its checks here (a container runtime that must be up, a dependency that must not be
-a snapshot) in an extension. A failed check stops the run before the lock is taken.
+Hook `preflight`. Nothing by default. A workspace adds its checks here (a container runtime that must be up, a
+dependency that must not be a snapshot) in an extension. A failed check stops the run before the lock is taken.
 
 ### Take the lock
 
@@ -56,13 +59,13 @@ hold it. Once you hold it, the clock is running: don't stop for the user until `
 
 ### Prepare the checkout
 
-Nothing by default. A workspace adds what must happen inside the lock before the services start (re-installing the
-checkout's own modules so the services run its code, say). If it fails, release
+Hook `prepare-the-checkout`. Nothing by default. A workspace adds what must happen inside the lock before the services
+start (re-installing the checkout's own modules so the services run its code, say). If it fails, release
 (`services_lock.py release [name] --token <token>`), report the error and stop.
 
 ### Start the services
 
-For each area to start, from the area's directory:
+Hook `start-the-services`. For each area to start, from the area's directory:
 
 ```bash
 .claude/toolbox/bin/services_lock.py start [name] --token <token> --area <area> --checkout <area directory> \
@@ -83,8 +86,8 @@ lock, report the port and the PID that holds it (`lsof -nP -iTCP:<port> -sTCP:LI
 
 ### Wait for health
 
-`start` has waited for the ports and URLs it was given. If the services need more (a seeder, a migration), check it here
-and, on failure, show the last 20 lines of the log, then `stop-local-services`.
+Hook `wait-for-health`. `start` has waited for the ports and URLs it was given. If the services need more (a seeder,
+a migration), check it here and, on failure, show the last 20 lines of the log, then `stop-local-services`.
 
 ### Report
 
@@ -101,3 +104,17 @@ Started:
 To stop these services and release the lock:
   /stop-local-services [name] --token <token>
 ```
+
+## Extension Points
+
+Hooks for extension docs (`.claude/extensions/README.md`). The lock steps take none: they keep two sessions apart.
+
+| Id | Runs | Default | Verbs |
+|---|---|---|---|
+| `preflight` | "Preflight", before the lock is taken; a failed check stops the run | nothing | add |
+| `prepare-the-checkout` | "Prepare the checkout", inside the lock, before any service starts | nothing | add |
+| `start-the-services` | "Start the services" | each area's `start` command, through `services_lock.py start` | add, replace |
+| `wait-for-health` | "Wait for health", once every area reports `started` | the ports and URLs `start` waited for | add |
+
+A `replace start-the-services` still records what it starts in the lock (`services_lock.py update [name] --token
+<token> --pids ... --ports ... --stop-cmd ...`), so `stop-local-services` and a takeover can end it.

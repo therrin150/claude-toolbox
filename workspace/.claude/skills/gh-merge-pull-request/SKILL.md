@@ -6,11 +6,6 @@ allowed-tools: Bash(*), Read, Grep, Glob, PushNotification
 
 # Merge Pull Request
 
-**Extensions.** Before anything else, run `.claude/toolbox/bin/toolbox.py config extensions gh-merge-pull-request` from
-the workspace root (its absolute path is in the toolbox-config rule) and read every file it lists. Each `##` section of
-an extension names a heading of this skill: follow a `Replaces` section instead of that heading's text, and an `Adds to`
-section after it. If two extensions replace the same heading, stop and ask the user which applies.
-
 Merge approved PRs and report what landed. Merging is outward-facing and can't be undone once the commit is on the
 default branch, so invoking this skill authorizes the merge **only after Step 2's table has been approved**. The merge
 step writes nothing locally; local branches and worktrees are removed by `publish.py cleanup` (Step 4).

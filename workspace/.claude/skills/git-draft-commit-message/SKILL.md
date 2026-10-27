@@ -6,11 +6,6 @@ allowed-tools: Bash(*), Read, Grep, Glob
 
 # Draft Commit Message
 
-**Extensions.** Before anything else, run `.claude/toolbox/bin/toolbox.py config extensions git-draft-commit-message`
-from the workspace root (its absolute path is in the toolbox-config rule) and read every file it lists. Each `##`
-section of an extension names a heading of this skill: follow a `Replaces` section instead of that heading's text, and
-an `Adds to` section after it. If two extensions replace the same heading, stop and ask the user which applies.
-
 Drafts only. Committing is `git-commit`, with the message Allen approves.
 
 ## Arguments

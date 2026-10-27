@@ -6,11 +6,6 @@ allowed-tools: Bash(*), Read, Write, Grep, Glob
 
 # Commit Changes
 
-**Extensions.** Before anything else, run `.claude/toolbox/bin/toolbox.py config extensions git-commit` from the
-workspace root (its absolute path is in the toolbox-config rule) and read every file it lists. Each `##` section of an
-extension names a heading of this skill: follow a `Replaces` section instead of that heading's text, and an `Adds to`
-section after it. If two extensions replace the same heading, stop and ask the user which applies.
-
 Commit finished work in one or more checkouts and push the branches. Invoking this skill **is** the explicit
 instruction to commit *and push* that the global git rule's "Git Writes" section requires; approving the preview
 covers both, with no second confirmation before the push. It never opens PRs (`gh-create-pull-request`), and never

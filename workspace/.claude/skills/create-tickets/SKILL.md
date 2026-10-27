@@ -5,11 +5,6 @@ description: File a discussion's approved drafts as tasks, the "ready" step afte
 
 # Create Tickets
 
-**Extensions.** Before anything else, run `.claude/toolbox/bin/toolbox.py config extensions create-tickets` from the
-workspace root (its absolute path is in the toolbox-config rule) and read every file it lists. Each `##` section of an
-extension names a heading of this skill: follow a `Replaces` section instead of that heading's text, and an `Adds to`
-section after it. If two extensions replace the same heading, stop and ask the user which applies.
-
 Files the approved drafts in a discussion's `tickets/` folder, so each becomes a task record in the tasks folder with a
 key, its `depends_on` turned into keys, the plan's `epic` set and its `## Proposed Stories` rewritten as links. The
 toolbox-config rule names the tracker; `tasks.py` (in the scripts folder it names) does every vault write, so never

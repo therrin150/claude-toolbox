@@ -37,9 +37,16 @@ import doctor  # noqa: E402
 import extensions  # noqa: E402
 
 CLOUD = "00000000-test-4000-8000-000000000001"
-HOOKS = ["### Plan the cycles", "### Before integration tests", "### A blocked bracket", "### Needs a release",
-         "### After the merge"]
-ANCHORS = ["## Ground Rules", "## STOP Conditions", "## Dispatch", *HOOKS]
+# work-task's hooks (SKILL.md "Extension Points"), in order, with the verbs each allows.
+HOOKS = {
+    "ground-rules": "add", "stop-conditions": "add", "dispatch": "add", "before-first-cycle": "add",
+    "plan-the-cycles": "add, replace", "after-implementing": "add", "format": "add, skip", "unit-tests": "add, skip",
+    "before-integration-tests": "add", "integration-tests": "add, skip", "blocked-bracket": "add, replace",
+    "code-review": "add, skip", "verify": "add, skip", "review-checks": "add", "needs-a-release": "add, replace",
+    "before-publishing": "add", "after-the-merge": "add", "before-done": "add",
+}
+SKILLS = WORKSPACE_DOMAIN / ".claude" / "skills"
+README = WORKSPACE_DOMAIN / ".claude" / "extensions" / "README.md"
 
 
 def sh(cwd: Path, *args: str) -> str:
@@ -414,17 +421,24 @@ class SkillTextTest(unittest.TestCase):
         self.skill = (SKILL / "SKILL.md").read_text()
         self.texts = {p.name: p.read_text() for p in [SKILL / "SKILL.md", *sorted((SKILL / "references").glob("*.md"))]}
 
-    def test_extensions_paragraph_is_the_conventions_word_for_word(self):
-        convention = (TOOLBOX / "references" / "extensions.md").read_text()
-        paragraph = re.search(r"```markdown\n(\*\*Extensions\.\*\*.*?)\n```", convention, re.S).group(1)
-        self.assertIn(paragraph.replace("<skill>", "work-task"), self.skill)
+    def test_hooks_are_declared_and_each_is_named_where_it_runs(self):
+        points, problems = extensions.points(self.skill)
+        self.assertEqual(problems, [])
+        self.assertEqual({p.id: ", ".join(p.verbs) for p in points}, HOOKS)
+        self.assertEqual([p.id for p in points], list(HOOKS))
+        for point in points:
+            named = re.search(r"`([a-z-]+\.md)`", point.runs)
+            where = named.group(1) if named else "SKILL.md"
+            self.assertRegex(" ".join(self.texts[where].split()), rf"[Hh]ook `{point.id}`", f"{point.id} in {where}")
+            self.assertNotIn("replace", point.verbs if point.id in ("format", "unit-tests", "integration-tests",
+                                                                      "code-review", "verify") else ())
 
-    def test_every_anchor_exists_and_an_extension_naming_them_all_parses(self):
-        found = doctor.headings(SKILL / "SKILL.md")
-        self.assertEqual([a for a in ANCHORS if a not in found], [])
-        doc = "\n\n".join(f"## Adds to work-task's \"{a}\"\n\nMore." for a in ANCHORS)
-        sections, problems = extensions.parse(doc)
-        self.assertEqual((len(sections), problems), (len(ANCHORS), []))
+    def test_an_extension_using_every_hook_parses(self):
+        text = "---\ntype: extension\nextends: work-task\n---\n\n" + "\n\n".join(
+            f"## {verb} {hook}\n\nMore." for hook, verbs in HOOKS.items() for verb in verbs.split(", "))
+        doc = extensions.parse(text)
+        self.assertEqual((doc.extends, doc.problems), ("work-task", []))
+        self.assertEqual(len(doc.sections), sum(len(v.split(", ")) for v in HOOKS.values()))
 
     def test_cross_references_resolve(self):
         found = doctor.headings(SKILL / "SKILL.md")
@@ -470,6 +484,45 @@ class SkillTextTest(unittest.TestCase):
         import records
         for stage in records.STAGES:
             self.assertIn(f"`{stage}`", self.skill, stage)
+
+
+class ExtensionPointsTest(unittest.TestCase):
+    """Every skill that takes extensions declares its hooks and carries the README's paragraph; no other does."""
+
+    def test_every_extensible_skill(self):
+        readme = README.read_text()
+        paragraph = re.search(r"```markdown\n(\*\*Extensions\.\*\*.*?)\n```", readme, re.S).group(1)
+        flat = " ".join(paragraph.split())
+        extensible = []
+        for skill_md in sorted(SKILLS.glob("*/SKILL.md")):
+            name = skill_md.parent.name
+            text = skill_md.read_text()
+            points, problems = extensions.points(text)
+            has_paragraph = "**Extensions.**" in text
+            with self.subTest(name):
+                self.assertEqual(problems, [])
+                self.assertEqual(bool(points), has_paragraph, "a table needs the paragraph, and the paragraph a table")
+                if not points:
+                    continue
+                extensible.append(name)
+                self.assertIn(flat.replace("<skill>", name), " ".join(text.split()))
+                if name != "work-task":  # work-task's hooks are named in its phase files (SkillTextTest)
+                    for point in points:
+                        self.assertRegex(text, rf"[Hh]ook `{point.id}`")
+        self.assertEqual(extensible, ["intellij-open-worktree", "lock-local-services", "run-integration-tests",
+                                      "run-unit-tests", "start-local-services", "stop-local-services",
+                                      "verify-change", "work-task"])
+
+    def test_no_old_format_heading_is_left(self):
+        old = re.compile(r"(Replaces|Adds to) [a-z0-9-]+'s \"")
+        repo = WORKSPACE_DOMAIN.parent
+        for path in repo.rglob("*"):
+            if ".git" in path.parts or not path.is_file() or path.suffix not in (".md", ".py", ".yml", ".tmpl"):
+                continue
+            if path == Path(__file__).resolve():
+                continue
+            with self.subTest(str(path.relative_to(repo))):
+                self.assertIsNone(old.search(path.read_text(errors="replace")))
 
 
 if __name__ == "__main__":

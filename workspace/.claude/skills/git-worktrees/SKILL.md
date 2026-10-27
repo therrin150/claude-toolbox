@@ -6,11 +6,6 @@ allowed-tools: Bash(*), Read
 
 # Worktrees
 
-**Extensions.** Before anything else, run `.claude/toolbox/bin/toolbox.py config extensions git-worktrees` from the
-workspace root (its absolute path is in the toolbox-config rule) and read every file it lists. Each `##` section of an
-extension names a heading of this skill: follow a `Replaces` section instead of that heading's text, and an `Adds to`
-section after it. If two extensions replace the same heading, stop and ask the user which applies.
-
 Gives a task (or a change with no ticket) its own checkout of each repo it touches, so parallel tasks, and Allen's own
 work in the main checkouts, never share a working tree. Everything is keyed by the **work id**: the ticket key when
 there is one, else a kebab-case slug of the summary or title. The worktrees live under the config's

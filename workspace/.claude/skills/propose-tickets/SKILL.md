@@ -5,11 +5,6 @@ description: Capture a design discussion as a vault discussion folder, a plan.md
 
 # Propose Tickets
 
-**Extensions.** Before anything else, run `.claude/toolbox/bin/toolbox.py config extensions propose-tickets` from the
-workspace root (its absolute path is in the toolbox-config rule) and read every file it lists. Each `##` section of an
-extension names a heading of this skill: follow a `Replaces` section instead of that heading's text, and an `Adds to`
-section after it. If two extensions replace the same heading, stop and ask the user which applies.
-
 Turns a discussion into a discussion folder in the vault: a plan and a draft per story. The output is a review
 surface. Nothing is filed and no tracker is written; `create-tickets` does that once Allen approves the drafts.
 

@@ -9,7 +9,8 @@ same command again.
 
 ## Publish
 
-On approval only, and only with nothing `Pending`.
+On approval only, and only with nothing `Pending`. First hook `before-publishing` (SKILL.md "Extension Points"):
+whatever an extension does before anything is committed.
 
 **With `pr.required`:** `<bin>/publish.py run <work id> --stop-after open-pr`. It commits every worktree with its
 approved message, rebases onto `origin/<default>` when that has new code, pushes, opens the PRs (appending them to
@@ -76,7 +77,7 @@ Before merging, or if the user says to stop watching, stop the watcher (`TaskSto
    A refused worktree removal (uncommitted files) is a STOP. Report its `warnings`.
 2. With the `review-ui` feature, forget the task's review and its comments, and prune reviews whose repos are gone:
    `python3 .claude/skills/local-review-ui/scripts/review.py forget <work id> --delete-comments`, then `... prune`.
-3. SKILL.md "### After the merge".
+3. Hook `after-the-merge`: by default SKILL.md "### After the merge".
 
 ## Wait for the Release
 
@@ -98,7 +99,8 @@ end your turn. It finds the default branch's runs of each merge commit (the merg
 
 `<worktrees>/<work id>/` must be gone, leftovers included: an IDE can write into a folder after its worktree was
 removed. `<bin>/worktrees.py list <work id>` lists nothing once it is; if the folder is still there, run
-`<bin>/worktrees.py remove <work id>` once more and report anything it refuses. Then say the task is done in one line.
+`<bin>/worktrees.py remove <work id>` once more and report anything it refuses. Then hook `before-done`, and say the
+task is done in one line.
 
 ## Usage
 

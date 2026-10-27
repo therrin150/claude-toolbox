@@ -56,6 +56,16 @@ class Workspace(unittest.TestCase):
     def errors(self, raw: dict) -> list[str]:
         return config.validate(raw)[1]
 
+    def add_docs(self, root: Path) -> None:
+        """Extension docs beside the single fixture's config, whose extensions.disabled names old-release-wait.md."""
+        folder = root / extensions.FOLDER
+        folder.mkdir(parents=True, exist_ok=True)
+        for name, skill in (("release-wait.md", "work-task"), ("old-release-wait.md", "work-task"),
+                            ("a-verify-checks.md", "verify-change")):
+            (folder / name).write_text(f"---\ntype: extension\nextends: {skill}\n---\n\n## add dispatch\n\nx\n")
+        (folder / "README.md").write_text("---\ntype: extension\nextends: work-task\n---\n")  # never a doc
+        (folder / "notes.txt").write_text("not markdown")
+
 
 class LookupTest(Workspace):
     def test_finds_config_at_the_root(self):
@@ -130,9 +140,9 @@ class ValidateTest(Workspace):
         raw["pr"]["required"] = "yes"
         raw["services"] = {"agent_lock_minutes": True}
         raw["features"] = ["tasks", 3]
-        raw["extensions"] = {"work-task": ".claude/extensions/one.md"}
+        raw["extensions"] = {"disabled": "one.md"}
         self.assertEqual(sorted(self.errors(raw)), [
-            "extensions.work-task: must be a list",
+            "extensions.disabled: must be a list",
             "features[1]: must be a string",
             "pr.required: must be true or false, got 'yes'",
             "services.agent_lock_minutes: must be an integer, got True",
@@ -170,11 +180,17 @@ class ValidateTest(Workspace):
     def test_paths_must_be_relative(self):
         raw = self.raw("single")
         raw["workspace"]["worktrees"] = "~/worktrees"
-        raw["extensions"] = {"work-task": ["/etc/extension.md"]}
+        raw["extensions"] = {"disabled": ["../extension.md"]}
         self.assertEqual(sorted(self.errors(raw)), [
-            "extensions.work-task[0]: must be relative to the workspace root; got '/etc/extension.md'",
+            "extensions.disabled[0]: must be a doc's file name in .claude/extensions/, like sonar-scan.md; got "
+            "'../extension.md'",
             "workspace.worktrees: must be relative to the workspace root; got '~/worktrees'",
         ])
+
+    def test_the_old_per_skill_listing_is_refused(self):
+        raw = self.raw("single")
+        raw["extensions"] = {"work-task": [".claude/extensions/release-wait.md"]}
+        self.assertEqual(self.errors(raw), ["extensions.work-task: unknown key"])
 
     def test_wip_owners(self):
         raw = self.raw("single")
@@ -260,8 +276,12 @@ class AccessorTest(Workspace):
         self.assertEqual(loaded.areas(), ["pantry-app", "pantry-web"])
         self.assertEqual(loaded.branch("add-shelves", "PT-4"), "jdoe/PT-4-add-shelves")
         self.assertEqual(loaded.branch("add-shelves"), "jdoe/add-shelves")
+        self.assertEqual(loaded.extensions("work-task"), [])  # no .claude/extensions/ yet
+        self.add_docs(root)
+        self.assertEqual(loaded.disabled_extensions, ["old-release-wait.md"])
         self.assertEqual(loaded.extensions("work-task"), [root / ".claude/extensions/release-wait.md"])
-        self.assertEqual(loaded.extensions("verify-change"), [])
+        self.assertEqual(loaded.extensions("verify-change"), [root / ".claude/extensions/a-verify-checks.md"])
+        self.assertEqual(loaded.extensions("run-unit-tests"), [])
         self.assertTrue(loaded.has("pr"))
         self.assertFalse(loaded.has("services-lock"))
         self.assertEqual(loaded.get("pr.announce"), None)
@@ -401,24 +421,98 @@ def keys_in(raw, spec, path: str = "") -> set[str]:
     return found
 
 
-class ExtensionsTest(unittest.TestCase):
+class ExtensionsTest(Workspace):
     def test_parse(self):
         text = "\n".join([
-            "---", "type: extension", "---", "", "# Release Wait", "", "Context.", "",
-            "## Adds to work-task's \"## Publish\"", "", "Wait for the release.", "", "### Detail", "More.", "",
+            "---", "type: extension", "extends: work-task", "---", "", "# Release Wait", "", "Context.", "",
+            "## add review-checks", "", "Run the scan.", "", "### Detail", "More.", "",
             "```markdown", "## Not a section", "```", "",
-            "## Replaces verify-change's \"### Integration tests\"", "Run them against the release.",
+            "## replace needs-a-release", "Wait for the release.",
+            "## skip verify", "CI verifies.",
             "## Notes", "Stray.",
+            "## add Review-Checks", "Uppercase.",
+            "## replace plan-the-cycles", "",
+            "## add review-checks", "Again.",
         ])
-        sections, problems = extensions.parse(text)
-        self.assertEqual([(s.verb, s.skill, s.heading, s.line) for s in sections], [
-            ("Adds to", "work-task", "## Publish", 9),
-            ("Replaces", "verify-change", "### Integration tests", 20),
+        doc = extensions.parse(text, "release-wait.md")
+        self.assertEqual(doc.extends, "work-task")
+        self.assertEqual(doc.name, "release-wait.md")
+        self.assertEqual([(s.verb, s.hook, s.line) for s in doc.sections], [
+            ("add", "review-checks", 10), ("replace", "needs-a-release", 21), ("skip", "verify", 23),
+            ("replace", "plan-the-cycles", 29), ("add", "review-checks", 31)])
+        self.assertIn("### Detail", doc.sections[0].body)
+        self.assertIn("## Not a section", doc.sections[0].body)
+        self.assertEqual(doc.sections[2].body, "CI verifies.")
+        self.assertEqual(doc.problems, [
+            "line 25: '## Notes' isn't `## <add|replace|skip> <hook id>`",
+            "line 27: '## add Review-Checks' isn't `## <add|replace|skip> <hook id>`",
+            "line 29: `## replace plan-the-cycles` is empty; say what to do",
+            "line 31: `## add review-checks` repeats line 10; put both in one section",
         ])
-        self.assertIn("### Detail", sections[0].body)
-        self.assertIn("## Not a section", sections[0].body)
-        self.assertEqual(sections[1].body, "Run them against the release.")
-        self.assertEqual(problems, ["line 22: '## Notes' is not a Replaces or Adds to heading"])
+
+    def test_frontmatter(self):
+        cases = {
+            "## add x\n\ny\n": ["no frontmatter; start the doc with `type: extension` and `extends: <skill>` "
+                                 "between --- lines"],
+            "---\ntype: extension\n## add x\n\ny\n": ["frontmatter never closes"],
+            "---\ntype: note\nextends: work-task\n---\n": ["frontmatter: type must be extension; got 'note'"],
+            "---\ntype: extension\n---\n": ["frontmatter: no extends; name the one skill this doc extends"],
+            "---\ntype: extension\nextends: [work-task, verify-change]\n---\n": [
+                "frontmatter: extends must be one skill's name, like work-task; got ['work-task', 'verify-change']"],
+        }
+        for text, problems in cases.items():
+            with self.subTest(text):
+                doc = extensions.parse(text)
+                self.assertEqual(doc.problems, problems)
+                self.assertIsNone(doc.extends)
+        # A `##` line in the frontmatter's YAML isn't a section.
+        doc = extensions.parse("---\ntype: extension\nextends: work-task\n---\n\n## skip format\n\nNo formatter.\n")
+        self.assertEqual((doc.problems, [(s.verb, s.hook, s.line) for s in doc.sections]),
+                         ([], [("skip", "format", 6)]))
+
+    def test_points(self):
+        text = "\n".join([
+            "# Skill", "", "## Steps", "", "| Id | Runs | Default | Verbs |", "|---|---|---|---|",
+            "| `not-this` | a | b | add |", "", "## Extension Points", "", "Intro.", "",
+            "| Id | Runs | Default | Verbs |", "|---|---|---|---|",
+            "| `format` | step 3 | `run_tests.py format` | add, skip |",
+            "| `plan-the-cycles` | step 4, with a \\| pipe | \"### Plan the cycles\" | add, replace |",
+            "| `format` | again | x | add |",
+            "| Bad Id | x | y | add |",
+            "| `odd` | x | y | add, remove |",
+            "| `short` | x | add |",
+            "", "Prose after the table.", "", "| `later` | x | y | add |", "",
+            "### Plan the cycles", "", "Default text.",
+        ])
+        points, problems = extensions.points(text)
+        self.assertEqual([(p.id, p.verbs) for p in points],
+                         [("format", ("add", "skip")), ("plan-the-cycles", ("add", "replace"))])
+        self.assertEqual(points[0].default, "`run_tests.py format`")
+        self.assertEqual(problems, [
+            "line 17: hook 'format' is declared twice",
+            "line 18: 'Bad Id' isn't a backticked id of lowercase words joined by -",
+            "line 19: verbs must be from add, replace, skip; got 'add, remove'",
+            "line 20: a row has 3 cells, not 4",
+        ])
+        self.assertEqual(extensions.points("# Skill\n\n## Workflow\n"), ([], []))
+        self.assertEqual(extensions.points("## Extension Points\n\nNone yet.\n"),
+                         ([], ["## Extension Points has no table of hooks"]))
+        self.assertEqual(extensions.points("## Extension Points\n\n| Id | When |\n|---|---|\n")[1],
+                         ["line 3: the table's columns must be Id | Runs | Default | Verbs"])
+
+    def test_docs_and_discover(self):
+        root = self.make("single")
+        self.assertEqual(extensions.docs(root), [])
+        self.add_docs(root)
+        folder = root / extensions.FOLDER
+        self.assertEqual([p.name for p in extensions.docs(root)],
+                         ["a-verify-checks.md", "old-release-wait.md", "release-wait.md"])
+        self.assertEqual(extensions.discover(root, "work-task"),
+                         [folder / "old-release-wait.md", folder / "release-wait.md"])
+        for disabled in (["old-release-wait"], ["old-release-wait.md"]):
+            self.assertEqual(extensions.discover(root, "work-task", disabled), [folder / "release-wait.md"])
+        (folder / "broken.md").write_text("## add dispatch\n\nno frontmatter\n")
+        self.assertEqual(extensions.discover(root, "work-task", ["old-release-wait"]), [folder / "release-wait.md"])
 
 
 class CliTest(Workspace):
@@ -447,9 +541,17 @@ class CliTest(Workspace):
 
     def test_extensions(self):
         root = self.make("single")
+        self.assertEqual(json.loads(self.run_cli(root, "extensions", "work-task").stdout), [])
+        self.add_docs(root)
         self.assertEqual(json.loads(self.run_cli(root, "extensions", "work-task").stdout),
                          [str(root / ".claude/extensions/release-wait.md")])
-        self.assertEqual(json.loads(self.run_cli(root, "extensions", "verify-change").stdout), [])
+        self.assertEqual(json.loads(self.run_cli(root, "extensions", "git-commit").stdout), [])
+
+    def test_render_points_at_the_extensions_folder(self):
+        root = self.make("single")
+        rule = self.run_cli(root, "render").stdout
+        self.assertIn(f"- **Extensions:** a project's steps hooked into these skills, as docs in "
+                      f"`{root / '.claude/extensions'}`; its `README.md` says how to write one.\n", rule)
 
     def test_invalid_config(self):
         raw = yaml.safe_load((FIXTURES / "single.yml").read_text(encoding="utf-8"))

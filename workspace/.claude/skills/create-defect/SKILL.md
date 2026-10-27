@@ -5,11 +5,6 @@ description: Write a defect straight into the tasks folder with the next key, fr
 
 # Create Defect
 
-**Extensions.** Before anything else, run `.claude/toolbox/bin/toolbox.py config extensions create-defect` from the
-workspace root (its absolute path is in the toolbox-config rule) and read every file it lists. Each `##` section of an
-extension names a heading of this skill: follow a `Replaces` section instead of that heading's text, and an `Adds to`
-section after it. If two extensions replace the same heading, stop and ask the user which applies.
-
 A defect is an unrelated problem found along the way. One found while testing a task is fixed in that task, not filed.
 Everything else starts as a discussion draft (`propose-tickets`); a defect is the one record written straight into the
 tasks folder.
