@@ -1,4 +1,4 @@
-"""Tests for install.py's vault files (a per-workspace domain's `.vault/` folder, written into each workspace's vault)
+"""Tests for install.py's vault files (the workspace folder's `.vault/` folder, written into each workspace's vault)
 and for the toolbox's own vault templates, run under a stand-in for Templater and filed with tasks.py.
 
 Run from the repo root:

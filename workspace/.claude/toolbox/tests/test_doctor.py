@@ -25,7 +25,7 @@ CONFIG = Path(".claude/toolbox.local.yml")
 
 
 class DoctorTest(unittest.TestCase):
-    """A toolbox (install.py copied, its workspace domain linked to this repo's) and one single-repo workspace with a
+    """A toolbox (install.py copied, its workspace folder linked to this repo's) and one single-repo workspace with a
     `none` tracker, installed and clean."""
 
     def setUp(self):
@@ -36,15 +36,13 @@ class DoctorTest(unittest.TestCase):
         self.toolbox.mkdir()
         shutil.copy(REPO / "install.py", self.toolbox / "install.py")
         (self.toolbox / "workspace").symlink_to(REPO / "workspace")
-        (self.toolbox / "domains.yml").write_text(yaml.safe_dump({"domains": {
-            "workspace": {"source": "workspace", "target": "per-workspace", "ignore": [".claude/toolbox/tests"]},
-        }}))
+        (self.toolbox / "toolbox.yml").write_text("ship: direct\n")
 
         self.ws = self.tmp / "ws"
         for folder in ("vault/Tasks", "vault/Discussions"):
             (self.ws / folder).mkdir(parents=True)
         subprocess.run(["git", "init", "-q", str(self.ws)], check=True)
-        (self.toolbox / "machine.yml").write_text(yaml.safe_dump({"domains": [], "workspaces": [str(self.ws)]}))
+        (self.toolbox / "machine.yml").write_text(yaml.safe_dump({"workspaces": [str(self.ws)]}))
         self.config = {
             "version": 1,
             "workspace": {"name": "ws", "layout": "single"},
@@ -72,8 +70,9 @@ class DoctorTest(unittest.TestCase):
         (self.ws / CONFIG).write_text(yaml.safe_dump(self.config))
 
     def install(self) -> None:
-        proc = subprocess.run([sys.executable, str(self.toolbox / "install.py"), "--apply"], capture_output=True,
-                              text=True)
+        # The workspace only: the toolbox's global folder would install into this machine's ~/.claude.
+        proc = subprocess.run([sys.executable, str(self.toolbox / "install.py"), "--workspace", str(self.ws), "--apply"],
+                              capture_output=True, text=True)
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
 
     def doctor(self, **env) -> tuple[int, dict, str]:
@@ -276,7 +275,7 @@ class DoctorTest(unittest.TestCase):
 
     def test_missing_vault_folder_and_unlisted_workspace(self):
         (self.ws / "vault" / "Discussions").rmdir()
-        (self.toolbox / "machine.yml").write_text(yaml.safe_dump({"domains": [], "workspaces": []}))
+        (self.toolbox / "machine.yml").write_text(yaml.safe_dump({"workspaces": []}))
         _, checks, _ = self.doctor()
         self.assertEqual(checks["vault"]["status"], "fail")
         self.assertIn("discussions folder", checks["vault"]["detail"][0])

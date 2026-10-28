@@ -25,9 +25,9 @@ the checks below. Exit 1 when any check isn't `ok`.
 | Check | Fails when | Fix |
 |---|---|---|
 | `config` | `.claude/toolbox.local.yml` is missing or doesn't match its schema | the errors name each key; edit the config, or run `/setup-workspace` |
-| `install` | the installer's preview for this workspace isn't clean, or `machine.yml` doesn't list it | `/install-domain` (it previews first) |
-| `rule` | `.claude/rules/toolbox-config.md` is missing or older than the config | `/install-domain` |
-| `rendered` | a file rendered from a template (`jira-filer`'s agent, say) is missing, out of date with the config or no longer wanted, or the template names a config key the config lacks | `/install-domain`; for a missing key, add it to the config (the `jira` feature needs `tracker.jira`) |
+| `install` | the installer's preview for this workspace isn't clean, or `machine.yml` doesn't list it | `/sync-toolbox` (it previews first) |
+| `rule` | `.claude/rules/toolbox-config.md` is missing or older than the config | `/sync-toolbox` |
+| `rendered` | a file rendered from a template (`jira-filer`'s agent, say) is missing, out of date with the config or no longer wanted, or the template names a config key the config lacks | `/sync-toolbox`; for a missing key, add it to the config (the `jira` feature needs `tracker.jira`) |
 | `gh` | `gh` isn't signed in, or not as `user.github` (`user.handle` when unset) | `gh auth login` / `gh auth switch`, or set `user.github` to the GitHub login when it isn't the branch prefix |
 | `vault` | the vault, tasks or discussions folder is missing | create it, or correct `vault.*` |
 | `extensions` | a doc in `.claude/extensions/` lacks `type: extension` or `extends:`, extends a skill that isn't installed or has no Extension Points table, has a `##` heading that isn't `<add\|replace\|skip> <hook id>`, names a hook the skill doesn't have (the nearest is suggested) or a verb the hook doesn't allow, or replaces or skips a hook another doc does; or `extensions.disabled` names a doc that isn't there | fix the doc against the skill's Extension Points table (`.claude/extensions/README.md`), or name it in `extensions.disabled` |

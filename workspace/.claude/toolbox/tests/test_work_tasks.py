@@ -24,8 +24,8 @@ from pathlib import Path
 import yaml
 
 TOOLBOX = Path(__file__).resolve().parents[1]
-WORKSPACE_DOMAIN = TOOLBOX.parents[1]
-SKILL = WORKSPACE_DOMAIN / ".claude" / "skills" / "work-tasks"
+WORKSPACE_FOLDER = TOOLBOX.parents[1]
+SKILL = WORKSPACE_FOLDER / ".claude" / "skills" / "work-tasks"
 DISPATCH = TOOLBOX / "bin" / "dispatch.py"
 DISCUSSION = "Discussions/2026/10/2026-10-27-shelf-counts"
 
@@ -316,10 +316,10 @@ class SkillTextTest(unittest.TestCase):
             self.assertIn(flag, help_text, flag)
 
     def test_installed_under_the_dispatcher_feature(self):
-        features = yaml.safe_load((WORKSPACE_DOMAIN / "features.yml").read_text())
+        features = yaml.safe_load((WORKSPACE_FOLDER / "features.yml").read_text())
         self.assertEqual(features["dispatcher"], [".claude/skills/work-tasks", ".claude/toolbox/bin/dispatch.py"])
         for path in features["dispatcher"]:
-            self.assertTrue((WORKSPACE_DOMAIN / path).exists(), path)
+            self.assertTrue((WORKSPACE_FOLDER / path).exists(), path)
 
     def test_the_session_fields_the_skill_sets_are_the_plans(self):
         for text in ("`work.dispatch: direct`", "`own_initiative`", "`user_asked`", "`use_worktree`", "`false`",

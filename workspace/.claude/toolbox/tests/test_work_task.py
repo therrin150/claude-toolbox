@@ -29,8 +29,8 @@ import yaml
 
 TOOLBOX = Path(__file__).resolve().parents[1]
 TESTS = Path(__file__).resolve().parent
-WORKSPACE_DOMAIN = TOOLBOX.parents[1]
-SKILL = WORKSPACE_DOMAIN / ".claude" / "skills" / "work-task"
+WORKSPACE_FOLDER = TOOLBOX.parents[1]
+SKILL = WORKSPACE_FOLDER / ".claude" / "skills" / "work-task"
 sys.path.insert(0, str(TOOLBOX / "lib"))
 
 import doctor  # noqa: E402
@@ -45,8 +45,8 @@ HOOKS = {
     "code-review": "add, skip", "verify": "add, skip", "review-checks": "add", "needs-a-release": "add, replace",
     "before-publishing": "add", "after-the-merge": "add", "before-done": "add",
 }
-SKILLS = WORKSPACE_DOMAIN / ".claude" / "skills"
-README = WORKSPACE_DOMAIN / ".claude" / "extensions" / "README.md"
+SKILLS = WORKSPACE_FOLDER / ".claude" / "skills"
+README = WORKSPACE_FOLDER / ".claude" / "extensions" / "README.md"
 
 
 def sh(cwd: Path, *args: str) -> str:
@@ -477,7 +477,7 @@ class SkillTextTest(unittest.TestCase):
             self.assertTrue(os.access(path, os.X_OK), f"{path.name} isn't executable")
 
     def test_installed_under_the_tasks_feature(self):
-        features = yaml.safe_load((WORKSPACE_DOMAIN / "features.yml").read_text())
+        features = yaml.safe_load((WORKSPACE_FOLDER / "features.yml").read_text())
         self.assertIn(".claude/skills/work-task", features["tasks"])
 
     def test_the_release_wait_is_dispatched_and_described(self):
@@ -521,7 +521,7 @@ class ExtensionPointsTest(unittest.TestCase):
 
     def test_no_old_format_heading_is_left(self):
         old = re.compile(r"(Replaces|Adds to) [a-z0-9-]+'s \"")
-        repo = WORKSPACE_DOMAIN.parent
+        repo = WORKSPACE_FOLDER.parent
         for path in repo.rglob("*"):
             if ".git" in path.parts or not path.is_file() or path.suffix not in (".md", ".py", ".yml", ".tmpl"):
                 continue

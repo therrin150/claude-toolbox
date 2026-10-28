@@ -38,7 +38,7 @@ def sh(cwd: Path, *args: str) -> str:
 
 
 class ShipCase(unittest.TestCase):
-    manifest = "ship: pr\nbranch_prefix: tester\ndomains: {}\n"
+    manifest = "ship: pr\nbranch_prefix: tester\nsource: glue\ntarget: ~/somewhere\n"
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp()).resolve()
@@ -64,7 +64,7 @@ class ShipCase(unittest.TestCase):
         self.repo = self.tmp / "toolbox"
         self.repo.mkdir()
         sh(self.repo, "git", "init", "-b", "main")
-        (self.repo / "domains.yml").write_text(self.manifest)
+        (self.repo / "toolbox.yml").write_text(self.manifest)
         (self.repo / "install.py").write_text(INSTALL)
         (self.repo / ".gitignore").write_text("install-plan.txt\n")
         sh(self.repo, "git", "add", "-A")
@@ -122,8 +122,8 @@ class TestPrMode(ShipCase):
         self.assertEqual(code, 0, out)
         self.assertEqual(out["cleanup"]["install_preview"], {"Create links": ["~/.claude/skills/new-skill"]})
 
-    def test_the_default_when_domains_yml_has_no_ship_key(self):
-        (self.repo / "domains.yml").write_text("domains: {}\n")
+    def test_the_default_when_toolbox_yml_has_no_ship_key(self):
+        (self.repo / "toolbox.yml").write_text("source: glue\ntarget: ~/somewhere\n")
         sh(self.repo, "git", "commit", "-am", "no ship key")
         sh(self.repo, "git", "push")
         (self.repo / "skill.md").write_text("x\n")
@@ -166,11 +166,18 @@ class TestPrMode(ShipCase):
         self.assertEqual(self.remote_subject(), "mine")
 
     def test_not_a_toolbox(self):
-        (self.repo / "domains.yml").unlink()
+        (self.repo / "toolbox.yml").unlink()
         sh(self.repo, "git", "commit", "-am", "drop it")
         code, out = self.cli("precheck")
         self.assertEqual(code, 2)
         self.assertIn("not a toolbox repo", out["error"])
+
+    def test_the_old_manifest_name_says_to_rename_it(self):
+        sh(self.repo, "git", "mv", "toolbox.yml", "domains.yml")
+        sh(self.repo, "git", "commit", "-m", "old name")
+        code, out = self.cli("precheck")
+        self.assertEqual(code, 2)
+        self.assertIn("rename it to toolbox.yml", out["error"])
 
     def test_ships_from_a_worktree_and_removes_it(self):
         worktree = self.tmp / "wt"
@@ -185,7 +192,7 @@ class TestPrMode(ShipCase):
 
 
 class TestDirectMode(ShipCase):
-    manifest = "ship: direct\ndomains: {}\n"
+    manifest = "ship: direct\n"
 
     def test_commits_and_pushes_to_the_default_branch(self):
         (self.repo / "skill.md").write_text("x\n")

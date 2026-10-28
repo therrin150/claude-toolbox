@@ -1,4 +1,4 @@
-# Which parts of the workspace domain need a feature. install.py installs a listed path into a workspace only when
+# Which parts of the workspace folder need a feature. install.py installs a listed path into a workspace only when
 # that workspace's .claude/toolbox.local.yml lists the feature under `features`; anything unlisted always installs.
 #
 # Format: {<feature>: [paths relative to workspace/]}. A path names a file, or a folder and everything under it (a

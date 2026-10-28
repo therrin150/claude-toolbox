@@ -1,4 +1,4 @@
-"""Tests for install.py's templates: `.tmpl` files in a per-workspace domain, rendered into each workspace from its
+"""Tests for install.py's templates: `.tmpl` files in the workspace folder, rendered into each workspace from its
 config instead of linked.
 
 Run from the repo root:

@@ -1,15 +1,11 @@
-# Copy to machine.yml (untracked) and list what to install on this machine.
+# Copy to machine.yml (untracked) and list what to install on this machine. This repo's global/ folder always installs
+# into ~/.claude, and its workspace/ folder into every workspace below.
 
-# Domains to install, from this repo's domains.yml or any toolbox's below. Per-workspace domains need no entry here:
-# they install into every workspace listed below.
-domains:
-  - global
-
-# Other toolbox repos whose domains.yml this installer also reads; each domain's source resolves against its own repo.
+# Other toolbox repos to install, each whole: its toolbox.yml names its source folder and target.
 toolboxes: []
 #  - ~/path/to/another-claude-toolbox
 
-# Workspaces the per-workspace domains install into. Each needs a .claude/toolbox.local.yml; /setup-workspace writes it
-# and adds the workspace here.
+# Workspaces the workspace/ folder installs into. Each needs a .claude/toolbox.local.yml; /setup-workspace writes it and
+# adds the workspace here.
 workspaces: []
 #  - ~/path/to/workspace

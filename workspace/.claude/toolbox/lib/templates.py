@@ -1,5 +1,5 @@
-"""Templated files: a file in a per-workspace domain whose name ends `.tmpl` is rendered into each workspace, to the
-same path without the suffix, instead of being linked.
+"""Templated files: a file in the toolbox's workspace folder whose name ends `.tmpl` is rendered into each workspace,
+to the same path without the suffix, instead of being linked.
 
 A placeholder is a dotted config key in double braces, `{{ tracker.jira.mcp_server }}`, replaced by that key's value
 in the workspace's `.claude/toolbox.local.yml` (defaults included). Only single values fill a placeholder: text, a

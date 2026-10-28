@@ -294,7 +294,7 @@ class DraftTest(unittest.TestCase):
 
     def test_add_workspace_keeps_the_file(self):
         machine = self.fx.tmp / "machine.yml"
-        machine.write_text("# mine\ndomains:\n  - global\ntoolboxes: []\nworkspaces: []  # where it goes\n")
+        machine.write_text("# mine\ntoolboxes: []\nworkspaces: []  # where it goes\n")
         env_backup = self.fx.env
         self.fx.env = {**env_backup, "TOOLBOX_MACHINE": str(machine)}
         ws = self.fx.tmp / "one"

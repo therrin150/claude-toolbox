@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Ship a change to a Claude toolbox repo end to end: branch and commit when needed, get it onto the default branch,
 clean up, and preview the installer. How it gets there is the toolbox's own choice, the top-level `ship` key of its
-`domains.yml`:
+`toolbox.yml`:
 
   ship: pr       branch, push, open a PR, merge it (a merge commit), delete the branch. The default.
   ship: direct   commit, rebase onto origin/<default> when it moved, push straight to the default branch.
@@ -13,7 +13,7 @@ Nothing else applies: no reviewers, no PR template, no announcement, no approval
   ship.py run [--message-file F] [--branch B] [--title T]
   ship.py cleanup --branch B                    cleanup only, for a branch whose PR is already merged
 
-Every command takes --repo-dir (default: the repository the current directory is in). It must hold a `domains.yml`, and
+Every command takes --repo-dir (default: the repository the current directory is in). It must hold a `toolbox.yml`, and
 may be a linked worktree: ship from there, and cleanup removes the worktree (refused while it has uncommitted or
 untracked files) instead of switching branches. The install preview always runs in the main checkout, which is what the
 installed links point at.
@@ -49,6 +49,9 @@ TRAILER = re.compile(r"^(co-authored-by|signed-off-by):|🤖", re.IGNORECASE | r
 # The claude-toolbox this script ships from (global/skills/ship-toolbox-change/scripts/), whose installer also installs
 # the glue toolboxes its machine.yml lists, which have no installer of their own.
 CLAUDE_TOOLBOX = Path(__file__).resolve().parents[4]
+# Every toolbox repo holds one; the retired name gets a message saying to rename it.
+MANIFEST = "toolbox.yml"
+OLD_MANIFEST = "domains.yml"
 
 
 class StepFailed(Exception):
@@ -63,13 +66,16 @@ class Ship:
         if not (self.dir / ".git").exists():
             raise StepFailed(f"{self.dir} is not a git checkout")
         self.main = Path(self.git("rev-parse", "--path-format=absolute", "--git-common-dir")).parent
-        manifest = self.main / "domains.yml"
+        manifest = self.main / MANIFEST
         if not manifest.is_file():
-            raise StepFailed(f"{self.main} has no domains.yml: not a toolbox repo")
+            if (self.main / OLD_MANIFEST).is_file():
+                raise StepFailed(f"{self.main} has a {OLD_MANIFEST}: rename it to {MANIFEST}, with its one domain's keys "
+                                 "at the top level (claude-toolbox's toolbox.yml shows the shape)")
+            raise StepFailed(f"{self.main} has no {MANIFEST}: not a toolbox repo")
         data = yaml.safe_load(manifest.read_text(encoding="utf-8")) or {}
         self.mode = data.get("ship", "pr")
         if self.mode not in ("pr", "direct"):
-            raise StepFailed(f"domains.yml: ship must be pr or direct; got {self.mode!r}")
+            raise StepFailed(f"{MANIFEST}: ship must be pr or direct; got {self.mode!r}")
         self.prefix = str(data.get("branch_prefix", "toolbox")).strip("/")
         self.base = self.default_branch()
         self.gh_repo = self.github_repo()
@@ -305,7 +311,7 @@ class Ship:
 
     def install_preview(self) -> dict:
         """Runs the installer in preview mode and returns the sections with pending changes: the main checkout's own,
-        else (a glue toolbox) claude-toolbox's. Applying stays with install-domain, which asks first."""
+        else (a glue toolbox) claude-toolbox's. Applying stays with sync-toolbox, which asks first."""
         root = self.main if (self.main / "install.py").exists() else CLAUDE_TOOLBOX
         self.run([sys.executable, "install.py"], cwd=root)
         plan = (root / "install-plan.txt").read_text().splitlines()

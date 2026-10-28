@@ -113,7 +113,7 @@ rest of the file. On a later decline, remove that line again.
 python3 <installer> --workspace <workspace>
 ```
 
-Present it as `/install-domain` does: the counts, every generated-rule change, conflict, warning and problem verbatim,
+Present it as `/sync-toolbox` does: the counts, every generated-rule change, conflict, warning and problem verbatim,
 and `install-plan.txt`'s path. A real file where a link goes is usually a copy from before the toolbox: never delete or
 move it without Allen saying so. On approval, run it again with `--apply` and report the counts and any errors.
 

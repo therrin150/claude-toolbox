@@ -1,0 +1,21 @@
+# This toolbox's manifest. install.py and ship-toolbox-change find a toolbox repo by it.
+#
+# This repo installs two folders of its own, fixed in install.py and always installed: global/ into ~/.claude, and
+# workspace/ into every workspace machine.yml lists (gated by the workspace's features; see README.md). So its
+# manifest has only the ship key.
+#
+# Another toolbox repo, listed under `toolboxes:` in this repo's machine.yml, installs whole. Its toolbox.yml says what
+# and where, with these keys at the top level:
+#   source         required: the folder in that repo that installs (the manifest and README beside it never do)
+#   target         required: the folder on disk the source mirrors (sessions launch there). Folders are created, files
+#                  are linked one at a time, and skill folders (anything containing SKILL.md) are linked whole
+#   prefix         optional name prefix every rule, skill and agent in it carries, e.g. `ab-`
+#   ignore         optional globs, relative to source, that are never linked
+#   external       optional links to sources outside the repo: {source: <path>, target: <path relative to target>}
+#
+# Read by the global ship-toolbox-change skill, in every toolbox:
+#   ship           how a change to the repo lands: `pr` (a branch and a merged PR, the default) or `direct` (a push
+#                  straight to the default branch)
+#   branch_prefix  names a new branch in `pr` mode: <prefix>/<subject>; default `toolbox`
+
+ship: direct

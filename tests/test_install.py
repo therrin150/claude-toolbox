@@ -51,8 +51,9 @@ def workspace_config(name: str, features: list) -> str:
 
 
 class InstallerTest(unittest.TestCase):
-    """A toolbox with `global` and the per-workspace `workspace` domain, another toolbox with `team`, and two
-    workspaces: ws1 with the `services-lock` feature, ws2 (a git repo) without."""
+    """This toolbox, its `global` folder installing into a fake ~/.claude and its `workspace` folder into each
+    workspace; another toolbox, work-toolbox, installing its `team` folder; and two workspaces: ws1 with the
+    `services-lock` feature, ws2 (a git repo) without."""
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp()).resolve()
@@ -61,10 +62,7 @@ class InstallerTest(unittest.TestCase):
         self.repo = self.tmp / "claude-toolbox"
         self.home = self.tmp / "home" / ".claude"
         self.home.mkdir(parents=True)
-        write(self.repo / "domains.yml", yaml.safe_dump({"domains": {
-            "global": {"source": "global", "target": str(self.home)},
-            "workspace": {"source": "workspace", "target": "per-workspace", "ignore": [".claude/toolbox/tests"]},
-        }}))
+        write(self.repo / "toolbox.yml", "ship: direct\n")
         write(self.repo / "global" / "rules" / "style.md", "# Style\n")
         source = self.repo / "workspace"
         skill(source / ".claude" / "skills", "always")
@@ -76,9 +74,7 @@ class InstallerTest(unittest.TestCase):
         self.work = self.tmp / "work-toolbox"
         self.team_target = self.tmp / "team-workspace"
         self.team_target.mkdir()
-        write(self.work / "domains.yml", yaml.safe_dump({"domains": {
-            "team": {"source": "team", "target": str(self.team_target), "prefix": "tm-"},
-        }}))
+        self.manifest(self.work)
         write(self.work / "team" / ".claude" / "rules" / "tm-conventions.md", "# Conventions\n")
 
         self.ws1 = self.tmp / "ws1"
@@ -87,11 +83,12 @@ class InstallerTest(unittest.TestCase):
         write(self.ws2 / CONFIG, workspace_config("two", []))
         subprocess.run(["git", "init", "-q", str(self.ws2)], check=True)
 
-        self.machine(domains=["global", "team"], toolboxes=[self.work], workspaces=[self.ws1, self.ws2])
+        self.machine(toolboxes=[self.work], workspaces=[self.ws1, self.ws2])
+        own = {**install.OWN_PARTS, "global": {"source": "global", "target": str(self.home)}}
         patcher = mock.patch.multiple(
             install,
             REPO=self.repo,
-            MANIFEST=self.repo / "domains.yml",
+            OWN_PARTS=own,
             MACHINE=self.repo / "machine.yml",
             MACHINE_EXAMPLE=self.repo / "machine.example.yml",
             STATE=self.repo / ".install-state.json",
@@ -102,11 +99,16 @@ class InstallerTest(unittest.TestCase):
 
     # Helpers
 
-    def machine(self, domains, toolboxes=(), workspaces=()):
+    def machine(self, toolboxes=(), workspaces=(), **extra):
         write(self.repo / "machine.yml", yaml.safe_dump({
-            "domains": list(domains),
             "toolboxes": [str(path) for path in toolboxes],
             "workspaces": [str(path) for path in workspaces],
+            **extra,
+        }))
+
+    def manifest(self, toolbox: Path, **extra) -> None:
+        write(toolbox / "toolbox.yml", yaml.safe_dump({
+            "ship": "pr", "source": "team", "target": str(self.team_target), "prefix": "tm-", **extra,
         }))
 
     def run_install(self, *args) -> tuple[int, str]:
@@ -134,7 +136,7 @@ class InstallerTest(unittest.TestCase):
 
 
 class OtherToolboxes(InstallerTest):
-    def test_installs_another_toolboxs_domain_against_its_own_repo(self):
+    def test_installs_another_toolbox_whole_against_its_own_repo(self):
         code, plan = self.run_install("--apply")
         self.assertEqual(code, 0, plan)
         self.assertLinked(
@@ -142,24 +144,126 @@ class OtherToolboxes(InstallerTest):
             self.work / "team" / ".claude" / "rules" / "tm-conventions.md",
         )
         self.assertLinked(self.home / "rules" / "style.md", self.repo / "global" / "rules" / "style.md")
-        self.assertIn("Domains: global, team, workspace", plan)
+        self.assertIn("Toolboxes: claude-toolbox, work-toolbox", plan)
+        self.assertFalse((self.team_target / "toolbox.yml").exists())
 
-    def test_a_domain_defined_twice_is_a_problem_and_the_first_wins(self):
-        write(self.work / "domains.yml", yaml.safe_dump({"domains": {
-            "team": {"source": "team", "target": str(self.team_target), "prefix": "tm-"},
-            "global": {"source": "team", "target": str(self.team_target)},
-        }}))
+    def test_a_toolbox_name_taken_twice_is_a_problem_and_the_first_wins(self):
+        other = self.tmp / "elsewhere" / "work-toolbox"
+        self.manifest(other)
+        self.machine(toolboxes=[self.work, other])
         code, plan = self.run_install()
         self.assertEqual(code, 1)
         problems = self.section(plan, "Problems")
-        self.assertTrue(any("domain global: defined in both" in line for line in problems), problems)
-        self.assertTrue(any("home/.claude/rules/style.md" in line for line in self.section(plan, "Create links")))
+        self.assertTrue(any("elsewhere/work-toolbox: the name work-toolbox is taken" in line for line in problems),
+                        problems)
+        self.assertTrue(any("tm-conventions.md" in line for line in self.section(plan, "Create links")))
 
     def test_a_missing_toolbox_is_a_problem(self):
-        self.machine(domains=["global"], toolboxes=[self.tmp / "nowhere"])
+        self.machine(toolboxes=[self.tmp / "nowhere"])
         code, plan = self.run_install()
         self.assertEqual(code, 1)
-        self.assertTrue(any("no domains.yml" in line for line in self.section(plan, "Problems")))
+        self.assertTrue(any("no toolbox.yml" in line for line in self.section(plan, "Problems")))
+
+    def test_a_manifest_without_source_or_with_unknown_keys_is_a_problem(self):
+        write(self.work / "toolbox.yml", yaml.safe_dump({"target": str(self.team_target), "colour": "blue"}))
+        code, plan = self.run_install()
+        self.assertEqual(code, 1)
+        problems = self.section(plan, "Problems")
+        self.assertTrue(any("needs `source`" in line and "unknown key(s): colour" in line for line in problems),
+                        problems)
+        self.assertEqual([line for line in self.section(plan, "Create links") if "team-workspace" in line], [])
+
+
+class ToolboxOption(InstallerTest):
+    def test_acts_on_the_named_toolbox_only(self):
+        code, plan = self.run_install("--toolbox", "work-toolbox", "--apply")
+        self.assertEqual(code, 0, plan)
+        self.assertIn("Toolboxes: work-toolbox", plan)
+        self.assertTrue((self.team_target / ".claude" / "rules" / "tm-conventions.md").is_symlink())
+        self.assertFalse((self.home / "rules").exists())
+        self.assertFalse((self.ws1 / ".claude" / "skills").exists())
+
+    def test_this_repo_by_path_stands_for_both_its_folders(self):
+        code, plan = self.run_install("--toolbox", str(self.repo), "--apply")
+        self.assertEqual(code, 0, plan)
+        self.assertIn("Toolboxes: claude-toolbox\n", plan)
+        self.assertTrue((self.home / "rules" / "style.md").is_symlink())
+        self.assertTrue((self.ws1 / ".claude" / "skills" / "always").is_symlink())
+        self.assertFalse((self.team_target / ".claude").exists())
+
+    def test_teardown_of_one_toolbox_leaves_the_rest(self):
+        self.run_install("--apply")
+        self.run_install("--toolbox", str(self.work), "--teardown", "--apply")
+        self.assertFalse((self.team_target / ".claude").exists())
+        self.assertTrue((self.home / "rules" / "style.md").is_symlink())
+
+    def test_an_unknown_toolbox_exits(self):
+        with self.assertRaises(SystemExit) as raised:
+            self.run_install("--toolbox", "nowhere")
+        self.assertIn("Known toolboxes: claude-toolbox, work-toolbox", str(raised.exception.code))
+
+
+class RetiredDomains(InstallerTest):
+    """An install made when toolboxes held domains: machine.yml's `domains:`, a toolbox's `domains.yml`, and state
+    recorded under each domain's name."""
+
+    def old_install(self):
+        """Install, then put the state, the work toolbox's manifest and machine.yml back as the old installer left
+        them, with the team target a git repo whose exclude block carries the old marker."""
+        subprocess.run(["git", "init", "-q", str(self.team_target)], check=True)
+        self.run_install("--apply")
+        state = self.state()
+        for section in state.values():
+            for entry in section.values():
+                entry["domain"] = {"work-toolbox": "team"}.get(entry["part"], entry.pop("part"))
+                entry.pop("part", None)
+        (self.repo / ".install-state.json").write_text(json.dumps(state), encoding="utf-8")
+        (self.work / "toolbox.yml").unlink()
+        write(self.work / "domains.yml", yaml.safe_dump({"ship": "pr", "domains": {
+            "team": {"source": "team", "target": str(self.team_target), "prefix": "tm-"},
+        }}))
+        self.machine(toolboxes=[self.work], workspaces=[self.ws1, self.ws2], domains=["global", "team"])
+
+    def exclude(self) -> str:
+        return (self.team_target / ".git" / "info" / "exclude").read_text(encoding="utf-8")
+
+    def test_old_files_are_problems_and_hold_what_they_installed(self):
+        self.old_install()
+        code, plan = self.run_install("--apply")
+        self.assertEqual(code, 1)
+        problems = self.section(plan, "Problems")
+        self.assertTrue(any("machine.yml: remove `domains:`" in line for line in problems), problems)
+        self.assertTrue(any("rename its domains.yml to toolbox.yml" in line for line in problems), problems)
+        self.assertEqual(self.section(plan, "Remove stale links"), [])
+        self.assertTrue((self.team_target / ".claude" / "rules" / "tm-conventions.md").is_symlink())
+        self.assertIn("work-toolbox:team", self.exclude())
+
+    def test_a_toolbox_yml_still_listing_domains_is_held(self):
+        self.old_install()
+        (self.work / "domains.yml").rename(self.work / "toolbox.yml")
+        code, plan = self.run_install()
+        self.assertEqual(code, 1)
+        self.assertTrue(any("still has `domains:`" in line for line in self.section(plan, "Problems")))
+        self.assertEqual(self.section(plan, "Remove stale links"), [])
+
+    def test_migrating_leaves_the_install_untouched(self):
+        self.old_install()
+        before = self.exclude()
+        (self.work / "domains.yml").unlink()
+        self.manifest(self.work)
+        self.machine(toolboxes=[self.work], workspaces=[self.ws1, self.ws2])
+        code, plan = self.run_install()
+        self.assertEqual(code, 0, plan)
+        for title in ("Create folders", "Create links", "Replace links", "Remove stale links", "Write generated rules",
+                      "Remove generated rules", "Update git excludes", "Conflicts, left alone", "Warnings"):
+            self.assertEqual(self.section(plan, title), [], title)
+
+        self.run_install("--apply")
+        self.assertEqual(self.exclude(), before)
+        parts = {entry["part"] for section in self.state().values() for entry in section.values()}
+        self.assertEqual(parts, {"global", "workspace", "work-toolbox"})
+        self.run_install("--toolbox", "work-toolbox", "--teardown", "--apply")
+        self.assertFalse((self.team_target / ".claude").exists())
 
 
 class PerWorkspace(InstallerTest):
@@ -241,7 +345,7 @@ class GeneratedRule(InstallerTest):
         self.run_install("--apply")
         self.assertIn("`uno`", (self.ws1 / RULE).read_text(encoding="utf-8"))
 
-        self.machine(domains=["global", "team"], toolboxes=[self.work], workspaces=[self.ws2])
+        self.machine(toolboxes=[self.work], workspaces=[self.ws2])
         _, plan = self.run_install()
         self.assertEqual(self.section(plan, "Remove generated rules"), [str(self.ws1 / RULE)])
         self.run_install("--apply")
@@ -311,8 +415,8 @@ class AdoptedState(InstallerTest):
 
     def test_adopted_links_are_in_place(self):
         self.adopt(self.work / "team" / ".claude" / "rules" / "tm-conventions.md")
-        self.machine(domains=["team"], toolboxes=[self.work])
-        code, plan = self.run_install()
+        self.machine(toolboxes=[self.work])
+        code, plan = self.run_install("--toolbox", "work-toolbox")
         self.assertEqual(code, 0, plan)
         self.assertEqual(self.section(plan, "Create links"), [])
         self.assertEqual(self.section(plan, "Create folders"), [])
@@ -322,14 +426,14 @@ class AdoptedState(InstallerTest):
     def test_a_link_into_another_listed_toolbox_is_replaced_not_a_conflict(self):
         old = write(self.work / "team" / ".claude" / "rules" / "tm-old.md")
         self.adopt(old)
-        self.machine(domains=["team"], toolboxes=[self.work])
+        self.machine(toolboxes=[self.work])
         code, plan = self.run_install()
         self.assertEqual(code, 0, plan)
         self.assertEqual(len(self.section(plan, "Replace links")), 1)
 
-    def test_adopted_links_go_when_their_domain_is_dropped(self):
+    def test_adopted_links_go_when_their_toolbox_is_dropped(self):
         target = self.adopt(self.work / "team" / ".claude" / "rules" / "tm-conventions.md")
-        self.machine(domains=["global"], toolboxes=[self.work])
+        self.machine()
         self.run_install("--apply")
         self.assertFalse(target.is_symlink())
         self.assertFalse((self.team_target / ".claude").exists())
@@ -339,7 +443,7 @@ class WorkspaceOption(InstallerTest):
     def test_acts_on_the_named_workspace_only(self):
         code, plan = self.run_install("--workspace", str(self.ws1), "--apply")
         self.assertEqual(code, 0, plan)
-        self.assertIn("Domains: workspace", plan)
+        self.assertIn("Toolboxes: claude-toolbox (workspace)", plan)
         self.assertTrue((self.ws1 / ".claude" / "skills" / "always").is_symlink())
         self.assertFalse((self.ws2 / ".claude" / "skills").exists())
         self.assertFalse((self.home / "rules").exists())
@@ -357,16 +461,16 @@ class WorkspaceOption(InstallerTest):
         _, plan = self.run_install("--workspace", str(ws3))
         self.assertTrue(any("not in machine.yml" in line for line in self.section(plan, "Warnings")))
 
-    def test_rejects_a_domain_that_isnt_per_workspace(self):
+    def test_rejects_a_toolbox_with_nothing_per_workspace(self):
         with self.assertRaises(SystemExit) as raised:
-            self.run_install("--workspace", str(self.ws1), "--domain", "global")
-        self.assertIn("per-workspace domains only", str(raised.exception.code))
+            self.run_install("--workspace", str(self.ws1), "--toolbox", "work-toolbox")
+        self.assertIn("acts only on what installs into every workspace", str(raised.exception.code))
 
-    def test_domain_option_still_skips_workspaces(self):
-        code, plan = self.run_install("--domain", "global", "--apply")
+    def test_with_this_repo_named_acts_on_its_workspace_folder_only(self):
+        code, plan = self.run_install("--workspace", str(self.ws1), "--toolbox", "claude-toolbox", "--apply")
         self.assertEqual(code, 0, plan)
-        self.assertFalse((self.ws1 / ".claude" / "skills").exists())
-        self.assertTrue((self.home / "rules" / "style.md").is_symlink())
+        self.assertTrue((self.ws1 / ".claude" / "skills" / "always").is_symlink())
+        self.assertFalse((self.home / "rules").exists())
 
 
 if __name__ == "__main__":

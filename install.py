@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Link every toolbox's Claude Code domains into place on this machine.
+"""Link every toolbox's Claude Code files into place on this machine.
 
-Each domain folder mirrors its target folder: folders are created, files are linked one at a time, and skill folders
-(anything containing SKILL.md) are linked whole. A per-workspace domain installs into every workspace machine.yml
-lists, gated by each workspace's features, with the workspace's generated config rule. Other toolbox repos listed in
-machine.yml contribute their domains. Previews by default and changes nothing; pass --apply to make the changes. See
-README.md.
+This repo installs two folders of its own: global/ into ~/.claude, and workspace/ into every workspace machine.yml
+lists, gated by each workspace's features, with the workspace's generated config rule. Every other toolbox repo
+machine.yml lists installs whole: its toolbox.yml names one source folder and the folder it mirrors. Each source folder
+mirrors its target: folders are created, files are linked one at a time, and skill folders (anything containing
+SKILL.md) are linked whole. Previews by default and changes nothing; pass --apply to make the changes. See README.md.
 """
 
 from __future__ import annotations
@@ -27,7 +27,8 @@ except ImportError:
     sys.exit("PyYAML is required. Install it with: python3 -m pip install -r requirements.txt")
 
 REPO = Path(__file__).resolve().parent
-MANIFEST = REPO / "domains.yml"
+MANIFEST_NAME = "toolbox.yml"
+OLD_MANIFEST_NAME = "domains.yml"
 MACHINE = REPO / "machine.yml"
 MACHINE_EXAMPLE = REPO / "machine.example.yml"
 STATE = REPO / ".install-state.json"
@@ -36,13 +37,25 @@ PLAN = REPO / "install-plan.txt"
 # The workspace config library, read for each workspace's features and its generated rule.
 CONFIG_LIB = Path(__file__).resolve().parent / "workspace" / ".claude" / "toolbox" / "lib"
 PER_WORKSPACE = "per-workspace"
+# This repo's own two folders, which always install. A listed toolbox's single source folder is named after the toolbox.
+OWN_PARTS = {
+    "global": {"source": "global", "target": "~/.claude"},
+    "workspace": {
+        "source": "workspace",
+        "target": PER_WORKSPACE,
+        # The toolbox scripts' tests and fixtures, run from this repo.
+        "ignore": [".claude/toolbox/tests"],
+    },
+}
+# The keys a listed toolbox's toolbox.yml may hold: what it installs, and how ship-toolbox-change lands its changes.
+TOOLBOX_KEYS = {"source", "target", "prefix", "ignore", "external", "ship", "branch_prefix"}
 FEATURES_FILE = "features.yml"
-# The per-workspace domain that writes each workspace's generated rule.
-RULE_DOMAIN = "workspace"
+# The per-workspace part that writes each workspace's generated rule.
+RULE_PART = "workspace"
 # The feature whose workspaces get their vault's tasks and discussions folders made, when the vault exists. Like any
 # folder the installer makes, they are removed only once empty, so a task record is never touched.
 TASKS_FEATURE = "tasks"
-# The folder in a per-workspace domain that mirrors each workspace's vault (its config's `vault.path`) instead of the
+# The folder in a per-workspace part that mirrors each workspace's vault (its config's `vault.path`) instead of the
 # workspace root. Its files are written, never linked, since Obsidian and synced vaults handle links poorly: rendered
 # when they end .tmpl, copied as they are otherwise.
 VAULT_DIR = ".vault"
@@ -63,10 +76,12 @@ CONFLICT_REASONS = {
 
 
 @dataclass
-class Domain:
+class Part:
+    """One source folder and where it installs: one of this repo's own two, or a listed toolbox's."""
+
     name: str
     spec: dict
-    repo: Path  # the toolbox repo whose domains.yml defines it
+    repo: Path  # the toolbox repo it comes from
 
     @property
     def per_workspace(self) -> bool:
@@ -78,7 +93,7 @@ class Domain:
 
     @property
     def marker(self) -> str:
-        return f"{self.repo.name}:{self.name}"
+        return f"{self.repo.name}:{self.spec['source']}"
 
 
 @dataclass
@@ -93,16 +108,16 @@ class Workspace:
 
 @dataclass
 class Link:
-    domain: str
+    part: str
     source: Path
     target: Path
     external: bool = False
-    workspace: str | None = None  # norm path, for a per-workspace domain's links
+    workspace: str | None = None  # norm path, for a per-workspace part's links
 
 
 @dataclass
 class Generated:
-    domain: str
+    part: str
     workspace: str
     path: Path
     text: str
@@ -111,14 +126,15 @@ class Generated:
 
 @dataclass
 class Scope:
-    """Which installed items this run may change: domains, narrowed to some workspaces, minus held ones."""
+    """Which installed items this run may change: parts (by the name recorded with each item), narrowed to some
+    workspaces, minus held ones."""
 
-    domains: set
+    parts: set
     workspaces: set | None = None  # None: every workspace
     held: set = field(default_factory=set)  # workspaces whose config is missing or invalid: left as they are
 
-    def covers(self, domain: str, workspace: str | None) -> bool:
-        if domain not in self.domains:
+    def covers(self, part: str, workspace: str | None) -> bool:
+        if part not in self.parts:
             return False
         if workspace is None:
             return True
@@ -142,10 +158,12 @@ class Plan:
     warnings: list
     problems: list
     keep_dirs: set
-    domains: list
+    parts: list
+    dirs: list  # every folder wanted, as (part, workspace, folder)
+    known: set  # every part name a toolbox has, held ones included
     workspaces: list
     scope: Scope
-    held_generated: list = field(default_factory=list)  # (domain, workspace, path) of templates that failed to render
+    held_generated: list = field(default_factory=list)  # (part, workspace, path) of templates that failed to render
     rendered: list = field(default_factory=list)  # each rendered file's {path, template, status}, for --json
 
 
@@ -194,43 +212,72 @@ def load_yaml(path: Path) -> dict:
 
 
 def load_machine() -> dict:
-    """machine.yml's domains, toolboxes and workspaces; all empty when there is no machine.yml."""
+    """machine.yml's toolboxes and workspaces, all empty when there is no machine.yml, and whether it still has the
+    retired `domains:` key."""
     raw = load_yaml(MACHINE) if MACHINE.exists() else {}
     return {
-        "domains": list(raw.get("domains") or []),
         "toolboxes": [expand(value, REPO).absolute() for value in raw.get("toolboxes") or []],
         "workspaces": [expand(value, REPO).absolute() for value in raw.get("workspaces") or []],
+        "domains": "domains" in raw,
     }
 
 
-def load_manifests(toolboxes: list, problems: list) -> dict:
-    """Every domain this installer knows: this repo's, then each listed toolbox's. The first definition of a name wins."""
-    own = load_yaml(MANIFEST).get("domains") or {}
-    if not isinstance(own, dict) or not own:
-        sys.exit(f"{MANIFEST.name} lists no domains.")
-    manifest = {name: Domain(name, spec, REPO) for name, spec in own.items()}
+def manifest_errors(spec) -> list:
+    if not isinstance(spec, dict):
+        return [f"{MANIFEST_NAME} must be a mapping"]
+    if "domains" in spec:
+        return [f"its {MANIFEST_NAME} still has `domains:`; move its one entry's keys (source, target, prefix, ignore, "
+                "external) to the top level"]
+    errors = [f"{MANIFEST_NAME} needs `{key}`" for key in ("source", "target") if not isinstance(spec.get(key), str)]
+    unknown = sorted(set(spec) - TOOLBOX_KEYS)
+    if unknown:
+        errors.append(f"{MANIFEST_NAME} has unknown key(s): {', '.join(unknown)}")
+    return errors
+
+
+def load_parts(toolboxes: list, problems: list) -> tuple[dict, set]:
+    """(every part this installer knows, the names of parts to leave as they are). The parts are this repo's own two,
+    then one per listed toolbox, named after its folder; a name taken twice is a problem, and the first wins. A toolbox
+    whose manifest can't be read in the new shape is a problem, and everything it installed, under its name or its old
+    domains' names, is held: neither installed nor removed until it's fixed."""
+    parts = {name: Part(name, spec, REPO) for name, spec in OWN_PARTS.items()}
+    taken = {REPO.name: REPO, **{name: REPO for name in parts}}
+    held = set()
     for toolbox in toolboxes:
         if norm(toolbox) == norm(REPO):
             continue
-        file = toolbox / "domains.yml"
+        name, file, old = toolbox.name, toolbox / MANIFEST_NAME, toolbox / OLD_MANIFEST_NAME
         if not file.is_file():
-            problems.append(f"toolbox {show(toolbox)}: no domains.yml there")
-            continue
-        domains = load_yaml(file).get("domains") or {}
-        for name, spec in domains.items():
-            if name in manifest:
+            if old.is_file():
                 problems.append(
-                    f"domain {name}: defined in both {show(manifest[name].repo)} and {show(toolbox)}; "
-                    f"using {show(manifest[name].repo)}'s"
+                    f"toolbox {show(toolbox)}: rename its {OLD_MANIFEST_NAME} to {MANIFEST_NAME}, with its one "
+                    "domain's keys (source, target, prefix, ignore, external) at the top level. Nothing installed or "
+                    "removed from it until then."
                 )
-                continue
-            manifest[name] = Domain(name, spec, toolbox.resolve())
-    return manifest
+                old_domains = load_yaml(old).get("domains")
+                held |= {name, *(old_domains if isinstance(old_domains, dict) else {})}
+            else:
+                problems.append(f"toolbox {show(toolbox)}: no {MANIFEST_NAME} there")
+            continue
+        spec = load_yaml(file)
+        errors = manifest_errors(spec)
+        if errors:
+            problems.append(f"toolbox {show(toolbox)}: " + "; ".join(errors) + ". Nothing installed or removed from it "
+                            "until it's fixed.")
+            old_domains = spec.get("domains") if isinstance(spec, dict) else None
+            held |= {name, *(old_domains if isinstance(old_domains, dict) else {})}
+            continue
+        if name in taken:
+            problems.append(f"toolbox {show(toolbox)}: the name {name} is taken by {show(taken[name])}; skipping it")
+            continue
+        taken[name] = toolbox
+        parts[name] = Part(name, spec, toolbox.resolve())
+    return parts, held
 
 
-def load_features(domain: Domain) -> dict:
-    """A per-workspace domain's features.yml: {feature: [paths relative to its source]}."""
-    file = domain.source / FEATURES_FILE
+def load_features(part: Part) -> dict:
+    """A per-workspace part's features.yml: {feature: [paths relative to its source]}."""
+    file = part.source / FEATURES_FILE
     if not file.exists():
         return {}
     raw = load_yaml(file)
@@ -291,6 +338,9 @@ def load_state() -> dict:
             state = json.load(handle)
     for section in ("links", "dirs", "generated"):
         state.setdefault(section, {})
+        for entry in state[section].values():
+            if "domain" in entry:  # recorded before toolboxes replaced domains
+                entry["part"] = entry.pop("domain")
     return state
 
 
@@ -324,9 +374,9 @@ def skipper(per_workspace: bool, features: dict, have: list):
     return lambda relpath: relpath in (FEATURES_FILE, VAULT_DIR) or gated(relpath, features, have)
 
 
-def walk(domain: str, src_root: Path, tgt_root: Path, ignore: list, skip, workspace, links: list, dirs: list,
+def walk(part: str, src_root: Path, tgt_root: Path, ignore: list, skip, workspace, links: list, dirs: list,
          templates: list | None = None) -> None:
-    """Collect a domain's links and folders. With `templates` (a per-workspace domain), each .tmpl file goes there as
+    """Collect a part's links and folders. With `templates` (a per-workspace part), each .tmpl file goes there as
     (source, target without the suffix) instead of being linked."""
     suffix = import_templates().SUFFIX if templates is not None else None
 
@@ -339,12 +389,12 @@ def walk(domain: str, src_root: Path, tgt_root: Path, ignore: list, skip, worksp
                 continue
             target = tgt / entry.name
             if entry.is_dir() and not is_skill_dir(entry):
-                dirs.append((domain, workspace, target))
+                dirs.append((part, workspace, target))
                 visit(entry, target, relpath)
             elif suffix and entry.is_file() and entry.name.endswith(suffix) and entry.name != suffix:
                 templates.append((entry, tgt / entry.name[: -len(suffix)]))
             else:
-                links.append(Link(domain, entry, target, workspace=workspace))
+                links.append(Link(part, entry, target, workspace=workspace))
 
     visit(src_root, tgt_root, "")
 
@@ -358,7 +408,7 @@ def parents_within(path: Path, root: Path) -> list:
     return list(reversed(chain))
 
 
-def render_template(domain: str, ws: Workspace, template: Path, path: Path, generated: list, held: list,
+def render_template(part: str, ws: Workspace, template: Path, path: Path, generated: list, held: list,
                     problems: list) -> None:
     """Render one template with a workspace's config into `generated`, or report why it can't be."""
     templates = import_templates()
@@ -370,14 +420,14 @@ def render_template(domain: str, ws: Workspace, template: Path, path: Path, gene
             f"workspace {show(ws.path)}: can't render {show(path)} from {template.name}, so it is left as it is: "
             + "; ".join(reasons)
         )
-        held.append((domain, ws.key, path))
+        held.append((part, ws.key, path))
         return
-    generated.append(Generated(domain, ws.key, path, text, template))
+    generated.append(Generated(part, ws.key, path, text, template))
 
 
-def vault_files(domain: str, src_root: Path, ws: Workspace, ignore: list, skip, dirs: list, generated: list,
+def vault_files(part: str, src_root: Path, ws: Workspace, ignore: list, skip, dirs: list, generated: list,
                 held: list, problems: list) -> None:
-    """Collect the domain's vault folder for one workspace: each file rendered or copied into the workspace's vault, at
+    """Collect the part's vault folder for one workspace: each file rendered or copied into the workspace's vault, at
     its path below the folder. A vault that doesn't exist is a problem, and nothing is written there."""
     source = src_root / VAULT_DIR
     if not source.is_dir():
@@ -404,34 +454,34 @@ def vault_files(domain: str, src_root: Path, ws: Workspace, ignore: list, skip, 
     suffix = import_templates().SUFFIX
     for entry, rel in found:
         target = vault / rel
-        dirs.extend((domain, ws.key, folder) for folder in parents_within(target, vault))
+        dirs.extend((part, ws.key, folder) for folder in parents_within(target, vault))
         if entry.name.endswith(suffix) and entry.name != suffix:
-            render_template(domain, ws, entry, target.with_name(entry.name[: -len(suffix)]), generated, held, problems)
+            render_template(part, ws, entry, target.with_name(entry.name[: -len(suffix)]), generated, held, problems)
             continue
         try:
             text = entry.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError) as error:
             problems.append(f"workspace {show(ws.path)}: can't copy {entry.name} into the vault: {error}")
-            held.append((domain, ws.key, target))
+            held.append((part, ws.key, target))
             continue
-        generated.append(Generated(domain, ws.key, target, text, entry))
+        generated.append(Generated(part, ws.key, target, text, entry))
 
 
-def desired(manifest: dict, names: list, workspaces: list, problems: list, warnings: list, held: list | None = None):
+def desired(parts: dict, names: list, workspaces: list, problems: list, warnings: list, held: list | None = None):
     """(links, folders, generated files). A template that fails to render is a problem, and its target goes in `held`
-    as (domain, workspace, path): neither written nor removed."""
+    as (part, workspace, path): neither written nor removed."""
     links, dirs, generated = [], [], []
     held = [] if held is None else held
     by_key = {ws.key: ws for ws in workspaces}
     for name in names:
-        domain = manifest[name]
-        spec = domain.spec
-        src_root = domain.source
+        part = parts[name]
+        spec = part.spec
+        src_root = part.source
         if not src_root.is_dir():
             problems.append(f"{name}: source folder {show(src_root)} doesn't exist")
             continue
-        if domain.per_workspace:
-            features = load_features(domain)
+        if part.per_workspace:
+            features = load_features(part)
             for feature, paths in features.items():
                 warnings.extend(
                     f"{name}/{FEATURES_FILE}: {feature}: {path} doesn't exist"
@@ -447,12 +497,12 @@ def desired(manifest: dict, names: list, workspaces: list, problems: list, warni
                 continue
             roots = [(None, tgt_root, None)]
         for workspace, tgt_root, have in roots:
-            skip = skipper(domain.per_workspace, features, have)
-            found = [] if domain.per_workspace else None
+            skip = skipper(part.per_workspace, features, have)
+            found = [] if part.per_workspace else None
             walk(name, src_root, tgt_root, spec.get("ignore") or [], skip, workspace, links, dirs, found)
             for template, path in found or []:
                 render_template(name, by_key[workspace], template, path, generated, held, problems)
-            if domain.per_workspace:
+            if part.per_workspace:
                 vault_files(name, src_root, by_key[workspace], spec.get("ignore") or [], skip, dirs, generated, held,
                             problems)
             for external in spec.get("external") or []:
@@ -462,12 +512,12 @@ def desired(manifest: dict, names: list, workspaces: list, problems: list, warni
                 dirs.extend((name, workspace, folder) for folder in parents_within(target, tgt_root))
                 links.append(Link(name, expand(external["source"]), target, external=True, workspace=workspace))
 
-    if RULE_DOMAIN in names and manifest[RULE_DOMAIN].per_workspace and workspaces:
+    if RULE_PART in names and parts[RULE_PART].per_workspace and workspaces:
         config = import_config()
         for ws in workspaces:
             path = ws.path / config.RULE_PATH
-            dirs.extend((RULE_DOMAIN, ws.key, folder) for folder in parents_within(path, ws.path))
-            generated.append(Generated(RULE_DOMAIN, ws.key, path, config.render_rule(ws.config)))
+            dirs.extend((RULE_PART, ws.key, folder) for folder in parents_within(path, ws.path))
+            generated.append(Generated(RULE_PART, ws.key, path, config.render_rule(ws.config)))
             if TASKS_FEATURE in ws.config.features:
                 vault = ws.config.vault_dir
                 if not vault.is_dir():
@@ -477,11 +527,11 @@ def desired(manifest: dict, names: list, workspaces: list, problems: list, warni
                         problems.append(problem)
                     continue
                 for folder in (ws.config.tasks_dir, ws.config.discussions_dir):
-                    dirs.extend((RULE_DOMAIN, ws.key, d) for d in [*parents_within(folder, vault), folder])
+                    dirs.extend((RULE_PART, ws.key, d) for d in [*parents_within(folder, vault), folder])
 
     unique_dirs = {}
-    for domain, workspace, folder in dirs:
-        unique_dirs.setdefault(norm(folder), (domain, workspace, folder))
+    for part, workspace, folder in dirs:
+        unique_dirs.setdefault(norm(folder), (part, workspace, folder))
     return links, list(unique_dirs.values()), generated
 
 
@@ -498,11 +548,11 @@ def frontmatter_name(markdown: Path) -> str | None:
     return match.group(1).strip() if match else None
 
 
-def name_warnings(link: Link, domain: Domain) -> list:
+def name_warnings(link: Link, part: Part) -> list:
     if link.external:
         return []
     source = link.source
-    parts = source.relative_to(domain.repo).parts
+    parts = source.relative_to(part.repo).parts
     if source.is_dir():
         kind, name = "skill", source.name
         markdown = next(source / file for file in SKILL_FILES if (source / file).is_file())
@@ -517,18 +567,18 @@ def name_warnings(link: Link, domain: Domain) -> list:
         declared = frontmatter_name(markdown)
         if declared != name:
             warnings.append(f"{kind} {where}: frontmatter name is {declared!r}, but its name on disk is {name!r}")
-    prefix = domain.spec.get("prefix")
+    prefix = part.spec.get("prefix")
     if prefix and not name.startswith(prefix):
-        warnings.append(f"{kind} {where}: missing the domain prefix {prefix!r}")
+        warnings.append(f"{kind} {where}: missing the toolbox's prefix {prefix!r}")
     return warnings
 
 
-def feature_warnings(manifest: dict, names: list, workspaces: list) -> list:
+def feature_warnings(parts: dict, names: list, workspaces: list) -> list:
     """Features a workspace's config names that no features.yml it installs from mentions."""
     known = set()
     for name in names:
-        if manifest[name].per_workspace:
-            known |= set(load_features(manifest[name]))
+        if parts[name].per_workspace:
+            known |= set(load_features(parts[name]))
     return [
         f"workspace {show(ws.path)}: feature {feature!r} isn't in any {FEATURES_FILE}, so it gates nothing"
         for ws in workspaces
@@ -575,7 +625,7 @@ def render_exclude(text: str, marker: str, entries: list) -> str:
 def own_link(path: Path, state: dict, scope: Scope) -> bool:
     """Whether a link is one this installer made, still pointing where it did, and in this run's scope."""
     entry = state["links"].get(norm(path))
-    return bool(entry) and scope.covers(entry["domain"], entry.get("workspace")) \
+    return bool(entry) and scope.covers(entry["part"], entry.get("workspace")) \
         and link_dest(path) == norm(entry["source"])
 
 
@@ -600,22 +650,23 @@ def generated_status(gen: Generated, counts: dict, blocked: list, state: dict, s
     return "new"
 
 
-def build_plan(manifest: dict, names: list, scope: Scope, state: dict, workspaces: list, problems: list) -> Plan:
+def build_plan(parts: dict, names: list, scope: Scope, state: dict, workspaces: list, problems: list,
+               known: set = frozenset()) -> Plan:
     warnings, held = [], []
-    links, dirs, generated = desired(manifest, names, workspaces, problems, warnings, held)
+    links, dirs, generated = desired(parts, names, workspaces, problems, warnings, held)
     plan = Plan(
-        [], [], [], [], [], [], [], [], [], [], [], [], warnings, problems, set(), names,
+        [], [], [], [], [], [], [], [], [], [], [], [], warnings, problems, set(), names, dirs, set(parts) | known,
         [ws.path for ws in workspaces], scope, held,
     )
-    owned = {norm(REPO)} | {norm(domain.repo) for domain in manifest.values()}
+    owned = {norm(REPO)} | {norm(part.repo) for part in parts.values()}
 
     blocked = []
-    for domain, workspace, folder in dirs:
+    for part, workspace, folder in dirs:
         if folder.is_symlink() or (folder.exists() and not folder.is_dir()):
             plan.conflicts.append(("dir-conflict", folder, None))
             blocked.append(norm(folder))
         elif not folder.exists():
-            plan.create_dirs.append((domain, workspace, folder))
+            plan.create_dirs.append((part, workspace, folder))
         plan.keep_dirs.add(norm(folder))
 
     counts = {}
@@ -624,7 +675,7 @@ def build_plan(manifest: dict, names: list, scope: Scope, state: dict, workspace
 
     for link in links:
         key = norm(link.target)
-        plan.warnings += name_warnings(link, manifest[link.domain])
+        plan.warnings += name_warnings(link, parts[link.part])
         if counts[key] > 1:
             plan.conflicts.append(("collision", link.target, link.source))
         elif any(key.startswith(folder + os.sep) for folder in blocked):
@@ -660,7 +711,7 @@ def build_plan(manifest: dict, names: list, scope: Scope, state: dict, workspace
 
     wanted = {norm(link.target) for link in links}
     for key, record in state["links"].items():
-        if not scope.covers(record["domain"], record.get("workspace")) or key in wanted:
+        if not scope.covers(record["part"], record.get("workspace")) or key in wanted:
             continue
         target = Path(record["target"])
         if target.is_symlink() and link_dest(target) == norm(record["source"]):
@@ -670,7 +721,7 @@ def build_plan(manifest: dict, names: list, scope: Scope, state: dict, workspace
 
     wanted_rules = {norm(gen.path) for gen in generated} | {norm(path) for _, _, path in held}
     for key, record in state["generated"].items():
-        if not scope.covers(record["domain"], record["workspace"]) or key in wanted_rules:
+        if not scope.covers(record["part"], record["workspace"]) or key in wanted_rules:
             continue
         path = Path(record["path"])
         if path.is_file() and not path.is_symlink():
@@ -680,32 +731,32 @@ def build_plan(manifest: dict, names: list, scope: Scope, state: dict, workspace
         else:
             plan.forget_rules.append(key)
 
-    plan.excludes = plan_excludes(manifest, scope, state, workspaces, plan)
-    plan.warnings += feature_warnings(manifest, names, workspaces)
+    plan.excludes = plan_excludes(parts, scope, state, workspaces, plan)
+    plan.warnings += feature_warnings(parts, names, workspaces)
     plan.warnings = list(dict.fromkeys(plan.warnings))
     return plan
 
 
-def plan_excludes(manifest: dict, scope: Scope, state: dict, workspaces: list, plan: Plan) -> list:
-    """One managed block per toolbox, domain and git target: the domain's links and generated files (the rule and
-    rendered templates, including any left in place because they failed to render), plus, for the rule domain, each
+def plan_excludes(parts: dict, scope: Scope, state: dict, workspaces: list, plan: Plan) -> list:
+    """One managed block per toolbox, part and git target: the part's links and generated files (the rule and
+    rendered templates, including any left in place because they failed to render), plus, for the rule part, each
     workspace's config file."""
     installed = plan.ok + plan.relink + plan.create
-    written = [(gen.domain, gen.workspace, gen.path) for gen in plan.rules_ok + [gen for gen, _ in plan.write_rules]]
-    written += [(domain, workspace, path) for domain, workspace, path in plan.held_generated if path.is_file()]
+    written = [(gen.part, gen.workspace, gen.path) for gen in plan.rules_ok + [gen for gen, _ in plan.write_rules]]
+    written += [(part, workspace, path) for part, workspace, path in plan.held_generated if path.is_file()]
     active = {ws.key: ws for ws in workspaces}
 
-    roots = []  # (domain, workspace key or None, root folder)
-    for name in sorted(scope.domains & set(manifest)):
-        domain = manifest[name]
-        if not domain.per_workspace:
-            roots.append((name, None, expand(domain.spec["target"])))
+    roots = []  # (part, workspace key or None, root folder)
+    for name in sorted(scope.parts & set(parts)):
+        part = parts[name]
+        if not part.per_workspace:
+            roots.append((name, None, expand(part.spec["target"])))
             continue
         keys = set(active) | {
             record["workspace"]
             for section in ("links", "generated")
             for record in state[section].values()
-            if record["domain"] == name and record.get("workspace") and scope.covers(name, record["workspace"])
+            if record["part"] == name and record.get("workspace") and scope.covers(name, record["workspace"])
         }
         roots += [(name, key, active[key].path if key in active else Path(key)) for key in sorted(keys)]
 
@@ -721,13 +772,13 @@ def plan_excludes(manifest: dict, scope: Scope, state: dict, workspaces: list, p
             return "/" + Path(os.path.relpath(norm(path), norm(top))).as_posix()
 
         # A vault outside the workspace's repo (work's lives elsewhere on disk) has nothing to exclude here.
-        entries = {entry(link.target) for link in installed if link.domain == name and link.workspace == workspace}
-        entries |= {entry(path) for domain, key, path in written
-                    if domain == name and key == workspace and inside(norm(path), {norm(top)})}
-        if name == RULE_DOMAIN and workspace in active:
+        entries = {entry(link.target) for link in installed if link.part == name and link.workspace == workspace}
+        entries |= {entry(path) for part, key, path in written
+                    if part == name and key == workspace and inside(norm(path), {norm(top)})}
+        if name == RULE_PART and workspace in active:
             entries.add(entry(root / config.CONFIG_PATH))
         current = exclude_file.read_text(encoding="utf-8") if exclude_file.exists() else ""
-        updated = render_exclude(current, manifest[name].marker, sorted(entries))
+        updated = render_exclude(current, parts[name].marker, sorted(entries))
         if updated != current:
             excludes.append((exclude_file, updated, len(entries)))
     return excludes
@@ -743,9 +794,14 @@ def record(fields: dict, workspace: str | None) -> dict:
 
 def apply_plan(plan: Plan, state: dict) -> list:
     errors = []
-    for domain, workspace, folder in plan.create_dirs:
+    for part, workspace, folder in plan.create_dirs:
         folder.mkdir(parents=True, exist_ok=True)
-        state["dirs"][norm(folder)] = record({"path": str(folder), "domain": domain}, workspace)
+        state["dirs"][norm(folder)] = record({"path": str(folder), "part": part}, workspace)
+    # A folder recorded under a name no toolbox has any more (a retired domain's) belongs to the part that wants it now.
+    for part, workspace, folder in plan.dirs:
+        entry = state["dirs"].get(norm(folder))
+        if entry and entry["part"] not in plan.known:
+            state["dirs"][norm(folder)] = record({"path": entry["path"], "part": part}, workspace)
     for key, entry in plan.stale:
         Path(entry["target"]).unlink()
         del state["links"][key]
@@ -768,7 +824,7 @@ def apply_plan(plan: Plan, state: dict) -> list:
     for link in plan.ok + plan.relink + plan.create:
         if link.target.is_symlink():
             state["links"][norm(link.target)] = record(
-                {"target": str(link.target), "source": str(link.source), "domain": link.domain}, link.workspace
+                {"target": str(link.target), "source": str(link.source), "part": link.part}, link.workspace
             )
     for gen, _ in plan.write_rules:
         try:
@@ -780,7 +836,7 @@ def apply_plan(plan: Plan, state: dict) -> list:
     for gen in plan.rules_ok + [gen for gen, _ in plan.write_rules]:
         if gen.path.is_file():
             state["generated"][norm(gen.path)] = {
-                "path": str(gen.path), "domain": gen.domain, "workspace": gen.workspace,
+                "path": str(gen.path), "part": gen.part, "workspace": gen.workspace,
                 **({"template": str(gen.template)} if gen.template else {}),
             }
     for exclude_file, text, _ in plan.excludes:
@@ -790,7 +846,7 @@ def apply_plan(plan: Plan, state: dict) -> list:
     for key in sorted(state["dirs"], key=len, reverse=True):
         entry = state["dirs"][key]
         folder = Path(entry["path"])
-        if not plan.scope.covers(entry["domain"], entry.get("workspace")) or key in plan.keep_dirs:
+        if not plan.scope.covers(entry["part"], entry.get("workspace")) or key in plan.keep_dirs:
             continue
         if folder.is_dir() and not folder.is_symlink() and not any(folder.iterdir()):
             folder.rmdir()
@@ -809,6 +865,13 @@ def rendered_from(gen: Generated) -> str:
         return ""
     verb = "rendered" if gen.template.name.endswith(import_templates().SUFFIX) else "copied"
     return f", {verb} from {gen.template.name}"
+
+
+def describe_toolboxes(names: list) -> str:
+    """The toolboxes a run installs, with this repo's folders named when the run installs only some of them."""
+    own = [name for name in names if name in OWN_PARTS]
+    shown = [REPO.name if own == list(OWN_PARTS) else f"{REPO.name} ({', '.join(own)})"] if own else []
+    return ", ".join(shown + [name for name in names if name not in OWN_PARTS])
 
 
 def plan_sections(plan: Plan, errors: list) -> list:
@@ -866,7 +929,7 @@ def report(plan: Plan, applied: bool, rerun: str, errors: list) -> None:
     mode = "APPLIED" if applied else "PREVIEW"
     header = [
         f"{REPO.name} install plan: {mode}, {datetime.now().isoformat(timespec='seconds')}",
-        f"Domains: {', '.join(plan.domains) or '(none)'}",
+        f"Toolboxes: {describe_toolboxes(plan.parts) or '(none)'}",
         f"Workspaces: {', '.join(show(path) for path in plan.workspaces) or '(none)'}",
     ]
     with open(PLAN, "w", encoding="utf-8") as handle:
@@ -900,12 +963,33 @@ def report(plan: Plan, applied: bool, rerun: str, errors: list) -> None:
 # ---------------------------------------------------------------------------------------------------------------------
 
 
+def select(values: list, parts: dict, held: set) -> list:
+    """The parts the --toolbox values name: a toolbox's folder name or path. This repo stands for both its folders."""
+    toolboxes = {}  # folder name or path: part names
+    for name, part in parts.items():
+        for key in (REPO.name, norm(REPO)) if name in OWN_PARTS else (name, norm(part.repo)):
+            toolboxes.setdefault(key, []).append(name)
+    chosen = []
+    for value in values:
+        names = toolboxes.get(value) or toolboxes.get(norm(expand(value).absolute()))
+        if names is None:
+            known = ", ".join([REPO.name] + [name for name in parts if name not in OWN_PARTS])
+            reason = "its manifest needs fixing first; run install.py to see why" if value in held else \
+                f"not a listed toolbox. Known toolboxes: {known}"
+            sys.exit(f"--toolbox {value}: {reason}")
+        chosen += [name for name in names if name not in chosen]
+    return chosen
+
+
 def main(argv: list | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--apply", action="store_true", help="make the changes (default: preview only)")
     parser.add_argument("--teardown", action="store_true", help="remove what this installer installed instead")
     parser.add_argument(
-        "--domain", action="append", default=[], help="act on this domain only, ignoring machine.yml (repeatable)"
+        "--toolbox",
+        action="append",
+        default=[],
+        help="act on this toolbox only, by folder name or path, ignoring the others machine.yml lists (repeatable)",
     )
     parser.add_argument(
         "--workspace",
@@ -920,26 +1004,29 @@ def main(argv: list | None = None) -> int:
 
     machine = load_machine()
     problems = []
-    manifest = load_manifests(machine["toolboxes"], problems)
+    if machine["domains"]:
+        problems.append(
+            f"{MACHINE.name}: remove `domains:`, which is no longer read. Every toolbox under `toolboxes:` installs "
+            f"whole, and {REPO.name}'s global and workspace folders always install."
+        )
+    parts, held_parts = load_parts(machine["toolboxes"], problems)
     state = load_state()
-    unknown = [name for name in args.domain if name not in manifest]
-    if unknown:
-        sys.exit(f"Unknown domain(s): {', '.join(unknown)}. Known domains: {', '.join(manifest)}")
-    per_workspace = [name for name, domain in manifest.items() if domain.per_workspace]
+    per_workspace = [name for name, part in parts.items() if part.per_workspace]
+    chosen = select(args.toolbox, parts, held_parts) if args.toolbox else None
 
     if args.workspace:
-        chosen = [name for name in args.domain if name in per_workspace] if args.domain else per_workspace
+        chosen = [name for name in chosen if name in per_workspace] if chosen is not None else per_workspace
         if not chosen:
-            sys.exit(f"--workspace acts on per-workspace domains only: {', '.join(per_workspace) or '(none)'}")
-    else:
-        chosen = list(args.domain) or None
+            sys.exit(f"--workspace acts only on what installs into every workspace: {REPO.name}'s "
+                     f"{', '.join(per_workspace) or '(none)'}")
 
     if chosen is not None:
-        scope_domains = set(chosen)
+        scope_parts = set(chosen)
     else:
-        scope_domains = set(manifest) | {
-            entry["domain"] for section in ("links", "dirs", "generated") for entry in state[section].values()
+        scope_parts = set(parts) | {
+            entry["part"] for section in ("links", "dirs", "generated") for entry in state[section].values()
         }
+    scope_parts -= held_parts
     if args.teardown:
         names = []
     elif chosen is not None:
@@ -948,13 +1035,9 @@ def main(argv: list | None = None) -> int:
         if not MACHINE.exists():
             sys.exit(
                 f"No {MACHINE.name} on this machine. Copy {MACHINE_EXAMPLE.name} to {MACHINE.name} and list the "
-                f"domains to install here.\n  {MACHINE_EXAMPLE}"
+                f"toolboxes and workspaces to install here.\n  {MACHINE_EXAMPLE}"
             )
-        names = list(dict.fromkeys(machine["domains"]))
-        unknown = [name for name in names if name not in manifest]
-        if unknown:
-            sys.exit(f"{MACHINE.name} lists unknown domain(s): {', '.join(unknown)}")
-        names += [name for name in per_workspace if name not in names]
+        names = list(parts)
 
     paths = [expand(value).absolute() for value in args.workspace] if args.workspace else machine["workspaces"]
     workspaces, held = [], set()
@@ -966,9 +1049,9 @@ def main(argv: list | None = None) -> int:
         for path in paths
         if args.workspace and not args.teardown and norm(path) not in listed
     ]
-    scope = Scope(scope_domains, {norm(path) for path in paths} if args.workspace else None, held)
+    scope = Scope(scope_parts, {norm(path) for path in paths} if args.workspace else None, held)
 
-    plan = build_plan(manifest, names, scope, state, workspaces, problems)
+    plan = build_plan(parts, names, scope, state, workspaces, problems, held_parts)
     plan.warnings = warnings + plan.warnings
     if args.json:
         report_json(plan, all(norm(path) in listed for path in paths))
@@ -978,7 +1061,7 @@ def main(argv: list | None = None) -> int:
     rerun = " ".join(
         [Path(sys.executable).name, Path(__file__).name]
         + (["--teardown"] if args.teardown else [])
-        + [f"--domain {name}" for name in args.domain]
+        + [f"--toolbox {value}" for value in args.toolbox]
         + [f"--workspace {value}" for value in args.workspace]
     )
     report(plan, args.apply, rerun, errors)
