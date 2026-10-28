@@ -124,6 +124,12 @@ class NonMavenTest(RunTestsCase):
         self.assertEqual(code, 1)
         self.assertIn("no {test}", out)
 
+    def test_without_test_the_placeholder_is_empty(self):
+        self.configure({"a": {"unit": "test 'x{test}' = x"}})
+        self.folder("a")
+        code, out = self.run_script("unit", "a")
+        self.assertEqual(code, 0, out)
+
     def test_a_missing_folder_fails(self):
         self.configure({"gone": {"unit": "true"}})
         code, out = self.run_script("unit", "gone")

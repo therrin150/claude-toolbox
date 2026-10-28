@@ -51,7 +51,7 @@ Only the session can call MCP tools; the script can't. Use the servers the sessi
 | `tracker.jira.mcp_server` | the session's Atlassian server name, when `.mcp.json` didn't name one |
 | `tracker.jira.site`, `cloud_id` | `getAccessibleAtlassianResources`: the site's host (`<site>.atlassian.net`) and its `id`. More than one site: ask which |
 | `tracker.jira.account` | `atlassianUserInfo`: the signed-in account's email |
-| `tracker.jira.fields` | the `discover` tool's field listing, matched by name: "Acceptance Criteria" → `acceptance_criteria`, "Sprint" → `sprint`. No match: ask, or leave the field out |
+| `tracker.jira.fields` | the `discover` tool's field listing, or on a server without it `getJiraIssueTypeMetaWithFields` for the project's story type (`requiredFieldsOnly: false`), matched by name: "Acceptance Criteria" → `acceptance_criteria`, "Sprint" → `sprint`. No match: ask, or leave the field out |
 | `tracker.jira.project` | detected from key prefixes; with none, ask, and check the key exists in the site's projects |
 
 With no Atlassian tools in the session, ask for the site, cloud id and account, or let Allen pick another tracker.

@@ -4,9 +4,10 @@ Stop 1 of 2 per cycle: the user reviews the code in the local review page and ma
 them. It ends at "Done reviewing", which is the cue to draft (never to publish), and then stop 2 (`publish-review.md`).
 Stage `code-review`. Review comments, decisions and code changes all happen here; the commit messages don't exist yet.
 
-`<review>` is `python3 .claude/skills/local-review-ui/scripts/review.py` (the workspace's absolute path from the
-toolbox-config rule), and the review's id is the work id. Without the `review-ui` feature there is no review page:
-skip the steps that name `<review>`, and the user answers stop 1 in chat, comments and all.
+`<review>` stands for `python3 <workspace>/.claude/skills/local-review-ui/scripts/review.py`, with the workspace's
+absolute path from the toolbox-config rule: write it out in full in every call, as SKILL.md says of `<bin>`, never in a
+shell variable (zsh won't run a command held in one). The review's id is the work id. Without the `review-ui` feature
+there is no review page: skip the steps that name `<review>`, and the user answers stop 1 in chat, comments and all.
 
 ## Presenting the Stop
 

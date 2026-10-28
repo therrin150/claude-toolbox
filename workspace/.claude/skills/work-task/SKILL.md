@@ -79,6 +79,7 @@ STOP (record it, notify, explain in a few lines, wait) when:
 
 - the tracker's issue contradicts the record (someone may have edited it after filing or import; a task with a Jira
   key);
+- the code already does what the task asks (`work.md`, "Before the First Cycle");
 - the task isn't ready to work: the record (or, for a plan, the plan) doesn't say what to change and how to tell it's
   done, or a plan holds several tasks' worth of change with nothing saying which to work (ask what's missing, or
   whether to file drafts for it);
@@ -113,10 +114,21 @@ are, so a resume lands back here. On the user's answer, log it (`tasks.py log <w
    yourself; use `work_id` wherever these files say `<work id>`.
 
    **`needs_import`** (exit 1, `jira` tracker): no record has this key. Fetch the issue (`getJiraIssue` with the
-   rule's cloud id; fields `summary`, `description`, `issuetype`, `parent`, `issuelinks`, `status`, `labels`, plus
-   the acceptance-criteria field id from `<bin>/toolbox.py config show tracker.jira.fields`, when there is one). If it
-   has no acceptance criteria, or its description doesn't say what to change, STOP (there is no record yet, so
-   nothing to set). Otherwise save the response as JSON to the session scratchpad as `<KEY>-issue.json`, run
+   rule's cloud id, `responseContentFormat: "markdown"`; fields `summary`, `description`, `issuetype`, `parent`,
+   `issuelinks`, `status`, plus the acceptance-criteria field id from `<bin>/toolbox.py config show
+   tracker.jira.fields`, when there is one). If it has no acceptance criteria, or its description doesn't say what to
+   change, STOP (there is no record yet, so nothing to set). Otherwise write to the session scratchpad, as
+   `<KEY>-issue.json`, only what `import` reads, copying each value exactly (a slip here becomes the record):
+
+   ```json
+   {"context": {"cloudId": "<the response's>"}, "key": "<KEY>", "webUrl": "<its URL>", "fields": {
+     "summary": "...", "issuetype": {"name": "..."}, "status": {"statusCategory": {"key": "..."}},
+     "parent": {"key": "...", "fields": {"issuetype": {"name": "..."}}},
+     "issuelinks": [{"type": {"name": "Blocks"}, "inwardIssue": {"key": "..."}}],
+     "description": "<markdown>", "<acceptance-criteria field id>": "<markdown, or the ADF object as returned>"}}
+   ```
+
+   Leave out `parent` with no parent, and keep only `Blocks` links whose `inwardIssue` is set. Then run
    `<bin>/tasks.py import <KEY> --issue <file>`, and run `context` again.
 
    **`needs_requirement`**: the record's `## Description` is empty, as it always is right after a plan's record is
@@ -224,7 +236,7 @@ its step as `hook <id>`; rename headings freely, never an id. The `###` sections
 | `stop-conditions` | "STOP Conditions" above | those conditions | add |
 | `dispatch` | "Dispatch" above: rows for an extension's own stages | that table | add |
 | `before-first-cycle` | `work.md` "Before the First Cycle", once on a fresh start: after the record and its context are loaded, before any worktree | nothing | add |
-| `plan-the-cycles` | `work.md` "Before the First Cycle", step 4 | "### Plan the cycles" | add, replace |
+| `plan-the-cycles` | `work.md` "Before the First Cycle", step 6 | "### Plan the cycles" | add, replace |
 | `after-implementing` | `work.md` "Each Cycle", after step 2, before format and tests | nothing | add |
 | `format` | `work.md` "Each Cycle", step 3 | `run_tests.py format` | add, skip |
 | `unit-tests` | `work.md` "Each Cycle", step 4 | `run-unit-tests` | add, skip |

@@ -28,7 +28,7 @@ attempts).
 - **area[=dir]**: as in `run-unit-tests`; the same checkout `start-local-services` started.
 - **--token**: the lock token from `start-local-services`. **--name** is its lock name, left out in a `single`
   workspace.
-- **--test**: run one test; it replaces `{test}` in the area's command.
+- **--test**: run one test; it replaces `{test}` in the area's command, which is otherwise replaced with nothing.
 
 ## Workflow
 

@@ -212,7 +212,8 @@ class DoctorTest(unittest.TestCase):
         agent = self.ws / ".claude" / "agents" / "jira-filer.md"
         jira_tools = ["atlassianUserInfo", "getAccessibleAtlassianResources", "getJiraIssue",
                       "searchJiraIssuesUsingJql", "createJiraIssue", "editJiraIssue", "addOrEditJiraIssueComment",
-                      "discover", "executeRead", "executeWrite"]
+                      "discover", "executeRead", "executeWrite", "addCommentToJiraIssue", "createIssueLink",
+                      "getIssueLinkTypes", "getJiraIssueTypeMetaWithFields"]
         self.assertFalse(agent.exists())  # no jira feature yet
         for server in ("atlassian", "atlassian-work"):
             self.use_jira(server)
@@ -266,6 +267,12 @@ class DoctorTest(unittest.TestCase):
         _, checks, _ = self.doctor(GH_FAKE_LOGIN="someone")
         self.assertEqual(checks["gh"]["status"], "fail")
         self.assertIn("signed in as someone", checks["gh"]["detail"])
+
+    def test_gh_account_other_than_the_handle(self):
+        self.config["user"]["github"] = "someone"
+        self.write_config()
+        _, checks, _ = self.doctor(GH_FAKE_LOGIN="someone")
+        self.assertEqual(checks["gh"], {"check": "gh", "status": "ok", "detail": "signed in as someone"})
 
     def test_missing_vault_folder_and_unlisted_workspace(self):
         (self.ws / "vault" / "Discussions").rmdir()

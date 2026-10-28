@@ -6,7 +6,7 @@ Each check returns {"check", "status", "detail"}, status `ok`, `fail` or `skip` 
   install     the installer's preview for this workspace is clean, and machine.yml lists the workspace
   rule        .claude/rules/toolbox-config.md is what the config renders today
   rendered    every file the installer renders from a template (`.tmpl`) is there and what the config renders today
-  gh          gh is signed in, as the GitHub account user.handle names
+  gh          gh is signed in, as the GitHub account user.github names (user.handle when unset)
   vault       the vault, tasks and discussions folders exist
   extensions  every doc in .claude/extensions/ (but the README) parses, and each section's verb and hook id are
               ones the extended skill's Extension Points table allows; at most one doc replaces or skips a hook
@@ -126,8 +126,10 @@ def check_gh(cfg: config.Config) -> dict:
     login = user.stdout.strip()
     if user.returncode != 0 or not login:
         return result("gh", "fail", "gh api user failed: " + (user.stderr.strip() or "no login"))
-    if login.lower() != cfg.handle.lower():
-        return result("gh", "fail", f"gh is signed in as {login}, but user.handle is {cfg.handle}")
+    if login.lower() != cfg.github.lower():
+        key = "user.github" if cfg.data["user"].get("github") else "user.handle"
+        return result("gh", "fail", f"gh is signed in as {login}, but {key} is {cfg.github}; set user.github when "
+                                    "your GitHub account isn't your branch prefix")
     return result("gh", "ok", f"signed in as {login}")
 
 

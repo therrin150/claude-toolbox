@@ -470,6 +470,12 @@ class SkillTextTest(unittest.TestCase):
                                  text=True).stdout
             self.assertIn(flag, out)
 
+    def test_every_script_runs_by_its_path(self):
+        # Skills call each script as <bin>/<name>.py, never through python3, so each needs its shebang and exec bit.
+        for path in sorted((TOOLBOX / "bin").glob("*.py")):
+            self.assertTrue(path.read_text().startswith("#!/usr/bin/env python3\n"), path.name)
+            self.assertTrue(os.access(path, os.X_OK), f"{path.name} isn't executable")
+
     def test_installed_under_the_tasks_feature(self):
         features = yaml.safe_load((WORKSPACE_DOMAIN / "features.yml").read_text())
         self.assertIn(".claude/skills/work-task", features["tasks"])

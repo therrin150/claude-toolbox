@@ -15,13 +15,20 @@ scripts folder (SKILL.md). At each `hook <id>`, follow the extensions at that ho
       Setup wrote from it).
 2. **Check the tracker** (a task with a Jira key; any other skips this): fetch the issue (`getJiraIssue`, the rule's
    cloud id), unless Setup just fetched it to import, and check it still matches the record; STOP if not.
-3. **Check dependencies.** For each `depends_on` key: its record's status (`<bin>/tasks.py get <key> status`), or,
+3. **Check the requirement against the code.** Read the code the task names. If it already does what the task asks
+   (another change got there first), STOP: say what's there and which change made it, and ask whether to close the
+   task, do something else instead, or go on. Never quietly substitute a different change.
+4. **Find prose dependencies.** A tracker records hard blockers as links, but a description may name one in prose
+   ("don't start until ABC-9 is validated", "after ABC-9"). Add each key it names that way to the record:
+   `<bin>/tasks.py set-list <work id> depends_on <the keys already there> <the new ones>`. A key that's only mentioned
+   (background, a related change) isn't one.
+5. **Check dependencies.** For each `depends_on` key: its record's status (`<bin>/tasks.py get <key> status`), or,
    under `jira` with no record, the issue's status category. If one isn't done, or the code shows the task needs
    another that hasn't landed: with `work.dependencies: block` (`<bin>/toolbox.py config show work.dependencies`),
    STOP; with `isolate`, read `other-tasks.md` before planning.
-4. **Plan the cycles** (hook `plan-the-cycles`): SKILL.md "### Plan the cycles".
-5. **Start:** on a fresh start, `<bin>/tasks.py set <work id> status=in-progress owner=claude stage=implementing`.
-6. **Extensions** (hook `before-first-cycle`): on a fresh start only, before any worktree.
+6. **Plan the cycles** (hook `plan-the-cycles`): SKILL.md "### Plan the cycles".
+7. **Start:** on a fresh start, `<bin>/tasks.py set <work id> status=in-progress owner=claude stage=implementing`.
+8. **Extensions** (hook `before-first-cycle`): on a fresh start only, before any worktree.
 
 ## Which Checks Apply
 

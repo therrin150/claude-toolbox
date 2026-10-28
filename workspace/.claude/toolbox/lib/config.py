@@ -106,6 +106,7 @@ SCHEMA = Section({
     "user": Section({
         "handle": Value(str, required=True),
         "name": Value(str, required=True),
+        "github": Value(str),
     }),
     "vault": Section({
         "path": Value(str, required=True),
@@ -503,6 +504,11 @@ class Config:
     @property
     def handle(self) -> str:
         return self.data["user"]["handle"]
+
+    @property
+    def github(self) -> str:
+        """The GitHub account gh should be signed in as: user.github, else the handle."""
+        return self.data["user"].get("github") or self.handle
 
     @property
     def owner(self) -> str:

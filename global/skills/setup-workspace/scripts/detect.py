@@ -416,6 +416,8 @@ def detect(root: Path, max_repos: int) -> dict:
     handle, count, _ = most_common(prefixes)
     if handle:
         values["user.handle"] = entry(handle, "detected", f"prefix of {count} of your remote branches")
+        if gh.get("login") and gh["login"].lower() != handle.lower():
+            values["user.github"] = entry(gh["login"], "detected", "gh api user (not your branch prefix)")
     elif gh.get("login"):
         values["user.handle"] = entry(gh["login"], "detected", "gh api user")
     else:

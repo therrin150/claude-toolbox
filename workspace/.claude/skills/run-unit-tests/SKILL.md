@@ -30,7 +30,7 @@ attempts). Needs no local services and no lock.
   (`<worktrees>/<work id>/<repo>` in a `nested` workspace, `<worktrees>/<work id>/<area>` in a `single` one). A bare
   area runs in the workspace root's folder of that name.
 - **--test**: run one test class or method. It replaces `{test}` in the area's command; an area whose command has no
-  `{test}` fails with that reason instead of running everything.
+  `{test}` fails with that reason instead of running everything. Without it, `{test}` is replaced with nothing.
 
 ## Workflow
 

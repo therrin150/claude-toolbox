@@ -26,7 +26,7 @@ The toolbox-config rule names the Jira server and cloud id; `toolbox.py config s
 | `board` | optional: only sprints with this `boardId` count. Without it, sprints from more than one board are a stop |
 
 With no `fields.sprint`, stop: the field's id goes in the config (`/setup-workspace` finds it by name with the
-`discover` tool).
+`discover` tool, or `getJiraIssueTypeMetaWithFields`).
 
 Sprints are read off the issues in them, through `searchJiraIssuesUsingJql`, because the Atlassian connector has no
 board or sprint API. So a sprint with no issues in it can't be found.

@@ -44,7 +44,8 @@ some other way replaces hook `start-the-services` in an extension; the lock step
   workspace.areas`). An area's directory is its folder under the checkout.
 - **Lock name**: as in `lock-local-services` ("Lock name").
 
-If no area has a `start` command, report that `workspace.areas.<area>.start` isn't configured and stop.
+If no area has a `start` command, report that `workspace.areas.<area>.start` isn't configured and stop, unless an
+extension replaces hook `start-the-services`: then the areas need no `start` command.
 
 ### Preflight
 

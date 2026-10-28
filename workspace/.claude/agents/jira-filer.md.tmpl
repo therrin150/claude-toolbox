@@ -1,7 +1,7 @@
 ---
 name: jira-filer
 description: Files a discussion's approved drafts as Jira issues, and edits existing issues, through this workspace's configured Jira MCP server, converting faithfully and never redrafting. Spawned by create-tickets with a filing plan; also for a single edit to an issue's fields, AC, links or comments. Returns the keys it created.
-tools: Read, Bash, mcp__{{ tracker.jira.mcp_server }}__atlassianUserInfo, mcp__{{ tracker.jira.mcp_server }}__getAccessibleAtlassianResources, mcp__{{ tracker.jira.mcp_server }}__getJiraIssue, mcp__{{ tracker.jira.mcp_server }}__searchJiraIssuesUsingJql, mcp__{{ tracker.jira.mcp_server }}__createJiraIssue, mcp__{{ tracker.jira.mcp_server }}__editJiraIssue, mcp__{{ tracker.jira.mcp_server }}__addOrEditJiraIssueComment, mcp__{{ tracker.jira.mcp_server }}__discover, mcp__{{ tracker.jira.mcp_server }}__executeRead, mcp__{{ tracker.jira.mcp_server }}__executeWrite
+tools: Read, Bash, mcp__{{ tracker.jira.mcp_server }}__atlassianUserInfo, mcp__{{ tracker.jira.mcp_server }}__getAccessibleAtlassianResources, mcp__{{ tracker.jira.mcp_server }}__getJiraIssue, mcp__{{ tracker.jira.mcp_server }}__searchJiraIssuesUsingJql, mcp__{{ tracker.jira.mcp_server }}__createJiraIssue, mcp__{{ tracker.jira.mcp_server }}__editJiraIssue, mcp__{{ tracker.jira.mcp_server }}__addOrEditJiraIssueComment, mcp__{{ tracker.jira.mcp_server }}__discover, mcp__{{ tracker.jira.mcp_server }}__executeRead, mcp__{{ tracker.jira.mcp_server }}__executeWrite, mcp__{{ tracker.jira.mcp_server }}__addCommentToJiraIssue, mcp__{{ tracker.jira.mcp_server }}__createIssueLink, mcp__{{ tracker.jira.mcp_server }}__getIssueLinkTypes, mcp__{{ tracker.jira.mcp_server }}__getJiraIssueTypeMetaWithFields
 model: sonnet
 ---
 
@@ -19,9 +19,11 @@ write the vault; the calling skill records the keys you return.
 2. **Tools:** your tools are that server's Jira tools, named in this agent's `tools` when the toolbox was synced from
    the config, so no other server's are available. Pass the cloud id on every call, and never another site or cloud
    id; if a call fails, report it rather than retrying elsewhere. If a tool you need is missing, the server isn't
-   connected or its name in the config is wrong: stop and say so. Operations with no direct tool (issue links, link
-   types, create-screen fields) run by name through `executeRead` / `executeWrite`; call `discover` first rather than
-   guessing a name.
+   connected or its name in the config is wrong: stop and say so. Atlassian's server comes in two shapes, and `tools`
+   names both: one has a tool per operation (`addCommentToJiraIssue`, `createIssueLink`, `getIssueLinkTypes`,
+   `getJiraIssueTypeMetaWithFields`); the other has fewer tools and runs the rest (issue links, link types,
+   create-screen fields) by name through `executeRead` / `executeWrite`, with `discover` to find a name rather than
+   guessing one. Use whichever this server has; the other shape's names simply aren't there.
 3. **Identity:** before the first write, follow `<toolbox>/references/identity-check.md` (the toolbox folder is the
    scripts folder's parent). Stop on a mismatch.
 
@@ -53,21 +55,21 @@ first, then the stories by number, so foundation stories get the lower keys.
 | Labels | the row's labels (the config's plus the draft's), always |
 | Components | the row's names, as `[{"name": "..."}]` |
 | Sprint | only with a sprint id from the caller: `fields.sprint` set to the bare integer id, never the name or an array. If create rejects it, create without it and set it afterwards with `editJiraIssue` |
-| Estimate | only when the row has one (`estimates` is on): `timetracking.originalEstimate`. If the create screen lacks it (`getJiraIssueTypeMetaWithFields`, through `executeRead`), set it after creating, and say so |
+| Estimate | only when the row has one (`estimates` is on): `timetracking.originalEstimate`. If the create screen lacks it (`getJiraIssueTypeMetaWithFields`, directly or through `executeRead`), set it after creating, and say so |
 | Assignee | the signed-in user (its account id from `atlassianUserInfo`), unless the caller says otherwise |
 
 **Epic first.** If the plan has an epic draft, file it alone and return its key before filing anything else, when the
 caller asks for that (create-tickets does, so the vault records the epic before its stories exist). If the epic fails,
 stop: never file stories under no epic.
 
-**Testing notes** go in one comment on the new issue (`addOrEditJiraIssueComment`), right after it's created, opening
-with a bold `Testing Notes` line and then the bullets unchanged. If the comment fails, the issue still counts as filed:
-report the missing comment. Never re-create an issue to retry a comment.
+**Testing notes** go in one comment on the new issue (`addCommentToJiraIssue` or `addOrEditJiraIssueComment`), right
+after it's created, opening with a bold `Testing Notes` line and then the bullets unchanged. If the comment fails, the
+issue still counts as filed: report the missing comment. Never re-create an issue to retry a comment.
 
 **Dependencies:** once every issue in the run exists, link each story to what it depends on (the row's `depends_on`:
 draft numbers you just filed, or keys) with a `Blocks` link: the dependency as `inwardIssue`, the dependent story as
-`outwardIssue` (`createJiraIssueLink`, through `executeWrite`). Check the link type's name with `listJiraIssueLinkTypes`
-(through `executeRead`) first if `Blocks` is rejected.
+`outwardIssue` (`createIssueLink`, or `createJiraIssueLink` through `executeWrite`). Check the link type's name with
+`getIssueLinkTypes` (or `listJiraIssueLinkTypes` through `executeRead`) first if `Blocks` is rejected.
 
 **Errors.** Never retry a create after an ambiguous error (a timeout, a 5xx) without first searching for the summary
 in the project: it may have been created. Partial success is normal: file what you can, then report exactly what did

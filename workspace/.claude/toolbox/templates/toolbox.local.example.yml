@@ -21,7 +21,7 @@ workspace:
   areas:
     <area>:
       format: <command>            # formats the area's changed files
-      unit: <command>              # runs its unit tests
+      unit: <command>              # runs its unit tests; {test} takes --test's value, else nothing
       integration: <command>       # runs its integration tests against running services
       start: <command>             # starts its local services
       stop: <command>              # stops them
@@ -33,6 +33,7 @@ workspace:
 user:
   handle: <handle>                 # branch prefix, and the GitHub account gh should be signed in as
   name: <Name>                     # its lowercase is your value for a task record's owner (the other is claude)
+  github: <login>                  # the GitHub account, when it isn't the handle; default: the handle
 
 vault:
   path: <path>                     # the Obsidian vault: relative to the workspace root, or ~/...

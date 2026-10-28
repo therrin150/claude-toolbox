@@ -99,6 +99,24 @@ class ImportTest(Jira):
         again = self.run_tasks("import", "ACME-12", "--issue", self.fixture("issue-story.json"), ok=False)
         self.assertIn("already has a task record", again["error"])
 
+    def test_imports_the_trimmed_shape_work_task_writes(self):
+        # work-task's Setup saves only what import reads, with markdown text, rather than the whole response.
+        trimmed = {"context": {"cloudId": CLOUD}, "key": "ACME-12",
+                   "webUrl": "https://acme-test.atlassian.net/browse/ACME-12", "fields": {
+                       "summary": "Show Pantry Shelf Counts", "issuetype": {"name": "User Story"},
+                       "status": {"statusCategory": {"key": "new"}},
+                       "parent": {"key": "ACME-10", "fields": {"issuetype": {"name": "Epic"}}},
+                       "issuelinks": [{"type": {"name": "Blocks"}, "inwardIssue": {"key": "ACME-11"}}],
+                       "description": "Households can't see how full a shelf is.",
+                       AC_FIELD: "GIVEN a shelf holding `3` items\nWHEN the shelves are listed\nTHEN its `count` is 3"}}
+        path = self.tmp / "ACME-12-issue.json"
+        path.write_text(json.dumps(trimmed), encoding="utf-8")
+        self.run_tasks("import", "ACME-12", "--issue", str(path))
+        doc = self.tasks / "ACME-12-show-pantry-shelf-counts.md"
+        fields = self.fields(doc)
+        self.assertEqual((fields["type"], fields["epic"], fields["depends_on"]), ("story", "ACME-10", ["ACME-11"]))
+        self.assertIn("## Acceptance Criteria\n\nGIVEN a shelf holding `3` items\n", doc.read_text())
+
     def test_dry_run_writes_nothing(self):
         out = self.run_tasks("import", "ACME-12", "--issue", self.fixture("issue-story.json"), "--dry-run")
         self.assertTrue(out["dry_run"])

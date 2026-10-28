@@ -12,7 +12,8 @@ name. Areas run in parallel (--jobs caps how many), each with its output in $TMP
 defaults to the workspace name; a task's key keeps two worktrees' logs apart).
 
 --test T replaces {test} in the command, for running one class or method; an area whose command has no {test} fails
-with that reason rather than running everything.
+with that reason rather than running everything. Without --test, {test} is replaced with nothing, so one command serves
+both (Maven's -Dtest={test} with an empty value runs every test).
 
 The report is summarize_reports.py's when the run left Maven reports (surefire for unit; failsafe for integration, or
 surefire when failsafe found none, as with modules that name their integration tests *Test); any other build tool gets
@@ -77,7 +78,7 @@ def run_area(name: str, path: Path, cfg: config.Config, kind: str, test: str | N
     if test:
         if "{test}" not in command:
             return {"area": name, "status": "fail", "reason": f"--test given, but the {kind} command has no {{test}}"}
-        command = command.replace("{test}", test)
+    command = command.replace("{test}", test or "")
     if not path.is_dir():
         return {"area": name, "status": "fail", "reason": f"{path} isn't a folder"}
     log = log_path(label, name, kind)
