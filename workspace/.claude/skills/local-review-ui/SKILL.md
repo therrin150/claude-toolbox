@@ -55,11 +55,15 @@ under `LOCAL_REVIEW_HOME` when that's set). If it doesn't exist, this machine ha
 ### 1. Open
 
 ```bash
-python3 <skill-dir>/scripts/review.py open <repo-or-path>... [--id ID] [--base REF] [--title TITLE] [--resume-hint TEXT]
+python3 <skill-dir>/scripts/review.py open <repo-or-path>... [--id ID] [--base REF] [--title TITLE] [--resume-hint TEXT] [--no-browser]
 ```
 
 It prints JSON with the `id` and `url` and opens the tab. Tell the user in one line that the review is open (give
 the URL in case the browser didn't open) and that "Finish review" brings the comments back here.
+
+When you'll seed threads of your own (`note`, step 4) before the user starts, pass `--no-browser`, add every note, then
+open the tab with `python3 -m webbrowser -t <url>`. The reviewer starts the moment the tab appears, so a note added
+after it can arrive after they've clicked "Done reviewing".
 
 ### 2. Wait
 

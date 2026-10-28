@@ -26,8 +26,9 @@ Drafts only. Committing is `git-commit`, with the message Allen approves.
 - The task record, for what the change is for (`.claude/toolbox/bin/tasks.py get <work id>`, when the workspace has the
   `tasks` feature). The diff decides what the message may claim.
 - The style: `~/.claude/personal/commit-style.md` (which pulls in `voice.md`), plus the "Slack" section of
-  `~/.claude/personal/voice.md` for `--announce`. Read both from disk on every run; when a file is missing, write plain,
-  short, lowercase-after-the-key messages and say the style file wasn't found.
+  `~/.claude/personal/voice.md` for `--announce`. Read both from disk, whole (never a `head` or a partial read), on
+  every run; when a file is missing, write plain, short, lowercase-after-the-key messages and say the style file wasn't
+  found.
 
 ## The Message
 
@@ -46,6 +47,10 @@ mechanics:
 One sentence for the whole batch, not one per PR, written to `voice.md`'s "Slack" rules, which own its length, wording
 and tone. This is the sentence `gh-create-pull-request` posts to the `pr.announce` channel. When the config has no
 `pr.announce`, there is nothing to announce: say so and skip it.
+
+The announcement is not a shorter commit subject. Before showing it, check it against each bullet of that section in
+turn, and redraft when one fails; the ones a commit-shaped draft breaks most are the ticket key, a parenthetical or
+tacked-on aside, and a clause list of what the diff does in place of what the change means for the team.
 
 ## Output
 

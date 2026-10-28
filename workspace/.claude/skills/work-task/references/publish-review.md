@@ -63,7 +63,8 @@ before every worktree section and before the announcement.
 
 Check first that the task is still this session's (SKILL.md "Hand-offs", step 2), then:
 
-- **Wording:** redraft the message or the announcement, keep the publish folder's files in step with their wording,
+- **Wording:** redraft the message or the announcement under the same `git-draft-commit-message` rules (re-read the
+  style files when the skill isn't loaded in this session), keep the publish folder's files in step with their wording,
   and present stop 2 again.
 - **A code change:** say in one line that it goes back through the checks and both stops, set `status=in-progress
   owner=claude stage=implementing`, and go back to `work.md`'s "Each Cycle" step 2 (Implement) for the affected areas,

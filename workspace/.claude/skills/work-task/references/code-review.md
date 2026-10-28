@@ -14,19 +14,23 @@ there is no review page: skip the steps that name `<review>`, and the user answe
 Order of the turn, so the report lands after `wrap_up` (text before the call can reach the user cut to a short
 summary) and the waiter is running before the turn ends:
 
-1. **Open the review:** `local-review-ui <work id>`, as its Arguments describe: it covers the task's worktrees, titles
-   the review `<work id> <summary>`, diffs against the default base, and passes `--resume-hint "/work-task <work id>"`.
-   Note the URL it prints. Opening again is safe: the same id reopens the same review with its comments.
+1. **Register the review, without the tab:** `local-review-ui <work id>` with `--no-browser`, as its Arguments
+   describe: it covers the task's worktrees, titles the review `<work id> <summary>`, diffs against the default base,
+   and passes `--resume-hint "/work-task <work id>"`. Note the URL it prints. Opening again is safe: the same id
+   reopens the same review with its comments.
 2. **Seed the decisions:** one thread per **Ask** finding and per **Decided alone** item that has a code location, on
    its line: `<review> note <work id> --repo <repo> --path <file> --line <n> --body "<the question, with the
    options>"`. Anything with no location stays in the report. Don't seed a decision that already has a thread (a stop
    1 that comes back after a code change at stop 2, or after a release, keeps the earlier threads).
 3. **Save the report:** write `code-review.md` to the publish folder: the report below, without the hand-off block
    (the block is time-specific, so a resume writes its own). Set `status=review owner=<user> stage=code-review`.
-4. **Start the waiter** in the background (`run_in_background: true`), keeping its task id for `TaskStop`:
+4. **Open the tab:** `python3 -m webbrowser -t <url>`, only now that every thread of this stop exists. The user starts
+   reviewing the moment the tab appears, so a thread added after it can come after they've clicked "Done reviewing".
+   Never add a note to the review after this step until the user's next round wakes the waiter.
+5. **Start the waiter** in the background (`run_in_background: true`), keeping its task id for `TaskStop`:
    `<review> wait <work id> --session "$CLAUDE_CODE_SESSION_ID" --until <HH:MM>`, the hand-off time in 24-hour local
    time. One call gives both forms, `h:mm` for the block and `HH:MM` for `--until`: `date -v+1H +'%-I:%M %H:%M'`.
-5. **Notify** (`PushNotification`), call `wrap_up` with a recap only, then write the report as the closing message,
+6. **Notify** (`PushNotification`), call `wrap_up` with a recap only, then write the report as the closing message,
    ending with the hand-off block (SKILL.md "Hand-offs"). Never write the report before `wrap_up`, and never end the
    turn with a one-line pointer to a report the user can't see.
 
@@ -111,8 +115,10 @@ Reached on "Done reviewing" or "looks good". Nothing here commits, pushes or pub
 2. **Integration tests** (`work.md` step 5) for each area that has them and whose code changed since its last pass,
    once, for all the rounds together; skip when none did. A failure is an attempt (three, then STOP); fix, format,
    re-run the unit tests, then the integration tests again.
-3. **Draft:** `git-draft-commit-message <worktree>... --task <work id>`, plus `--announce` when the config has
-   `pr.announce` and `pr.required`. Write each message to the publish folder, `commit.txt` in a `single` workspace or
+3. **Draft:** run the `git-draft-commit-message` skill with the Skill tool, `<worktree>... --task <work id>`, plus
+   `--announce` when the config has `pr.announce` and `pr.required`. Never draft the messages yourself instead: the
+   skill is what reads `commit-style.md` and `voice.md` whole, and the announcement follows `voice.md`'s "Slack" rules,
+   not the commit message's. Write each message to the publish folder, `commit.txt` in a `single` workspace or
    `<repo>.txt` per repo in a `nested` one, and the announcement to `announce.txt`; `publish.py` commits and posts
    those files byte for byte.
 4. **Stop 2:** read `publish-review.md` and follow it. If steps 1–2 changed code after the user reviewed it, say so on
