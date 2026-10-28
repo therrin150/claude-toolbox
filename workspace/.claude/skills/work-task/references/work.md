@@ -12,12 +12,15 @@ scripts folder (SKILL.md). At each `hook <id>`, follow the extensions at that ho
     - `questions`, if any: decisions. STOP if something the task needs is still open.
     - sibling docs the record or plan link to (line-level detail);
     - the record itself: what to build (frozen at filing, or at import; for a task started from a plan, the requirement
-      Setup wrote from it).
+      Setup wrote from it). A slice's `## Scope` limits it: only that part of the requirement is this run's, and the
+      rest of the ticket is out of scope here. A ticket's own record with done slices in `other_runs` covers what
+      they didn't: read each one's Scope and PRs to see what's already there.
 2. **Check the tracker** (a task with a Jira key; any other skips this): fetch the issue (`getJiraIssue`, the rule's
    cloud id), unless Setup just fetched it to import, and check it still matches the record; STOP if not.
 3. **Check the requirement against the code.** Read the code the task names. If it already does what the task asks
-   (another change got there first), STOP: say what's there and which change made it, and ask whether to close the
-   task, do something else instead, or go on. Never quietly substitute a different change.
+   (another change got there first, other than a done slice of this ticket), STOP: say what's there and which change
+   made it, and ask whether to close the task, do something else instead, or go on. Never quietly substitute a
+   different change.
 4. **Find prose dependencies.** A tracker records hard blockers as links, but a description may name one in prose
    ("don't start until ABC-9 is validated", "after ABC-9"). Add each key it names that way to the record:
    `<bin>/tasks.py set-list <work id> depends_on <the keys already there> <the new ones>`. A key that's only mentioned

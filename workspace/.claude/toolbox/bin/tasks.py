@@ -4,12 +4,15 @@
 Every command prints JSON. Every command that writes takes --dry-run, which prints what it would do and writes
 nothing. A command the workspace's tracker doesn't do fails with the reason.
 
-<ref> is a work id (a key, or a keyless record's slug) or a task record's path. <source> is also a key, a draft in a
+<ref> is a work id (a key, a slice's <KEY>.<n>, or a keyless record's slug) or a task record's path. <source> is also a key, a draft in a
 discussion's tickets/ folder, or a discussion's plan.md; paths may be relative to the vault.
 
 Any tracker:
   context <source> [--session <id>]   Find or make the task record; print what a session needs. --session appends
                                       the id to `sessions` and reports `new_session`
+  context <KEY> --limited-scope <title>
+                                      Make the ticket's next slice, a copy of its record titled <title>, and print
+                                      its context
   work-id <source>                    The work id, key and summary a source has or would get; writes nothing
   get <ref> [field ...]               The record's frontmatter, or some fields of it
   set <ref> field=value ...           Set status, owner, stage, work_note, cycle (shared-library or consumers,
@@ -89,7 +92,12 @@ def run(args, store: records.Store, tracker: trackers.Tracker):
         return out
 
     if command == "context":
+        if args.limited_scope is not None and store.classify(args.source)[0] != "key":
+            raise records.TaskError(f"{args.source}: --limited-scope slices a ticket named by its key")
         record, made_from = tracker.find_or_make(args.source, dry)
+        if args.limited_scope is not None:
+            made_from = record.path
+            record = store.new_slice(record, args.limited_scope, dry)
         return store.context(record, made_from, tracker, args.session, dry)
     if command == "work-id":
         return tracker.work_id(args.source)
@@ -153,6 +161,7 @@ def parser() -> argparse.ArgumentParser:
     sub = add("context", "find or make a task record; print what a session needs; record the session")
     sub.add_argument("source", help="key, work id, record path, draft path or plan.md path")
     sub.add_argument("--session", help="session id to append to sessions")
+    sub.add_argument("--limited-scope", metavar="TITLE", help="make the ticket's next slice, titled for its scope")
     sub = add("work-id", "the work id a source has or would get; writes nothing")
     sub.add_argument("source", help="key, work id, record path, draft path or plan.md path")
     sub = add("get", "a record's frontmatter, or some fields of it")

@@ -41,8 +41,8 @@ JIRA_TYPES = ("story", "epic", "defect")
 JIRA_STATUSES = ("todo", "in-progress", "review", "done", "stopped")
 LIBRARY_FIELDS = ("libraries",)  # placeholders shared_libraries.update.command may hold
 # The task-record fields tasks.py owns (records.py's FIELDS, plus `cycle`); an extra field can't take one's name.
-RECORD_FIELDS = ("type", "key", "summary", "epic", "status", "owner", "stage", "cycle", "depends_on", "created",
-                 "found_in", "legacy_id", "source", "source_doc", "worktrees", "sessions", "prs", "work_note", "usage",
+RECORD_FIELDS = ("type", "key", "slice", "summary", "epic", "status", "owner", "stage", "cycle", "depends_on",
+                 "created", "found_in", "legacy_id", "source", "source_doc", "worktrees", "sessions", "prs", "work_note", "usage",
                  "usage_total")
 FIELD_NAME = re.compile(r"[a-z][a-z0-9_]*")
 

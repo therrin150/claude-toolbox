@@ -10,10 +10,17 @@ deletes task records they no longer want; never clean them up for them.
 
 ## Task records
 
-Every task has a task record, always, whatever the tracker: `<tasks>/<KEY>-<slug>.md` when it has a key,
-`<tasks>/<slug>.md` when it has none (the `none` tracker). The slug is the summary in lowercase with every run of other
+Every task has a task record, always, whatever the tracker: `<tasks>/<KEY>/<KEY>-<slug>.md` in its key's folder when
+it has a key, `<tasks>/<slug>.md` when it has none (the `none` tracker). A keyed record from before the key folders,
+`<tasks>/<KEY>-<slug>.md`, is still read where it is. The slug is the summary in lowercase with every run of other
 characters turned into `-`. A task's **work id** is its key, else that slug; worktrees, branches, sessions and the
 publish folder are all named by it.
+
+A ticket worked in more than one limited-scope run gets a **slice** per run: `work-task <KEY> --limited-scope` copies
+the ticket's record into its key folder as `<KEY>.<n>-<slug>.md`, titled for the scope, with `slice: <n>` and a
+`## Scope` section saying which part of the ticket the run covers. A slice's work id is `<KEY>.<n>`, and slices run in
+parallel; its branch carries the ticket's key, with `slice-<n>-` leading the description. The ticket's own record is
+the one the bare key names, and it covers whatever the slices haven't. The ticket is done when the user says so.
 
 | Type | What it is | Made by |
 |---|---|---|

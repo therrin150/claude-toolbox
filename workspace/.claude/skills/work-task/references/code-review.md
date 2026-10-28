@@ -117,7 +117,7 @@ Reached on "Done reviewing" or "looks good". Nothing here commits, pushes or pub
    re-run the unit tests, then the integration tests again.
 3. **Draft:** run the `git-draft-commit-message` skill with the Skill tool, `<worktree>... --task <work id>`, plus
    `--announce` when the config has `pr.announce` and `pr.required`. Never draft the messages yourself instead: the
-   skill is what reads `commit-style.md` and `voice.md` whole, and the announcement follows `voice.md`'s "Slack" rules,
+   skill loads `commit-style.md` and `voice.md` in full, and the announcement is held to `voice.md`'s "Slack" rules,
    not the commit message's. Write each message to the publish folder, `commit.txt` in a `single` workspace or
    `<repo>.txt` per repo in a `nested` one, and the announcement to `announce.txt`; `publish.py` commits and posts
    those files byte for byte.

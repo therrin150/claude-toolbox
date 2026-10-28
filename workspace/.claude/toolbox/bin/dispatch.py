@@ -157,15 +157,15 @@ def named(store: records.Store, tracker, sources: list[str], summaries: dict, se
 
 def from_queue(store: records.Store, sessions: list[dict]) -> tuple[list[dict], dict]:
     queue = board.queue(store)
-    by_key = {r.key: r for r in store.records() if r.key}
+    by_id = {r.work_id: r for r in store.records() if r.key}
     entries = []
 
     def add(item: dict, group: str, reason: str = "", **extra) -> None:
-        record = by_key[item["key"]]
+        record = by_id[item["work_id"]]
         entries.append(of_record(record, group, reason, **extra))
 
     for item in queue["waiting_on_user"]:
-        record = by_key[item["key"]]
+        record = by_id[item["work_id"]]
         session = session_for(record.work_id, sessions)
         entries.append(of_record(record, "waiting", record.fields.get("work_note") or "",
                                  work_note=record.fields.get("work_note"), session=session))
@@ -181,7 +181,7 @@ def from_queue(store: records.Store, sessions: list[dict]) -> tuple[list[dict], 
         add(item, "blocked", "waiting for " + ", ".join(f"{b['key']} ({b['status'] or 'no record'})"
                                                          for b in item["blockers"]))
     for item in queue["stopped"]:
-        add(item, "stopped", by_key[item["key"]].fields.get("work_note") or "parked")
+        add(item, "stopped", by_id[item["work_id"]].fields.get("work_note") or "parked")
     return entries, {name: queue[name] for name in ("limits", "load", "capacity", "held")}
 
 

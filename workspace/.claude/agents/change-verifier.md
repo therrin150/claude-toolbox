@@ -16,6 +16,9 @@ except the requirement when the prompt gives a task instead.
 - **The requirement:** a task's title, description and acceptance criteria, or a task in a sentence or two. Often the
   path of a design doc too: read it only if you need the design behind the requirement.
 - **Scope exceptions,** when there are any: dependencies whose version bumps are made on purpose.
+- **A `## Scope` section** in the requirement, when the change is one limited-scope run of a larger ticket: it names the
+  part of the ticket this change covers. Judge the change against that part only. The rest of the ticket's
+  description and acceptance criteria is someone else's run, so leaving it undone is not a finding (doing it is).
 - **The diff,** per checkout, with the list of changed files and each checkout's path.
 - **The caller sweep:** the public names the diff removes, renames or changes, and every hit for them from `git grep`
   on each repo's freshly fetched default branch, as `repo:path:line:text`.

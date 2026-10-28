@@ -20,7 +20,7 @@ STARTED = ("in-progress", "review", "done", "stopped")
 
 
 def item(record: Record) -> dict:
-    return {"key": record.key, "summary": record.summary, "type": record.type, "status": record.status,
+    return {"key": record.key, "work_id": record.work_id, "summary": record.summary, "type": record.type, "status": record.status,
             "owner": record.owner, "stage": record.fields.get("stage"), "depends_on": record.depends_on,
             "doc": str(record.path)}
 
@@ -46,7 +46,7 @@ def queue(store: records.Store) -> dict:
     cfg = store.cfg
     user = cfg.owner
     tasks = [r for r in store.records() if r.type != "epic"]
-    by_key = {r.key: r for r in store.records() if r.key}
+    by_key = {r.key: r for r in store.records() if r.key and not r.slice}
     wip = cfg.get("work.wip")
     rank = {key: index for index, key in enumerate(backlog_order(store))}
 
@@ -58,7 +58,7 @@ def queue(store: records.Store) -> dict:
 
     waiting = sorted((r for r in tasks if r.owner == user and r.status != "done"), key=oldest)
     resumable = sorted((r for r in tasks if r.owner == CLAUDE and r.status == "in-progress"), key=priority)
-    todo = sorted((r for r in tasks if r.status == "todo"), key=priority)
+    todo = sorted((r for r in tasks if r.status == "todo" and not r.slice), key=priority)  # a slice never queues
     ready = [r for r in todo if r.owner == CLAUDE and not blockers(r, by_key)]
     blocked = [r for r in todo if blockers(r, by_key)]
     stopped = sorted((r for r in tasks if r.owner == CLAUDE and r.status == "stopped"), key=priority)
@@ -102,7 +102,8 @@ def epic_status(store: records.Store, key: str | None = None) -> dict:
         raise records.TaskError(f"{key}: no epic record with that key in {store.tasks_dir}")
     out = []
     for epic in sorted(epics, key=lambda r: key_number(r.key)):
-        stories = [r for r in all_records if r.type != "epic" and epic.key and r.fields.get("epic") == epic.key]
+        stories = [r for r in all_records if r.type != "epic" and not r.slice and epic.key
+                   and r.fields.get("epic") == epic.key]
         counts = {status: sum(r.status == status for r in stories) for status in records.STATUSES}
         out.append({"key": epic.key, "summary": epic.summary, "doc": str(epic.path),
                     "status": derived_status(stories), "recorded_status": epic.status, "total": len(stories),
@@ -125,11 +126,12 @@ def check(store: records.Store) -> dict:
         if not record.key:
             problem("no-key", record.path, "the vault tracker gives every task record a key")
             continue
-        if record.key in seen:
-            problem("duplicate-key", record.path, f"{record.key} is also {seen[record.key].path}")
-        seen.setdefault(record.key, record)
-        if not record.path.name.startswith(f"{record.key}-"):
-            problem("key-mismatch", record.path, f"key is {record.key}, but the file name doesn't start with it")
+        if record.work_id in seen:
+            problem("duplicate-key", record.path, f"{record.work_id} is also {seen[record.work_id].path}")
+        seen.setdefault(record.work_id, record)
+        if not record.path.name.startswith(f"{record.work_id}-"):
+            problem("key-mismatch", record.path, f"work id is {record.work_id}, but the file name doesn't start "
+                                                 "with it")
         for name in ("status", "owner", "stage"):
             value = record.fields.get(name)
             if record.type == "epic" and name != "status":
@@ -140,7 +142,7 @@ def check(store: records.Store) -> dict:
         if record.type == "epic" and record.depends_on:
             problem("epic-depends", record.path, "epics carry no depends_on; put it on their stories")
 
-    by_key = {r.key: r for r in scan.records if r.key}
+    by_key = {r.key: r for r in scan.records if r.key and not r.slice}
     for record in scan.records:
         epic = record.fields.get("epic")
         if record.type != "epic" and epic and (epic not in by_key or by_key[epic].type != "epic"):

@@ -288,7 +288,8 @@ class VaultTracker(Tracker):
         """Fix wikilinks to the moved drafts in the discussion's notes and the tasks folder."""
         if not renames:
             return []
-        paths = sorted(set(folder.rglob("*.md")) | set(self.store.tasks_dir.glob("*.md")))
+        paths = sorted(set(folder.rglob("*.md")) | set(self.store.tasks_dir.glob("*.md"))
+                       | set(self.store.tasks_dir.glob("*/*.md")))
         touched = []
         for path in paths:
             if not path.is_file():

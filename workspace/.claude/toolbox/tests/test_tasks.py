@@ -202,7 +202,7 @@ class FileTest(Vault):
         self.assertEqual([Path(s["draft"]).name for s in out["skipped"]], ["03-later.md"])
         self.assertEqual(sorted(p.name for p in (self.disc / "tickets").iterdir()), ["03-later.md"])
 
-        story = self.fields(self.tasks / "PT-3-show-shelves-list.md")
+        story = self.fields(self.tasks / "PT-3" / "PT-3-show-shelves-list.md")
         self.assertEqual(story["key"], "PT-3")
         self.assertEqual(story["epic"], "PT-1")
         self.assertEqual(story["depends_on"], ["PT-2"])
@@ -212,16 +212,16 @@ class FileTest(Vault):
         self.assertEqual(str(story["created"]), TODAY)
         self.assertNotIn("order", story)
         self.assertEqual(tuple(story), records.FIELDS["story"])
-        self.assertIn("## Log", (self.tasks / "PT-3-show-shelves-list.md").read_text())
-        self.assertEqual(tuple(self.fields(self.tasks / "PT-1-pantry-shelves.md")), records.FIELDS["epic"])
+        self.assertIn("## Log", (self.tasks / "PT-3" / "PT-3-show-shelves-list.md").read_text())
+        self.assertEqual(tuple(self.fields(self.tasks / "PT-1" / "PT-1-pantry-shelves.md")), records.FIELDS["epic"])
 
         notes = (self.disc / "notes.md").read_text()
-        self.assertIn("[[Tasks/PT-2-add-shelf-model|the model]]", notes)
+        self.assertIn("[[Tasks/PT-2/PT-2-add-shelf-model|the model]]", notes)
         self.assertIn("[[PT-3-show-shelves-list#Description]]", notes)
         plan = (self.disc / "plan.md").read_text()
         self.assertEqual(self.fields(self.disc / "plan.md")["epic"], "PT-1")
         self.assertIn("[[PT-1-pantry-shelves]]", plan)
-        self.assertIn("- [[Tasks/PT-2-add-shelf-model|PT-2]] Add Shelf Model\n", plan)
+        self.assertIn("- [[Tasks/PT-2/PT-2-add-shelf-model|PT-2]] Add Shelf Model\n", plan)
         self.assertIn("Not filed yet: [[" + DISCUSSION + "/tickets/03-later|03-later]]", plan)
         self.assertNotIn("Dataview", plan)
         self.assertIn("## Open Questions", plan)
@@ -234,7 +234,7 @@ class FileTest(Vault):
         out = self.run_tasks("file", DISCUSSION)
         self.assertEqual([(f["key"], f["depends_on"]) for f in out["filed"]], [("PT-4", ["PT-3"])])
         plan = (self.disc / "plan.md").read_text()
-        self.assertIn("- [[Tasks/PT-4-later-thing|PT-4]] Later Thing", plan)
+        self.assertIn("- [[Tasks/PT-4/PT-4-later-thing|PT-4]] Later Thing", plan)
         self.assertNotIn("Not filed yet", plan)
 
     def test_a_run_that_stopped_before_moving_is_resumed_with_the_same_key(self):
@@ -243,14 +243,14 @@ class FileTest(Vault):
         out = self.run_tasks("file", DISCUSSION)
         resumed = [f for f in out["filed"] if f["resumed"]]
         self.assertEqual([(f["key"], f["summary"]) for f in resumed], [("PT-7", "Add Shelf Model")])
-        self.assertEqual(self.fields(self.tasks / "PT-9-show-shelves-list.md")["depends_on"], ["PT-7"])
+        self.assertEqual(self.fields(self.tasks / "PT-9" / "PT-9-show-shelves-list.md")["depends_on"], ["PT-7"])
 
     def test_reserved_key(self):
         epic = self.disc / "tickets" / "00-pantry-shelves.md"
         frontmatter.update(epic, {"reserved_key": "PT-40"})
         out = self.run_tasks("file", DISCUSSION)
         self.assertEqual([f["key"] for f in out["filed"]], ["PT-40", "PT-1", "PT-2"])
-        self.assertEqual(self.fields(self.tasks / "PT-1-add-shelf-model.md")["epic"], "PT-40")
+        self.assertEqual(self.fields(self.tasks / "PT-1" / "PT-1-add-shelf-model.md")["epic"], "PT-40")
 
     def test_a_dependency_on_an_unfiled_draft_fails_before_writing(self):
         self.draft("04-blocked", summary="Blocked Thing", depends_on=[3])
@@ -325,7 +325,7 @@ class VaultContextTest(Vault):
         resumed = self.run_tasks("context", str(self.disc / "plan.md"), "--session", "s2")
         self.assertEqual((resumed["doc"], resumed["made"]), (out["doc"], False))
         self.assertTrue(resumed["new_session"])
-        self.assertEqual(len(list(self.tasks.glob("*.md"))), 1)
+        self.assertEqual(len(list(self.tasks.glob("*/*.md"))), 1)
         self.assertEqual(self.run_tasks("work-id", f"{DISCUSSION}/plan.md")["work_id"], "PT-1")
 
     def test_plan_dry_run(self):
@@ -382,6 +382,120 @@ class NoneContextTest(Vault):
 
 
 # ---------------------------------------------------------------------------------------------------------------------
+
+
+class SliceTest(Vault):
+    """Limited-scope runs of one ticket: slices in the ticket's key folder, each with its own work id."""
+
+    def ticket(self, **fields) -> Path:
+        fields = {"type": "story", "key": "PT-1", "summary": "Shelf Labels", "status": "todo", "owner": "claude",
+                  "depends_on": ["PT-9"], "sessions": ["s0"], "prs": ["https://x/pull/1"], **fields}
+        return self.write("Tasks/PT-1/PT-1-shelf-labels.md", fields, """
+            # Shelf Labels
+
+            ## Description
+
+            Print labels for every shelf.
+
+            ## Acceptance Criteria
+
+            GIVEN a shelf WHEN printed THEN it has a label
+
+            ## Log
+
+            - 2026-10-01: an earlier run
+            """)
+
+    def test_limited_scope_makes_a_numbered_slice(self):
+        ticket = self.ticket()
+        out = self.run_tasks("context", "PT-1", "--limited-scope", "Label Model Only", "--session", "s1")
+        doc = Path(out["doc"])
+        self.assertEqual(doc, self.tasks / "PT-1" / "PT-1.1-label-model-only.md")
+        self.assertEqual((out["work_id"], out["key"], out["slice"], out["made"]), ("PT-1.1", "PT-1", 1, True))
+        self.assertEqual(out["made_from"], str(ticket))
+        self.assertTrue(out["needs_scope"])
+        self.assertFalse(out["needs_requirement"])
+        self.assertEqual(out["publish_dir"], str(self.tasks / ".publish" / "PT-1.1"))
+        self.assertEqual([r["work_id"] for r in out["other_runs"]], ["PT-1"])
+        self.assertEqual(out["unfinished_runs"], [])
+        fields = self.fields(doc)
+        self.assertEqual(list(fields)[:3], ["type", "key", "slice"])
+        self.assertEqual((fields["summary"], fields["status"], fields["slice"], fields["depends_on"]),
+                         ("Label Model Only", "todo", 1, ["PT-9"]))
+        self.assertEqual((fields["sessions"], fields["prs"]), (["s1"], []))
+        body = doc.read_text()
+        self.assertIn("# Label Model Only\n\nA limited-scope slice of [[Tasks/PT-1/PT-1-shelf-labels|PT-1]]", body)
+        self.assertLess(body.index("## Scope"), body.index("## Description"))
+        self.assertIn("Print labels for every shelf.", body)
+        self.assertIn("GIVEN a shelf", body)
+        self.assertNotIn("an earlier run", body)
+        self.assertEqual(body.count("## Log"), 1)
+
+    def test_the_bare_key_names_the_ticket_and_lists_its_slices(self):
+        self.ticket()
+        self.run_tasks("context", "PT-1", "--limited-scope", "Label Model Only")
+        self.run_tasks("set", "PT-1.1", "status=in-progress", "stage=implementing")
+        out = self.run_tasks("context", "PT-1", "--session", "s2")
+        self.assertEqual((out["work_id"], out["slice"], out["needs_scope"]), ("PT-1", None, False))
+        self.assertEqual(out["unfinished_runs"], ["PT-1.1"])
+        self.assertEqual(out["other_runs"][0]["stage"], "implementing")
+        self.assertEqual(self.run_tasks("work-id", "PT-1")["work_id"], "PT-1")
+        self.assertEqual(self.run_tasks("get", "PT-1.1", "status")["fields"], {"status": "in-progress"})
+
+    def test_resumes_a_slice_by_its_work_id(self):
+        self.ticket()
+        made = self.run_tasks("context", "PT-1", "--limited-scope", "Label Model Only", "--session", "s1")
+        again = self.run_tasks("context", "PT-1.1", "--session", "s1")
+        self.assertEqual((again["doc"], again["made"], again["new_session"]), (made["doc"], False, False))
+        self.assertEqual(self.run_tasks("work-id", "PT-1.1")["work_id"], "PT-1.1")
+        self.assertIn("no slice", self.run_tasks("context", "PT-1.7", ok=False)["error"])
+
+    def test_slices_run_in_parallel(self):
+        self.ticket()
+        self.run_tasks("context", "PT-1", "--limited-scope", "Label Model Only")
+        self.run_tasks("set", "PT-1.1", "status=in-progress", "stage=implementing")
+        out = self.run_tasks("context", "PT-1", "--limited-scope", "Label Printing")
+        self.assertEqual((out["work_id"], out["unfinished_runs"]), ("PT-1.2", ["PT-1.1"]))
+
+    def test_a_done_slice_doesnt_hold_the_next(self):
+        self.ticket()
+        self.run_tasks("context", "PT-1", "--limited-scope", "Label Model Only")
+        self.run_tasks("set", "PT-1.1", "status=done")
+        self.assertEqual(self.run_tasks("context", "PT-1", "--limited-scope", "Label Printing")["work_id"], "PT-1.2")
+
+    def test_only_a_ticket_named_by_its_key_is_sliced(self):
+        self.ticket()
+        self.run_tasks("context", "PT-1", "--limited-scope", "Label Model Only")
+        self.assertIn("by its key", self.run_tasks("context", "PT-1.1", "--limited-scope", "x", ok=False)["error"])
+        self.record("PT-2", type="epic", summary="Pantry")
+        self.assertIn("epic", self.run_tasks("context", "PT-2", "--limited-scope", "x", ok=False)["error"])
+        self.assertIn("title", self.run_tasks("context", "PT-1", "--limited-scope", " ", ok=False)["error"])
+
+    def test_a_ticket_from_before_key_folders_slices_into_its_folder(self):
+        self.record("PT-3", summary="Old Layout")
+        out = self.run_tasks("context", "PT-3", "--limited-scope", "First Part")
+        self.assertEqual(Path(out["doc"]), self.tasks / "PT-3" / "PT-3.1-first-part.md")
+        self.assertEqual(self.run_tasks("work-id", "PT-3")["doc"], str(self.tasks / "PT-3-old-layout.md"))
+
+    def test_slices_stay_out_of_the_queue_and_the_check(self):
+        self.ticket(depends_on=[])
+        self.run_tasks("context", "PT-1", "--limited-scope", "Label Model Only")
+        queue = self.run_tasks("queue")
+        self.assertEqual([i["work_id"] for i in queue["ready"]], ["PT-1"])
+        self.assertEqual(self.run_tasks("check")["problems"], [])
+
+    def test_git_takes_a_slice_id(self):
+        import gitgh
+        cfg = config.load_workspace(self.root)
+        self.assertEqual(gitgh.check_work_id("PT-1.2"), "PT-1.2")
+        self.assertEqual(gitgh.branch_for(cfg, "PT-1.2", "label-model"),
+                         gitgh.branch_for(cfg, "PT-1", "slice-2-label-model"))
+        self.assertEqual(gitgh.branch_for(cfg, "PT-1.2", "slice-2-label-model"),
+                         gitgh.branch_for(cfg, "PT-1.2", "label-model"))
+        self.assertNotEqual(gitgh.branch_for(cfg, "PT-1.2", "labels"), gitgh.branch_for(cfg, "PT-1.3", "labels"))
+        self.assertTrue(any(p.match(gitgh.branch_for(cfg, "PT-1.2", "labels")) for p in gitgh.branch_patterns(cfg)))
+        with self.assertRaises(gitgh.Failed):
+            gitgh.check_work_id("PT-1.0")
 
 
 class RecordCommandsTest(Vault):
@@ -549,7 +663,7 @@ class CycleAndExtraFieldsTest(Vault):
         self.assertEqual(path.read_text(), before)  # a refused set writes nothing, not even its valid pairs
 
     def test_record_fields_agree_with_config(self):
-        built_in = {name for fields in records.FIELDS.values() for name in fields} | {"cycle"}
+        built_in = {name for fields in records.FIELDS.values() for name in fields} | {"cycle", "slice"}
         self.assertEqual(built_in, set(config.RECORD_FIELDS))
 
 
@@ -561,7 +675,7 @@ class NoSharedLibrariesTest(Vault):
         self.assertIn("pending_release: not a field set takes",
                       self.run_tasks("set", "PT-1", "pending_release=x", ok=False)["error"])
         self.run_tasks("set", "PT-1", "cycle=")  # clearing is always fine, and adds no field
-        self.assertNotIn("cycle", self.fields(self.tasks / "PT-1-task-pt-1.md"))
+        self.assertNotIn("cycle", self.fields(self.tasks / "PT-1-task-pt-1.md"))  # a record from before key folders
 
 
 class ConfigStagesTest(unittest.TestCase):

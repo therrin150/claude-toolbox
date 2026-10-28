@@ -31,6 +31,7 @@ session instead of rebuilding a large one.
 
 ```
 /work-task <KEY | draft path | plan.md path>
+/work-task <KEY> --limited-scope <instructions>
 /work-task <work id>          # a resume
 ```
 
@@ -39,6 +40,11 @@ session instead of rebuilding a large one.
   and `jira` it must be filed first (`create-tickets`), and `context` says so.
 - **A discussion's `plan.md`:** a `type: task` record whose requirement the session writes from the plan (Setup,
   step 2).
+- **`--limited-scope` after a key:** this run covers only the part of the ticket the instructions after the flag name.
+  It makes a **slice**, a copy of the ticket's record in the ticket's key folder with its own work id, `<KEY>.<n>`, and
+  a `## Scope` section (Setup, step 2). Only the flag limits the scope: instructions or approvals given with a key and
+  no flag never narrow it. A bare key names the ticket's own record, which covers whatever the done slices haven't.
+  A slice resumes by its work id (`/work-task ABC-12.2`).
 
 One task per session. Parallel tasks are parallel sessions, each launched at the workspace root, never inside a
 worktree (the workspace's skills and rules load only from there). `work-tasks` launches a batch.
@@ -107,11 +113,22 @@ are, so a resume lands back here. On the user's answer, log it (`tasks.py log <w
    toolbox-config rule). A name that doesn't load, search for by its last part.
 2. **Load the task** with one call (a Jira key with no record adds an import and a second call, below), from the
    workspace root:
-   `<bin>/tasks.py context <argument> --session "$CLAUDE_CODE_SESSION_ID"`.
+   `<bin>/tasks.py context <argument> --session "$CLAUDE_CODE_SESSION_ID"`, plus `--limited-scope "<title>"` for a
+   `--limited-scope` start, the title being the scope in 2-6 words (Title Case, no key) that you write from the
+   instructions.
    It finds or makes the record and prints its path (`doc`), `work_id`, `key`, `summary`, its `fields` as they were
    before this call, the `plan` and `questions` paths, `publish_dir`, the task's `worktrees`, `needs_requirement` and
    `new_session`, and appends this session to `sessions`, which the usage step counts. Never work out the work id
-   yourself; use `work_id` wherever these files say `<work id>`.
+   yourself; use `work_id` wherever these files say `<work id>`. A keyed task's output also lists the ticket's
+   `other_runs` (its own record and its slices, with status, stage and PRs) and the `unfinished_runs` among them.
+
+   Slices run in parallel without asking: each has its own work id, worktrees and branch (`slice-<n>-` leads its
+   description). A Jira key with no record gets `needs_import` first, as below; import it, then run `context` with the
+   flag again.
+
+   **`needs_scope`**: a new slice's `## Scope` is empty. Write it with `Edit`, from the user's instructions: the part
+   of the ticket this run covers, in the terms of its description and acceptance criteria, and nothing they didn't
+   say. Instructions that don't change what's covered (approvals, preferences) don't go in it.
 
    **`needs_import`** (exit 1, `jira` tracker): no record has this key. Fetch the issue (`getJiraIssue` with the
    rule's cloud id, `responseContentFormat: "markdown"`; fields `summary`, `description`, `issuetype`, `parent`,
@@ -140,7 +157,9 @@ are, so a resume lands back here. On the user's answer, log it (`tasks.py log <w
    Labels`, or `shelf-labels Shelf Labels` with no key. `work-tasks` finds running tasks by the `<work id> ` prefix.
 4. **Check who's on it.** When `new_session` is true and the task is `in-progress` at `implementing` or `testing`,
    another session may still be working: STOP and ask whether to take over. A new session at a review stop or a wait
-   is a hand-off: go on without asking.
+   is a hand-off: go on without asking. A run of the whole ticket overlaps every slice: when the ticket's own record
+   starts fresh (`todo`) while `unfinished_runs` names a slice, or a new slice starts while it names the ticket's own
+   record (the bare key), STOP and ask whether to go on alongside.
 5. **Dispatch** (below): read that phase's file and follow it. Read another phase file only when the one you're in
    says to.
 

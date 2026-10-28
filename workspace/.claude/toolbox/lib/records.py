@@ -1,8 +1,15 @@
 """Task records: finding and making them, work ids, discussion drafts, templates, the publish folder and the lock.
 
-Every task has a task record, `<tasks>/<work id>-<slug>.md` with a key, `<tasks>/<slug>.md` without one, in the
-vault's tasks folder (config `vault.tasks`). The work id is the record's key when it has one, else its file name's
-stem. What a record holds is in `.claude/rules/ticket-docs.md`; the templates beside `bin/` are what new records are
+Every task has a task record in the vault's tasks folder (config `vault.tasks`): `<tasks>/<KEY>/<KEY>-<slug>.md`
+with a key, `<tasks>/<slug>.md` without one. A keyed record from before the key folders, `<tasks>/<KEY>-<slug>.md`, is
+still found. The work id is the record's key when it has one, else its file name's stem.
+
+A slice is a limited-scope run of a keyed ticket: a copy of the ticket's record with a `slice` number, in the ticket's
+key folder as `<KEY>.<n>-<slug>.md`, titled for its scope, with a `## Scope` section saying what part of the ticket it
+covers. Its work id is `<KEY>.<n>`. The ticket's own record (no `slice`) is the one a bare key names, and it covers
+whatever the slices haven't.
+
+What a record holds is in `.claude/rules/ticket-docs.md`; the templates beside `bin/` are what new records are
 made from. Which sources make a record, and how keys are assigned, is the tracker's business (`trackers/`); this
 module is the part every tracker shares.
 
@@ -40,11 +47,13 @@ LOCK = ".lock"                # held by every write in the tasks folder
 COUNTER = ".counter.yml"      # the vault tracker's next key
 BACKLOG = "Backlog.md"        # the vault tracker's priority order, one key per line
 LOG = "Log"                   # the record body's dated log section
+SCOPE = "Scope"               # a slice's limited scope, from the user's instructions
 
 TYPES = ("story", "epic", "defect", "task")
 DRAFT_TYPES = ("story", "epic", "defect")
 STATUSES = ("todo", "in-progress", "review", "done", "stopped")
 DRAFT_STATUSES = ("draft", "approved")
+UNFINISHED = ("in-progress", "review", "stopped")  # a run that a new run of the whole ticket would overlap
 STAGES = ("implementing", "testing", "code-review", "publish-review", "awaiting-merge", "awaiting-ci")
 CYCLES = ("shared-library", "consumers")  # `cycle`, set only while a task runs work-task's two cycles
 CLAUDE = "claude"
@@ -65,6 +74,7 @@ FIELDS = {
 
 KEY_RE = re.compile(r"[A-Z][A-Z0-9]*-\d+")
 SLUG_RE = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")  # a keyless work id; never a key, which is uppercase
+SLICE_RE = re.compile(r"([A-Z][A-Z0-9]*-\d+)\.([1-9]\d*)")  # a slice's work id: <KEY>.<n>
 NN_RE = re.compile(r"^(\d\d)-")
 PLACEHOLDER = re.compile(r"\{\{(\w+)\}\}")
 TEMPLATE_FIELD = re.compile(r"^(\w+):[ \t]*\{\{(\w+)\}\}[ \t]*$")
@@ -104,7 +114,14 @@ class Record:
         return self.fields.get("key") or None
 
     @property
+    def slice(self) -> int | None:
+        value = self.fields.get("slice")
+        return int(value) if self.key and str(value or "").isdigit() and int(value) > 0 else None
+
+    @property
     def work_id(self) -> str:
+        if self.key and self.slice:
+            return f"{self.key}.{self.slice}"
         return self.key or self.path.stem
 
     @property
@@ -172,20 +189,25 @@ class Store:
                 return candidate.resolve()
         return None
 
-    def record_path(self, key: str | None, summary: str) -> Path:
-        """`<tasks>/<KEY>-<slug>.md`, or `<tasks>/<slug>.md` with no key."""
+    def record_path(self, key: str | None, summary: str, slice_number: int | None = None) -> Path:
+        """`<tasks>/<KEY>/<KEY>-<slug>.md`, a slice's `<tasks>/<KEY>/<KEY>.<n>-<slug>.md`, or `<tasks>/<slug>.md`
+        with no key."""
         slug = slugify(summary)
         if not slug:
             raise TaskError(f"no summary to name a task record after: {summary!r}")
-        return self.tasks_dir / (f"{key}-{slug}.md" if key else f"{slug}.md")
+        if not key:
+            return self.tasks_dir / f"{slug}.md"
+        work_id = f"{key}.{slice_number}" if slice_number else key
+        return self.tasks_dir / key / f"{work_id}-{slug}.md"
 
     def publish_dir(self, work_id: str) -> Path:
         """Where a task's approved commit messages, announcement text and stop reports live."""
         return self.tasks_dir / PUBLISH / work_id
 
     def is_record_path(self, path: Path) -> bool:
-        path = Path(path).resolve()
-        return path.suffix == ".md" and path.parent == self.tasks_dir.resolve() and not path.name.startswith(".")
+        path, tasks = Path(path).resolve(), self.tasks_dir.resolve()
+        in_folder = path.parent == tasks or (path.parent.parent == tasks and KEY_RE.fullmatch(path.parent.name))
+        return path.suffix == ".md" and bool(in_folder) and not path.name.startswith(".")
 
     def _in_discussions(self, path: Path) -> bool:
         return Path(path).resolve().is_relative_to(self.discussions_dir.resolve())
@@ -241,7 +263,8 @@ class Store:
         found = Scan()
         if not self.tasks_dir.is_dir():
             return found
-        for path in sorted(self.tasks_dir.glob("*.md")):
+        keyed = [p for p in sorted(self.tasks_dir.glob("*/*.md")) if KEY_RE.fullmatch(p.parent.name)]
+        for path in sorted(self.tasks_dir.glob("*.md")) + keyed:
             if path.name.startswith(".") or path.name == BACKLOG:
                 continue
             try:
@@ -270,9 +293,17 @@ class Store:
         return hits[0] if hits else None
 
     def by_key(self, key: str) -> Record | None:
-        records = self.records()
+        """The ticket's own record: the one with the key and no slice."""
+        records = [r for r in self.records() if not r.slice]
         hits = [r for r in records if r.key == key]
         return self._one(hits or [r for r in records if r.path.name.startswith(f"{key}-")], key)
+
+    def slices(self, key: str) -> list[Record]:
+        """A ticket's slices, in number order."""
+        return sorted((r for r in self.records() if r.key == key and r.slice), key=lambda r: r.slice)
+
+    def by_slice(self, work_id: str) -> Record | None:
+        return self._one([r for r in self.records() if r.slice and r.work_id == work_id], work_id)
 
     def by_stem(self, stem: str) -> Record | None:
         return self._one([r for r in self.records() if r.path.stem == stem], stem)
@@ -289,6 +320,11 @@ class Store:
             if record:
                 return record
             raise TaskError(f"{ref}: no task record with that key in {self.tasks_dir}")
+        if SLICE_RE.fullmatch(ref):
+            record = self.by_slice(ref)
+            if record:
+                return record
+            raise TaskError(f"{ref}: no slice with that work id in {self.tasks_dir}")
         if SLUG_RE.fullmatch(ref):
             record = self.by_stem(ref)
             if record:
@@ -305,6 +341,8 @@ class Store:
         ("plan", path) or ("draft", path)."""
         if KEY_RE.fullmatch(ref):
             return "key", ref
+        if SLICE_RE.fullmatch(ref):
+            return "record", self.find(ref)
         if SLUG_RE.fullmatch(ref):
             record = self.by_stem(ref)
             return ("record", record) if record else ("work_id", ref)
@@ -387,8 +425,28 @@ class Store:
             raise TaskError(f"{path} already exists")
         fields, _, body = frontmatter.parse(text, path)
         if not dry_run:
+            path.parent.mkdir(parents=True, exist_ok=True)
             frontmatter.write_atomic(path, text)
         return Record(path, fields, body, exists=not dry_run)
+
+    def new_slice(self, ticket: Record, title: str, dry_run: bool = False) -> Record:
+        """A limited-scope copy of a ticket's record, numbered after its other slices, with an empty `## Scope` for
+        the session to fill. Slices run in parallel, each in its own worktrees, whatever the others' state."""
+        if not ticket.key or ticket.slice:
+            raise TaskError(f"{ticket.work_id}: only a keyed ticket's own record is sliced; name the ticket by its key")
+        if ticket.type == "epic":
+            raise TaskError(f"{ticket.key} is an epic; slice one of its stories")
+        title = " ".join(str(title).split())
+        if not slugify(title):
+            raise TaskError("--limited-scope: a short title for the slice's scope is required")
+        number = max((r.slice for r in self.slices(ticket.key)), default=0) + 1
+        keep = ("type", "key", "epic", "depends_on", "found_in", "legacy_id", "source", "source_doc")
+        values = {name: ticket.fields.get(name) for name in keep}
+        values.update(summary=title, owner=CLAUDE, created=datetime.date.today())
+        values["depends_on"] = ticket.depends_on
+        text = self.fill(ticket.type, values, slice_body(ticket, title, self.link(ticket.path, ticket.key)))
+        text = re.sub(r"^(key:.*)$", rf"\g<1>\nslice: {number}", text, count=1, flags=re.M)
+        return self.new_record(self.record_path(ticket.key, title, number), text, dry_run)
 
     # -----------------------------------------------------------------------------------------------------------------
     # Changing records
@@ -520,6 +578,8 @@ class Store:
         plan = discussion / PLAN if discussion else None
         questions = discussion / QUESTIONS if discussion else None
         publish = self.publish_dir(record.work_id)
+        runs = ([self.by_key(record.key)] + self.slices(record.key)) if record.key else []
+        others = [r for r in runs if r and r.path != record.path]
         out = {
             "doc": str(record.path),
             "work_id": record.work_id,
@@ -531,6 +591,12 @@ class Store:
             "made_from": str(made_from) if made_from else None,
             "fields": fields,
             "needs_requirement": needs_requirement(record.body),
+            "slice": record.slice,
+            "needs_scope": bool(record.slice) and needs_scope(record.body),
+            "other_runs": [{"work_id": r.work_id, "summary": r.summary, "status": r.status,
+                            "stage": r.fields.get("stage"), "prs": r.fields.get("prs") or [], "doc": str(r.path)}
+                           for r in others],
+            "unfinished_runs": [r.work_id for r in others if r.status in UNFINISHED],
             "plan": str(plan) if plan and plan.is_file() else None,
             "questions": str(questions) if questions and questions.is_file() else None,
             "publish_dir": str(publish),
@@ -562,6 +628,28 @@ def needs_requirement(body: str) -> bool:
     The session writes the requirement, or stops."""
     match = section(COMMENT.sub("", body), "Description")
     return not (match and match.group(1).strip())
+
+
+def needs_scope(body: str) -> bool:
+    """True when a slice's `## Scope` holds nothing but comments: the session writes it from the user's instructions."""
+    match = section(COMMENT.sub("", body), SCOPE)
+    return not (match and match.group(1).strip())
+
+
+def slice_body(ticket: Record, title: str, ticket_link: str) -> str:
+    """A slice's body: the ticket's, retitled, without its log, with an empty `## Scope` before the requirement."""
+    body = ticket.body
+    log = section(body, LOG)
+    if log:
+        body = body[:log.start()] + body[log.end():]
+    body = re.sub(rf"^## {LOG}[ \t]*$\n?", "", body, flags=re.M)
+    lead = f"# {title}\n\nA limited-scope slice of {ticket_link}, {ticket.summary}.\n"
+    body = re.sub(r"\A\s*# [^\n]*\n", "", body)
+    scope = (f"## {SCOPE}\n\n<!-- The part of the ticket this run covers, from the user's instructions. The rest of "
+             f"the ticket is out of scope here. -->\n\n")
+    heading = re.search(r"^## ", body, re.M)
+    body = body[:heading.start()] + scope + body[heading.start():] if heading else body.rstrip("\n") + "\n\n" + scope
+    return lead + "\n" + body.strip("\n") + "\n"
 
 
 def with_log(body: str) -> str:

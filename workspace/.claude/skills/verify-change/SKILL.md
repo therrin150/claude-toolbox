@@ -23,8 +23,8 @@ requirement and the diff, and has to judge the change on its own.
 /verify-change <work id | task-text> <checkout...> [--base <ref>]
 ```
 
-- **work id | task-text**: a task's work id (a ticket key, or the slug of a keyless task) with a task record, or, without
-  one, the task in a sentence or two.
+- **work id | task-text**: a task's work id (a ticket key, a slice's `<KEY>.<n>`, or the slug of a keyless task) with a
+  task record, or, without one, the task in a sentence or two.
 - **checkout...**: the repos changed, as worktree paths, repo names in the workspace, or a task's worktrees folder
   under the workspace's worktrees folder (it stands for the checkouts inside it).
 - **--base**: what the diff is against. Default `origin/<default branch>`, from the config.

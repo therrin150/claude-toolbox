@@ -134,12 +134,15 @@ def split_record(text: str) -> tuple[dict, str]:
 
 
 def requirement(cfg: config.Config, task: str) -> dict:
-    """The task record named by a path or a work id (`Tasks/<work id>-<slug>.md`), with its design doc's path."""
+    """The task record named by a path or a work id (`Tasks/<KEY>/<work id>-<slug>.md`, or `Tasks/<work id>-<slug>.md`
+    and `Tasks/<slug>.md` at the top), with its design doc's path."""
     record, work_id = Path(task).expanduser(), task
     if record.is_file():
         work_id = record.stem
     else:
-        found = sorted(cfg.tasks_dir.glob(f"{task}-*.md")) + sorted(cfg.tasks_dir.glob(f"{task}.md"))
+        key = task.split(".", 1)[0]
+        found = (sorted(cfg.tasks_dir.glob(f"{key}/{task}-*.md")) + sorted(cfg.tasks_dir.glob(f"{task}-*.md"))
+                 + sorted(cfg.tasks_dir.glob(f"{task}.md")))
         if not found:
             raise Failed(f"no task record for {task} in {cfg.tasks_dir}; pass the task in the verifier's prompt instead")
         record = found[0]

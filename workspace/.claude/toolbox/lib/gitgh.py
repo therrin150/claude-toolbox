@@ -37,6 +37,7 @@ OK, PRECHECK_FAILED, STEP_FAILED, HALTED = 0, 2, 3, 4
 TRAILER = re.compile(r"^(co-authored-by|signed-off-by):|🤖", re.IGNORECASE | re.MULTILINE)
 TICKET_KEY = re.compile(r"\b[A-Z][A-Z0-9]*-\d+\b")
 KEY_ID = re.compile(r"[A-Z][A-Z0-9]*-\d+")
+SLICE_ID = re.compile(r"([A-Z][A-Z0-9]*-\d+)\.[1-9]\d*")  # a limited-scope run of a ticket: <KEY>.<n>
 SLUG = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 
 
@@ -131,16 +132,25 @@ def default_branch(cfg: toolbox_config.Config) -> str:
 
 
 def check_work_id(raw: str) -> str:
-    """A ticket key or a slug; anything else (a path, an empty string) would name a folder outside the worktrees."""
-    if not (KEY_ID.fullmatch(raw) or SLUG.fullmatch(raw)):
-        raise Failed(f"{raw!r} is not a work id: a ticket key (ABC-123) or a lowercase kebab-case slug")
+    """A ticket key, a slice id or a slug; anything else (a path, an empty string) would name a folder outside the
+    worktrees."""
+    if not (KEY_ID.fullmatch(raw) or SLICE_ID.fullmatch(raw) or SLUG.fullmatch(raw)):
+        raise Failed(f"{raw!r} is not a work id: a ticket key (ABC-123), a slice (ABC-123.2) or a lowercase "
+                     "kebab-case slug")
     return raw
 
 
 def branch_for(cfg: toolbox_config.Config, work_id: str, desc: str | None = None) -> str:
-    """The task's branch from `git.branch`: the key and description for a key id, the slug alone for a slug id."""
+    """The task's branch from `git.branch`: the key and description for a key id, the slug alone for a slug id. A
+    slice keeps its ticket's key and leads the description with `slice-<n>-`, so parallel slices never share one."""
     if desc and not SLUG.fullmatch(desc):
         raise Failed(f"{desc!r} is not kebab-case")
+    sliced = SLICE_ID.fullmatch(work_id)
+    if sliced and desc:
+        prefix = f"slice-{work_id.rsplit('.', 1)[1]}-"
+        desc = desc if desc.startswith(prefix) else prefix + desc
+    if sliced:
+        work_id = sliced.group(1)
     if KEY_ID.fullmatch(work_id):
         if not desc:
             raise Failed(f"{work_id} is a ticket key: a kebab-case description is required for the branch name")

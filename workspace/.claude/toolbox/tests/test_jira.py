@@ -78,7 +78,7 @@ class ImportTest(Jira):
 
     def test_imports_a_story(self):
         out = self.run_tasks("import", "ACME-12", "--issue", self.fixture("issue-story.json"))
-        doc = self.tasks / "ACME-12-show-pantry-shelf-counts.md"
+        doc = self.tasks / "ACME-12" / "ACME-12-show-pantry-shelf-counts.md"
         self.assertEqual(out["doc"], str(doc))
         self.assertEqual(out["url"], "https://acme-test.atlassian.net/browse/ACME-12")
         fields = self.fields(doc)
@@ -112,7 +112,7 @@ class ImportTest(Jira):
         path = self.tmp / "ACME-12-issue.json"
         path.write_text(json.dumps(trimmed), encoding="utf-8")
         self.run_tasks("import", "ACME-12", "--issue", str(path))
-        doc = self.tasks / "ACME-12-show-pantry-shelf-counts.md"
+        doc = self.tasks / "ACME-12" / "ACME-12-show-pantry-shelf-counts.md"
         fields = self.fields(doc)
         self.assertEqual((fields["type"], fields["epic"], fields["depends_on"]), ("story", "ACME-10", ["ACME-11"]))
         self.assertIn("## Acceptance Criteria\n\nGIVEN a shelf holding `3` items\n", doc.read_text())
@@ -129,7 +129,7 @@ class ImportTest(Jira):
             del fields[AC_FIELD]
         self.rewrite_jira(fields={})
         self.run_tasks("import", "ACME-12", "--issue", self.fixture("issue-story.json", ac_in_description))
-        text = (self.tasks / "ACME-12-show-pantry-shelf-counts.md").read_text()
+        text = (self.tasks / "ACME-12" / "ACME-12-show-pantry-shelf-counts.md").read_text()
         self.assertIn("on `GET /shelves`.\n\n## Acceptance Criteria\n\n**Scenario: Empty Shelf**\nGIVEN x\nTHEN y\n",
                       text)
         self.assertEqual(text.count("Acceptance Criteria"), 1)
@@ -141,7 +141,7 @@ class ImportTest(Jira):
             fields["status"]["statusCategory"]["key"] = "done"
             fields["parent"] = {"key": "ACME-5", "fields": {"issuetype": {"name": "User Story"}}}
         self.run_tasks("import", "ACME-12", "--issue", self.fixture("issue-story.json", done_defect))
-        fields = self.fields(self.tasks / "ACME-12-show-pantry-shelf-counts.md")
+        fields = self.fields(self.tasks / "ACME-12" / "ACME-12-show-pantry-shelf-counts.md")
         self.assertEqual((fields["type"], fields["status"], fields["epic"]), ("defect", "done", None))
 
     def test_refuses_another_issue_or_site(self):
@@ -195,11 +195,11 @@ class FileTest(Jira):
         self.assertEqual(out["filed"][1]["url"], "https://acme-test.atlassian.net/browse/ACME-21")
         self.assertEqual(out["warnings"], ["ACME-22: no Blocks link from ACME-21, which it depends on",
                                            "ACME-22: missing the label acme-backlog"])
-        story = self.fields(self.tasks / "ACME-22-show-shelves-list.md")
+        story = self.fields(self.tasks / "ACME-22" / "ACME-22-show-shelves-list.md")
         self.assertEqual((story["key"], story["epic"], story["depends_on"]), ("ACME-22", "ACME-20", ["ACME-21"]))
         self.assertNotIn("estimate", story)
         self.assertEqual(self.fields(self.disc / "plan.md")["epic"], "ACME-20")
-        self.assertIn("- [[Tasks/ACME-21-add-shelf-model|ACME-21]] Add Shelf Model\n",
+        self.assertIn("- [[Tasks/ACME-21/ACME-21-add-shelf-model|ACME-21]] Add Shelf Model\n",
                       (self.disc / "plan.md").read_text())
         self.assertEqual(sorted(p.name for p in (self.disc / "tickets").iterdir()), ["03-later.md"])
 
