@@ -109,6 +109,19 @@ class TestPrMode(ShipCase):
         self.assertEqual(sh(self.tmp, "git", "--git-dir", str(self.bare), "branch", "--list", "tester/*"), "")
         self.assertEqual(out["cleanup"]["install_preview"], {"Create links": ["~/.claude/skills/new-skill"]})
 
+    def test_a_glue_toolbox_previews_with_claude_toolboxs_installer(self):
+        sh(self.repo, "git", "rm", "-q", "install.py")
+        sh(self.repo, "git", "commit", "-m", "no installer")
+        sh(self.repo, "git", "push")
+        installer = self.tmp / "claude-toolbox"
+        installer.mkdir()
+        (installer / "install.py").write_text(INSTALL)
+        (self.repo / "skill.md").write_text("x\n")
+        with mock.patch.object(ship, "CLAUDE_TOOLBOX", installer):
+            code, out = self.cli("run", "--message-file", self.message())
+        self.assertEqual(code, 0, out)
+        self.assertEqual(out["cleanup"]["install_preview"], {"Create links": ["~/.claude/skills/new-skill"]})
+
     def test_the_default_when_domains_yml_has_no_ship_key(self):
         (self.repo / "domains.yml").write_text("domains: {}\n")
         sh(self.repo, "git", "commit", "-am", "no ship key")

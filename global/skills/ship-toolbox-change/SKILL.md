@@ -91,8 +91,8 @@ python3 ~/.claude/skills/ship-toolbox-change/scripts/ship.py run --message-file 
 3. **Push** `HEAD` to the default branch, never forced.
 4. **Cleanup:** fast-forwards the local default branch; from another branch, switches to it and deletes that branch.
 
-Both end with the **install preview**: `install.py` in preview mode in the main checkout, returning any pending
-sections.
+Both end with the **install preview**: `install.py` in preview mode in the main checkout, or in `claude-toolbox` for a
+glue toolbox with no installer of its own, returning any pending sections.
 
 If a step fails (exit 3), the output names the steps that ran. Don't re-run `run` blindly:
 

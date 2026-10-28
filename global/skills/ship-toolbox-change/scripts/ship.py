@@ -46,6 +46,9 @@ import yaml
 GH_TIMEOUT = 90
 ENV = {"GIT_TERMINAL_PROMPT": "0", "GH_PROMPT_DISABLED": "1", "GH_NO_UPDATE_NOTIFIER": "1"}
 TRAILER = re.compile(r"^(co-authored-by|signed-off-by):|🤖", re.IGNORECASE | re.MULTILINE)
+# The claude-toolbox this script ships from (global/skills/ship-toolbox-change/scripts/), whose installer also installs
+# the glue toolboxes its machine.yml lists, which have no installer of their own.
+CLAUDE_TOOLBOX = Path(__file__).resolve().parents[4]
 
 
 class StepFailed(Exception):
@@ -301,10 +304,11 @@ class Ship:
         return done
 
     def install_preview(self) -> dict:
-        """Runs the main checkout's installer in preview mode and returns the sections with pending changes. Applying
-        stays with install-domain, which asks first."""
-        self.run([sys.executable, "install.py"], cwd=self.main)
-        plan = (self.main / "install-plan.txt").read_text().splitlines()
+        """Runs the installer in preview mode and returns the sections with pending changes: the main checkout's own,
+        else (a glue toolbox) claude-toolbox's. Applying stays with install-domain, which asks first."""
+        root = self.main if (self.main / "install.py").exists() else CLAUDE_TOOLBOX
+        self.run([sys.executable, "install.py"], cwd=root)
+        plan = (root / "install-plan.txt").read_text().splitlines()
         pending, section = {}, None
         for line in plan:
             if line.startswith("== "):
