@@ -1,0 +1,136 @@
+<%*
+// Rendered into this vault by claude-toolbox's install.py from the workspace's config. Edit the toolbox's
+// workspace/.vault/Templates/discussion-plan.md.tmpl, never this copy: the next sync overwrites it.
+const DISCUSSIONS = "{{ vault.discussions }}";
+const TASKS = "{{ vault.tasks }}";
+const TRACKER = "{{ tracker.kind }}";
+
+const title = await tp.system.prompt("Discussion title (e.g. Pantry Shelves)");
+if (!title) { new Notice("Cancelled: no title given."); return; }
+
+const slugify = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+
+const slug = slugify(title);
+const created = tp.date.now("YYYY-MM-DD");
+// Discussions are filed by year and month: <discussions>/2026/07/2026-07-29-<slug>
+const dir = `${DISCUSSIONS}/${tp.date.now("YYYY")}/${tp.date.now("MM")}/${created}-${slug}`;
+
+let epic = "";
+let epicLink = "";
+let epicStub = "";
+let epicTitle = "";
+
+// The none tracker has no keys, so no epics.
+if (TRACKER !== "none") {
+  const epicMode = await tp.system.suggester(
+    ["Reference an existing epic", "Stub a new epic", "No epic"],
+    ["existing", "new", "none"],
+    false,
+    "Parent epic"
+  );
+  if (!epicMode) { new Notice("Cancelled."); return; }
+
+  if (epicMode === "existing") {
+    const picked = await tp.user.epicSuggester(tp, TASKS);
+    if (picked) {
+      epic = picked.key;
+      epicLink = picked.link;
+    }
+  } else if (epicMode === "new") {
+    epicTitle = (await tp.system.prompt("New epic title", title)) || title;
+    epicStub = `00-${slugify(epicTitle)}`;
+  }
+}
+
+const parts = `${dir}/tickets`.split("/");
+for (let i = 1; i <= parts.length; i++) {
+  const path = parts.slice(0, i).join("/");
+  if (!app.vault.getAbstractFileByPath(path)) {
+    try { await app.vault.createFolder(path); } catch (e) { /* already exists */ }
+  }
+}
+
+// Stub the epic draft up front so the plan's link is never left dangling: the ticket-docs rule's draft frontmatter
+// for an epic, which /propose-tickets fills in.
+if (epicStub) {
+  const stubPath = `${dir}/tickets/${epicStub}.md`;
+  if (!app.vault.getAbstractFileByPath(stubPath)) {
+    const stub = [
+      "---",
+      "type: epic",
+      `summary: ${epicTitle}`,
+      "status: draft",
+      "---",
+      "",
+      `# ${epicTitle}`,
+      "",
+      `Plan: [[${dir}/plan|${created}-${slug}]]`,
+      "",
+      "## Description",
+      "",
+      "<!--",
+      "1-3 plain paragraphs, no AC: the need or what's wrong today, what the capability is, what it requires, and a",
+      "closing sentence on phasing or boundaries.",
+      "-->",
+      "",
+    ].join("\n");
+    await app.vault.create(stubPath, stub);
+  }
+}
+
+await tp.file.move(`${dir}/plan`);
+-%>
+---
+type: plan
+title: <% title %>
+slug: <% slug %>
+epic: <% epic %>
+created: <% created %>
+status: draft
+---
+
+# <% title %>
+
+## Problem
+
+<!-- What prompted this, who is affected, what breaks or is missing today. -->
+
+## Design Decisions
+
+<!-- Each decision and its reason, with rejected alternatives and why. -->
+
+## Implementation Detail
+
+<!--
+Everything the drafts leave out: entry points, packages and classes, endpoints, tables and migrations, UI components
+and routes, config keys, sequencing. The technical record: keep it current as the work evolves. The drafts carry only
+the subset each story needs, and aren't backfilled from it.
+-->
+
+## Dependencies
+
+<!-- What blocks what: 01 blocks 02 and 03; 02 and 03 are independent. Keys for work outside this discussion. -->
+
+## Proposed Epic
+
+<% epicStub ? `[[${dir}/tickets/${epicStub}|${epicTitle}]]: stubbed, not filed yet.` : (epic ? `${epicLink || epic}: existing epic.` : "None.") %>
+
+## Proposed Stories
+
+```dataview
+TABLE WITHOUT ID
+  file.link AS Draft,
+  summary AS Summary,
+  status AS Status
+FROM "<% dir %>/tickets"
+WHERE type = "story" OR type = "defect"
+SORT file.name ASC
+```
+
+## Open Questions
+
+- [ ]
+
+## Out of Scope
+
+<!-- What's excluded, so it doesn't creep back into the drafts. -->

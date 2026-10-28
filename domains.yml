@@ -14,6 +14,7 @@
 #             workspace machine.yml lists that has a .claude/toolbox.local.yml, gated by the source's features.yml,
 #             with the workspace's generated .claude/rules/toolbox-config.md. Its features.yml is never linked, and
 #             each *.tmpl file is rendered from the workspace's config to its name without the suffix, not linked.
+#             Its .vault/ folder mirrors the workspace's vault (vault.path) instead, written as files, not links.
 #   prefix    required name prefix for the domain's rules, skills and agents (global has none)
 #   ignore    optional globs, relative to source, that are never linked
 #   external  optional links to sources outside this repo: {source: <path>, target: <path relative to target>}

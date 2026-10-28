@@ -29,11 +29,8 @@ tickets be written in Allen's voice, and use the rule.
     └── 02-<story-slug>.md
 ```
 
-- The date is today; the slug is the discussion's title in lowercase with every run of other characters turned into
-  `-`. Make the year and month folders if they don't exist. A discussion folder that already exists for this work is
-  reused, never duplicated.
-- Wikilinks between vault notes use the full vault path: `[[Discussions/2026/10/2026-10-12-recipe-scaling/plan|Recipe
-  Scaling]]`.
+- The folder's name, its reuse and full-path wikilinks follow the global obsidian rule's Discussions section; the
+  date is today. Make the year and month folders if they don't exist.
 - Drafts are numbered in dependency order, foundation first; `00` is reserved for a new epic, at most one. Never put a
   key in a draft's name or frontmatter, and never renumber a draft another doc refers to: filing does the keys.
 

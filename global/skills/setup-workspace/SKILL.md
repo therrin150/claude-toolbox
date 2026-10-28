@@ -63,7 +63,8 @@ server when it isn't `slack`. If Allen wants no announcement, `--drop pr.announc
 ### 4. Ask the rest
 
 Ask everything in one message: each `ask` key with its reason and any suggestion or `candidates` (a vault found
-outside the workspace, such as `~/Notes/Work`, is a fine answer for `vault.path`), the announcement channel, and the
+outside the workspace, such as `~/Notes/Work`, is a fine answer for `vault.path`; suggest the `obsidian` feature when
+it has an `.obsidian/` folder), the announcement channel, and the
 `confirm` values: `tracker.kind`, `features` (offer `known_features`, saying what each installs), and
 `work` (session model, dispatch, WIP limits), and `shared_libraries.names` when detected (a task changing one runs
 `work-task`'s shared-library cycle, then its consumers cycle). Ask nothing detected and nothing the table below doesn't name; Allen can

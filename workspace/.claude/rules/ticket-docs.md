@@ -5,6 +5,9 @@ prefix, its tasks folder and its discussions folder; the names below stand for t
 write task records only through `tasks.py` (in the scripts folder the toolbox-config rule names), never by hand-editing
 their frontmatter: it validates every value and writes atomically.
 
+The discussion layout around the drafts (folders, `plan.md`, sibling docs) is the global obsidian rule's. The user
+deletes task records they no longer want; never clean them up for them.
+
 ## Task records
 
 Every task has a task record, always, whatever the tracker: `<tasks>/<KEY>-<slug>.md` when it has a key,
@@ -90,11 +93,6 @@ drafts in Jira and `tasks.py file <discussion> --keys NN=KEY ... --issues <file>
 checking them against a saved search for those issues, and then moves the drafts the same way; `context <KEY>` on an
 issue no discussion filed says to `import` it from a saved `getJiraIssue` response. With the `none` tracker, `context
 <draft>` copies the draft into a record and the draft stays where it is.
-
-## Session prompts
-
-Files that start a session (`prompt-NN-*.md` beside a plan, "Carry out <path>") are `type: prompt`, never `type:
-task`, so they never mix with task records.
 
 ## Titles
 

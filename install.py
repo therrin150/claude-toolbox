@@ -39,6 +39,10 @@ PER_WORKSPACE = "per-workspace"
 FEATURES_FILE = "features.yml"
 # The per-workspace domain that writes each workspace's generated rule.
 RULE_DOMAIN = "workspace"
+# The folder in a per-workspace domain that mirrors each workspace's vault (its config's `vault.path`) instead of the
+# workspace root. Its files are written, never linked, since Obsidian and synced vaults handle links poorly: rendered
+# when they end .tmpl, copied as they are otherwise.
+VAULT_DIR = ".vault"
 
 ALWAYS_SKIP = {".DS_Store", "Thumbs.db", "__pycache__", ".gitkeep"}
 SKILL_FILES = ("SKILL.md", "skill.md")
@@ -99,7 +103,7 @@ class Generated:
     workspace: str
     path: Path
     text: str
-    template: Path | None = None  # the .tmpl source of a rendered file; None for the generated rule
+    template: Path | None = None  # the source of a rendered or copied file; None for the generated rule
 
 
 @dataclass
@@ -314,7 +318,7 @@ def gated(relpath: str, features: dict, have: list) -> bool:
 def skipper(per_workspace: bool, features: dict, have: list):
     if not per_workspace:
         return lambda relpath: False
-    return lambda relpath: relpath == FEATURES_FILE or gated(relpath, features, have)
+    return lambda relpath: relpath in (FEATURES_FILE, VAULT_DIR) or gated(relpath, features, have)
 
 
 def walk(domain: str, src_root: Path, tgt_root: Path, ignore: list, skip, workspace, links: list, dirs: list,
@@ -368,6 +372,48 @@ def render_template(domain: str, ws: Workspace, template: Path, path: Path, gene
     generated.append(Generated(domain, ws.key, path, text, template))
 
 
+def vault_files(domain: str, src_root: Path, ws: Workspace, ignore: list, skip, dirs: list, generated: list,
+                held: list, problems: list) -> None:
+    """Collect the domain's vault folder for one workspace: each file rendered or copied into the workspace's vault, at
+    its path below the folder. A vault that doesn't exist is a problem, and nothing is written there."""
+    source = src_root / VAULT_DIR
+    if not source.is_dir():
+        return
+    found = []
+
+    def visit(src: Path, rel: str) -> None:
+        for entry in sorted(src.iterdir()):
+            relpath = f"{rel}/{entry.name}"
+            if entry.name in ALWAYS_SKIP or any(fnmatch.fnmatch(relpath, pattern) for pattern in ignore):
+                continue
+            if skip(relpath):
+                continue
+            if entry.is_dir():
+                visit(entry, relpath)
+            else:
+                found.append((entry, Path(relpath).relative_to(VAULT_DIR)))
+
+    visit(source, VAULT_DIR)
+    vault = ws.config.vault_dir
+    if found and not vault.is_dir():
+        problems.append(f"workspace {show(ws.path)}: vault {show(vault)} doesn't exist, so nothing is written there")
+        return
+    suffix = import_templates().SUFFIX
+    for entry, rel in found:
+        target = vault / rel
+        dirs.extend((domain, ws.key, folder) for folder in parents_within(target, vault))
+        if entry.name.endswith(suffix) and entry.name != suffix:
+            render_template(domain, ws, entry, target.with_name(entry.name[: -len(suffix)]), generated, held, problems)
+            continue
+        try:
+            text = entry.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as error:
+            problems.append(f"workspace {show(ws.path)}: can't copy {entry.name} into the vault: {error}")
+            held.append((domain, ws.key, target))
+            continue
+        generated.append(Generated(domain, ws.key, target, text, entry))
+
+
 def desired(manifest: dict, names: list, workspaces: list, problems: list, warnings: list, held: list | None = None):
     """(links, folders, generated files). A template that fails to render is a problem, and its target goes in `held`
     as (domain, workspace, path): neither written nor removed."""
@@ -403,6 +449,9 @@ def desired(manifest: dict, names: list, workspaces: list, problems: list, warni
             walk(name, src_root, tgt_root, spec.get("ignore") or [], skip, workspace, links, dirs, found)
             for template, path in found or []:
                 render_template(name, by_key[workspace], template, path, generated, held, problems)
+            if domain.per_workspace:
+                vault_files(name, src_root, by_key[workspace], spec.get("ignore") or [], skip, dirs, generated, held,
+                            problems)
             for external in spec.get("external") or []:
                 if skip(external["target"]):
                     continue
@@ -658,8 +707,10 @@ def plan_excludes(manifest: dict, scope: Scope, state: dict, workspaces: list, p
         def entry(path) -> str:
             return "/" + Path(os.path.relpath(norm(path), norm(top))).as_posix()
 
+        # A vault outside the workspace's repo (work's lives elsewhere on disk) has nothing to exclude here.
         entries = {entry(link.target) for link in installed if link.domain == name and link.workspace == workspace}
-        entries |= {entry(path) for domain, key, path in written if domain == name and key == workspace}
+        entries |= {entry(path) for domain, key, path in written
+                    if domain == name and key == workspace and inside(norm(path), {norm(top)})}
         if name == RULE_DOMAIN and workspace in active:
             entries.add(entry(root / config.CONFIG_PATH))
         current = exclude_file.read_text(encoding="utf-8") if exclude_file.exists() else ""
@@ -741,7 +792,10 @@ def apply_plan(plan: Plan, state: dict) -> list:
 
 
 def rendered_from(gen: Generated) -> str:
-    return f", rendered from {gen.template.name}" if gen.template else ""
+    if not gen.template:
+        return ""
+    verb = "rendered" if gen.template.name.endswith(import_templates().SUFFIX) else "copied"
+    return f", {verb} from {gen.template.name}"
 
 
 def plan_sections(plan: Plan, errors: list) -> list:

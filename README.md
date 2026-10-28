@@ -25,6 +25,7 @@ global/                          → ~/.claude
 workspace/                       → every listed workspace (per-workspace)
   features.yml                   which paths need which config feature (not installed)
   .claude/toolbox/               scripts (bin/), their library (lib/), references and templates
+  .vault/Templates/              Templater templates written into each workspace's vault (feature obsidian)
   .claude/skills/, agents/       generic workflow skills and agents
 install.py                       the installer
 tests/                           the installer's tests: python3 -m unittest discover -s tests
@@ -88,6 +89,13 @@ On Windows, turn on Developer Mode first so Python can create symlinks without a
   workspace's config. It is recorded as generated, like the rule, and `features.yml` gates it by its `.tmpl` name. A
   key the config doesn't have, or one that isn't a single value, is a problem, and the file there is left as it is.
   This is for what a link can't do, such as an agent whose `tools:` names the workspace's MCP server (`jira-filer`).
+- **Vault files.** A per-workspace domain's `.vault/` folder mirrors each workspace's vault (its config's
+  `vault.path`, inside the workspace or anywhere on disk) instead of the workspace root. Its files are written, never
+  linked, since Obsidian and synced vaults handle links poorly: a `.tmpl` file is rendered as above, any other file is
+  copied as it is. They are recorded as generated, so a changed source rewrites them, stale cleanup and teardown remove
+  them, and an edit made in the vault is overwritten on the next sync. `features.yml` gates them by their `.vault/`
+  paths (the `obsidian` feature gates the whole folder). A vault that doesn't exist is a problem. Inside the
+  workspace's git repo they are excluded from git like the rest; a vault outside it gets no exclude.
 - **It never touches what isn't its own.** A real file, or a link pointing somewhere else, is reported as a conflict and
   left alone.
 - **Git targets.** When a target folder or workspace is a git repo, the links (and a workspace's config file and

@@ -4,7 +4,8 @@
 # Format: {<feature>: [paths relative to workspace/]}. A path names a file, or a folder and everything under it (a
 # skill folder, say: .claude/skills/lock-local-services). A path listed under more than one feature needs all of them.
 # Dropping a feature from a workspace's config and re-syncing removes those links, like any stale link. A template
-# (a .tmpl file, rendered rather than linked) is listed by its own name, suffix included.
+# (a .tmpl file, rendered rather than linked) is listed by its own name, suffix included. Paths under .vault/ (files
+# written into the workspace's vault, not linked into the workspace) are listed from .vault/ too.
 #
 # Example:
 #   services-lock:
@@ -50,3 +51,6 @@ jira-sprints:
 dispatcher:
   - .claude/skills/work-tasks
   - .claude/toolbox/bin/dispatch.py
+
+obsidian:
+  - .vault

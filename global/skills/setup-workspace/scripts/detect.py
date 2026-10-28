@@ -484,7 +484,7 @@ def detect(root: Path, max_repos: int) -> dict:
     compose = any("start" in value for value in areas.values()) or any(
         {"docker-compose.yml", "compose.yml"} & set(info["build_files"]) for info in repo_info)
     features = ["tasks", "worktrees"] + (["pr"] if has_github else []) + (["services-lock"] if compose else []) \
-        + (["intellij"] if intellij else []) + (["jira"] if kind == "jira" else [])
+        + (["intellij"] if intellij else []) + (["jira"] if kind == "jira" else []) + (["obsidian"] if vaults else [])
     values["features"] = entry(features, "default", "from the layout and tracker", confirm=True)
     values["work.session_model"] = entry("sonnet", "default", "default", confirm=True)
     values["work.dispatch"] = entry("direct", "default", "default", confirm=True)
