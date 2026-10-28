@@ -114,6 +114,15 @@ class VerifyInputs(unittest.TestCase):
         self.assertIn("+class Repo { List loadAll()", text)
         self.assertIn("NOTES.md (untracked)", text)
 
+    def test_no_names_writes_the_diff_without_a_sweep(self):
+        cfg, service = self.nested()
+        summary, code, text = self.build(cfg, [str(service)], [])
+        self.assertEqual(code, 0)
+        self.assertEqual(summary["hits"], {})
+        self.assertIn("+class Repo { List loadAll()", text)
+        self.assertIn("None: the session named no public name", text.split("## Caller sweep")[1])
+        self.assertNotIn("client:", text)
+
     def test_sweep_ignores_a_stale_local_branch_and_the_working_tree(self):
         cfg, service = self.nested()
         client = cfg.root / "client"

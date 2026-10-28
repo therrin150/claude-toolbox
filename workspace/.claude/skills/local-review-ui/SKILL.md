@@ -29,10 +29,11 @@ under `LOCAL_REVIEW_HOME` when that's set). If it doesn't exist, this machine ha
 ```
 
 - **work id**: a task's id (its key, or the slug of a keyless task) in a workspace with the `tasks` and `worktrees`
-  features. The review covers the task's worktrees, `.claude/toolbox/bin/worktrees.py list <work id>`, one path each.
-  The review id is the work id and the title is `<work id> <summary>` (`.claude/toolbox/bin/tasks.py get <work id>
-  summary`, passed as `--title`), so the same work id resumes the review and its comments. A work id with no
-  worktrees is an error: say so and stop.
+  features. The review covers the task's worktrees, `.claude/toolbox/bin/worktrees.py list <work id>`, each passed as
+  `<repo>=<path>` with the entry's `repo`, so the dropdown names the repo even where the worktree's folder is the work
+  id (a single-repo workspace's). The review id is the work id and the title is `<work id> <summary>`
+  (`.claude/toolbox/bin/tasks.py get <work id> summary`, passed as `--title`), so the same work id resumes the review
+  and its comments. A work id with no worktrees is an error: say so and stop.
 - **repo-or-path**: a path to a git checkout or worktree, a repo's folder name under the configured workspace root, or
   `name=path` to choose the name shown in the dropdown (needed when two checkouts share a folder name). With none, use
   the repos this session changed; if that's unclear, ask.

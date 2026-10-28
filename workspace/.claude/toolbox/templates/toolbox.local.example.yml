@@ -14,7 +14,7 @@ features: [tasks, worktrees, pr, services-lock, review-ui, dispatcher]
 workspace:
   name: <name>                     # shown in the generated rule
   layout: single                   # single: one repo at the root | nested: a folder of repos
-  default_branch: main             # default: main
+  default_branch: master           # default: master
   worktrees: .worktrees            # relative to the workspace root; default: .worktrees
   # Folders with their own build (single) or repos (nested: discovered, so list one only to override it). Every
   # command is optional. "*" is the fallback for any area without its own, such as every repo of a nested workspace.

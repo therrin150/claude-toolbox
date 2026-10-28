@@ -374,7 +374,7 @@ def detect(root: Path, max_repos: int) -> dict:
     branch, _, branch_counts = most_common(info["default_branch"] for info in repo_info)
     values["workspace.default_branch"] = (
         entry(branch, "detected", f"origin/HEAD ({tally(branch_counts)})") if branch
-        else entry("main", "default", "no origin/HEAD"))
+        else entry("master", "default", "no origin/HEAD"))
     values["workspace.worktrees"] = entry(".worktrees", "detected" if (root / ".worktrees").is_dir() else "default",
                                           "the folder exists" if (root / ".worktrees").is_dir() else "default")
 

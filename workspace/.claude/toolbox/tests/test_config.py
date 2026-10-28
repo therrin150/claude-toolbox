@@ -356,7 +356,7 @@ class RenderTest(Workspace):
         rule = config.render_rule(config.load(root))
         self.assertLess(len(rule.splitlines()), 40)
         for expected in (
-            f"`fleet` at `{root}`, a folder of repos in GitHub org `example-org`; default branch `main`",
+            f"`fleet` at `{root}`, a folder of repos in GitHub org `example-org`; default branch `master`",
             f"**Vault:** `{Path.home()}/Notes/Work`",
             "**Tracker:** `jira`, project `FLT` on `example.atlassian.net` (cloud id "
             "`00000000-0000-0000-0000-000000000000`), keys `FLT-<n>`. Writes back nothing.",

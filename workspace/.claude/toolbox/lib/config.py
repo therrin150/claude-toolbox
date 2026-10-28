@@ -99,7 +99,7 @@ SCHEMA = Section({
     "workspace": Section({
         "name": Value(str, required=True),
         "layout": Value(str, required=True, choices=("single", "nested")),
-        "default_branch": Value(str, "main"),
+        "default_branch": Value(str, "master"),
         "worktrees": Value(str, ".worktrees"),
         "areas": MapOf(AREA),
     }),

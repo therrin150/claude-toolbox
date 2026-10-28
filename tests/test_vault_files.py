@@ -151,6 +151,35 @@ class VaultFiles(InstallerTest):
         self.assertIn(install.norm(self.vault1 / SCRIPT), self.state()["generated"])
         self.assertEqual((self.vault1 / TEMPLATE).read_text(), "# A hand-made template\n")
 
+    def test_tasks_feature_makes_the_tasks_and_discussions_folders(self):
+        write(self.ws1 / CONFIG, vault_config("one", ["tasks"], str(self.vault1)))
+        _, plan = self.run_install()
+        made = self.section(plan, "Create folders")
+        for folder in ("Tasks", "Notes", "Notes/Discussions"):
+            self.assertIn(str(self.vault1 / folder), made)
+        self.assertNotIn(str(self.vault2 / "Tasks"), made)  # ws2 has no `tasks` feature
+        self.run_install("--apply")
+        self.assertTrue((self.vault1 / "Notes" / "Discussions").is_dir())
+        write(self.vault1 / "Tasks" / "PT-1-shelf-labels.md", "---\ntype: story\n---\n")
+
+        # Dropping the feature, or a teardown, removes only the folders left empty: never a task record.
+        write(self.ws1 / CONFIG, vault_config("one", [], str(self.vault1)))
+        self.run_install("--apply")
+        self.assertFalse((self.vault1 / "Notes").exists())
+        self.assertTrue((self.vault1 / "Tasks" / "PT-1-shelf-labels.md").is_file())
+        write(self.ws1 / CONFIG, vault_config("one", ["tasks"], str(self.vault1)))
+        self.run_install("--apply")
+        self.run_install("--teardown", "--apply")
+        self.assertTrue((self.vault1 / "Tasks" / "PT-1-shelf-labels.md").is_file())
+
+    def test_tasks_feature_with_a_missing_vault_is_a_problem(self):
+        write(self.ws1 / CONFIG, vault_config("one", ["tasks", "obsidian"], str(self.vault1)))
+        shutil.rmtree(self.vault1)
+        code, plan = self.run_install()
+        self.assertEqual(code, 1)
+        problem = f"workspace {self.ws1}: vault {self.vault1} doesn't exist, so nothing is written there"
+        self.assertEqual(self.section(plan, "Problems").count(problem), 1)
+
     def test_the_vault_folder_is_never_linked_into_the_workspace(self):
         write(self.ws1 / CONFIG, vault_config("one", [], str(self.vault1)))
         _, plan = self.run_install("--apply")

@@ -76,7 +76,8 @@ class WatchTest(unittest.TestCase):
         self.state = self.tmp / "gh.json"
         self.root = self.tmp / "ws"
         (self.root / ".claude").mkdir(parents=True)
-        raw = {"version": 1, "features": ["tasks", "pr"], "workspace": {"name": "pantry", "layout": "single"},
+        raw = {"version": 1, "features": ["tasks", "pr"],
+               "workspace": {"name": "pantry", "layout": "single", "default_branch": "main"},
                "user": {"handle": "jdoe", "name": "Jordan"}, "vault": {"path": "vault"},
                "tracker": {"kind": "vault", "key_prefix": "PT"}, "pr": {"bots": ["scanner"]}}
         (self.root / ".claude" / "toolbox.local.yml").write_text(yaml.safe_dump(raw))

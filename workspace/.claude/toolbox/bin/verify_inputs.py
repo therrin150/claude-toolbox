@@ -2,7 +2,7 @@
 """Write change-verifier's inputs to one file: the requirement, each checkout's diff and the caller sweep. The script
 behind verify-change step 1; the session still picks the names to sweep.
 
-  verify_inputs.py <checkout>... --names a,b,... [--task <work id | task record path>] [--base origin/<default>]
+  verify_inputs.py <checkout>... [--names a,b,...] [--task <work id | task record path>] [--base origin/<default>]
                    [--out <file>]
 
 Per checkout (a path, or a name under the workspace root or its worktrees folder; a folder of worktrees, such as a
@@ -13,7 +13,8 @@ diffed as new files; the index is never touched.
 The caller sweep runs `git grep -n -w -F` for every name on a freshly fetched `origin/<default branch>`, never the
 working tree or the local branch: a main checkout sits on whatever branch was last used, and a stale local branch
 misses merged code. A nested workspace sweeps every repo in it (fetched in parallel); a single one sweeps its own repo,
-limited to its areas' folders when it lists any. Hits are `repo:path:line:text`, capped per name.
+limited to its areas' folders when it lists any. Hits are `repo:path:line:text`, capped per name. Without --names (a
+change to docs or config that removes, renames or changes no public name) there is no sweep, and the file says so.
 
 --task adds the requirement: the task record's body and its design doc's path (its `source_doc`, else its `source`).
 Without it, the session passes the task in the verifier's prompt. Dependencies in `verify.ignore_bumps` are listed so
@@ -172,6 +173,10 @@ def render(req: dict | None, checkouts: list[dict], names: list[str], sweep: lis
         out += [f"## Diff: {c['name']}", "", f"Checkout: `{c['path']}` (against {c['base']}, merge base "
                 f"{c['merge_base'][:10]})", "", "Changed files:", "", *[f"- `{f}`" for f in c["files"]], "",
                 "```diff", c["diff"], "```", ""]
+    if not names:
+        out += ["## Caller sweep", "",
+                "None: the session named no public name the diff removes, renames or changes.", ""]
+        return "\n".join(out)
     out += ["## Caller sweep", "",
             f"`git grep -n -w -F` on each repo's freshly fetched origin/{ref}. Names searched: {', '.join(names)}.", ""]
     skipped = [f"{s['repo']} ({s.get('skipped') or s.get('error')})" for s in sweep if "hits" not in s]
@@ -201,8 +206,10 @@ def build(cfg: config.Config, checkouts: list[str], names: list[str], task: str 
             failed.append({"checkout": str(path), "error": str(e)})
     req = requirement(cfg, task) if task else None
     targets = sweep_targets(cfg)
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        sweep = list(pool.map(lambda t: sweep_repo(t[0], t[1], t[2], names, ref), targets))
+    sweep = []
+    if names:
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            sweep = list(pool.map(lambda t: sweep_repo(t[0], t[1], t[2], names, ref), targets))
     ignore = cfg.get("verify.ignore_bumps")
 
     label = req["work_id"] if req else "-".join(p.name for p in paths)
@@ -221,14 +228,12 @@ def build(cfg: config.Config, checkouts: list[str], names: list[str], task: str 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("checkouts", nargs="+")
-    parser.add_argument("--names", required=True, help="comma-separated public names to sweep for")
+    parser.add_argument("--names", default="", help="comma-separated public names to sweep for; none, no sweep")
     parser.add_argument("--task", help="a work id or a task record's path")
     parser.add_argument("--base", help="what the diff is against; default origin/<default branch>")
     parser.add_argument("--out", type=Path)
     args = parser.parse_args()
     names = list(dict.fromkeys(n.strip() for n in args.names.split(",") if n.strip()))
-    if not names:
-        sys.exit("--names needs at least one name")
     try:
         cfg = config.load()
         summary, code = build(cfg, args.checkouts, names, args.task, args.base, args.out)

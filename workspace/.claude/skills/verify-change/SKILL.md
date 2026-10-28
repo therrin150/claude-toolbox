@@ -37,8 +37,10 @@ Pick the names to sweep: every public class, method, field, endpoint, property, 
 removes, renames or changes. Then write the inputs to a file, from the workspace root:
 
 ```bash
-.claude/toolbox/bin/verify_inputs.py <checkout>... --names <a,b,...> [--task <work id>] [--base <ref>]
+.claude/toolbox/bin/verify_inputs.py <checkout>... [--names <a,b,...>] [--task <work id>] [--base <ref>]
 ```
+
+Leave `--names` off when the diff changes no public name (a docs or config change): there is then no caller sweep.
 
 It fetches, writes each checkout's changed files and full diff (committed and uncommitted), the caller sweep
 (`git grep -n -w -F` on the freshly fetched default branch of every repo in a nested workspace, or of the workspace's

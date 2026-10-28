@@ -39,6 +39,9 @@ PER_WORKSPACE = "per-workspace"
 FEATURES_FILE = "features.yml"
 # The per-workspace domain that writes each workspace's generated rule.
 RULE_DOMAIN = "workspace"
+# The feature whose workspaces get their vault's tasks and discussions folders made, when the vault exists. Like any
+# folder the installer makes, they are removed only once empty, so a task record is never touched.
+TASKS_FEATURE = "tasks"
 # The folder in a per-workspace domain that mirrors each workspace's vault (its config's `vault.path`) instead of the
 # workspace root. Its files are written, never linked, since Obsidian and synced vaults handle links poorly: rendered
 # when they end .tmpl, copied as they are otherwise.
@@ -465,6 +468,16 @@ def desired(manifest: dict, names: list, workspaces: list, problems: list, warni
             path = ws.path / config.RULE_PATH
             dirs.extend((RULE_DOMAIN, ws.key, folder) for folder in parents_within(path, ws.path))
             generated.append(Generated(RULE_DOMAIN, ws.key, path, config.render_rule(ws.config)))
+            if TASKS_FEATURE in ws.config.features:
+                vault = ws.config.vault_dir
+                if not vault.is_dir():
+                    problem = (f"workspace {show(ws.path)}: vault {show(vault)} doesn't exist, so nothing is written "
+                               "there")
+                    if problem not in problems:  # vault_files may have said so already
+                        problems.append(problem)
+                    continue
+                for folder in (ws.config.tasks_dir, ws.config.discussions_dir):
+                    dirs.extend((RULE_DOMAIN, ws.key, d) for d in [*parents_within(folder, vault), folder])
 
     unique_dirs = {}
     for domain, workspace, folder in dirs:
