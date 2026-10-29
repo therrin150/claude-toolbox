@@ -43,7 +43,8 @@ and number linked, review decision, checks, merge state) and any comments or rev
 `path:line` for an inline one, and the text.
 
 - `overall: ready`: notify and ask "approved and green, merge?".
-- `overall: merged` (the user merged on GitHub): "Merge" for the cleanup.
+- `overall: merged` (the user merged on GitHub): "Merge" for the cleanup; its run sees every PR merged and runs
+  cleanup only.
 - Otherwise start the watcher with `run_in_background: true`: `<bin>/watch_task.py prs <work id>`, and end your turn.
   It exits on the first change and wakes the session; act on each of its `events`, then start it again unless the PRs
   are merged:
@@ -51,9 +52,9 @@ and number linked, review decision, checks, merge state) and any comments or rev
       already covers it: run "Merge" again without asking.
     - `comments`, `changes-requested`: notify and show them as above. The user decides what to change.
     - `ci-failed`: notify with the failing checks and the PR link. The user decides whether it's a fix or a re-run.
-    - `merged`: only when the output's `overall` is `merged` (every PR is), run "Merge" for the cleanup; its run skips
-      merged PRs. While any PR is still open, say which merged and start the watcher again: merging the rest needs
-      their instruction. `closed`: STOP.
+    - `merged`: only when the output's `overall` is `merged` (every PR is), run "Merge" for the cleanup; its run
+      cleans up only. While any PR is still open, say which merged and start the watcher again: merging the rest
+      needs their instruction, and the run skips the merged ones. `closed`: STOP.
     - `timeout`: start it again without a message.
 
 A change the user asks for after the PRs are open: make it in the worktree, format and re-run what it touches (unit
@@ -65,10 +66,12 @@ Before merging, or if the user says to stop watching, stop the watcher (`TaskSto
 
 ## Merge
 
-1. On the user's merge instruction: `<bin>/publish.py run <work id>`. Every step already done is skipped; it rebases a
-   PR that fell behind the default branch and pushes it, waits for CI (with `pr.wait_for_ci`), merges by `pr.merge`,
-   removes the worktrees, deletes the merged branches, and sets `status=done`. Run it in the background when CI may
-   take a while (it exits on a result). Exit 4 is a halt, not a failure:
+1. On the user's merge instruction, or when they merged on GitHub: `<bin>/publish.py run <work id>`. Every step
+   already done is skipped; it rebases a PR that fell behind the default branch and pushes it, waits for CI (with
+   `pr.wait_for_ci`), merges by `pr.merge`, removes the worktrees, deletes the merged branches, and sets
+   `status=done`. With every PR already merged it runs cleanup only (`skipped` in its output); a merged PR is never
+   rebased or pushed. If its output shows a `push` or `open-pr` step for a merged PR, STOP: that is a `publish.py`
+   bug. Run it in the background when CI may take a while (it exits on a result). Exit 4 is a halt, not a failure:
     - `needs_confirmation`: squashes that collapse several commits. Show the user, then run again with
       `--confirm-squash`.
     - waiting for a review approval, or CI timed out: start the watcher ("Watch the PRs") and run again on `ready`.

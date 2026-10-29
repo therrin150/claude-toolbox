@@ -10,8 +10,9 @@ for a single-repo workspace). --branch limits it to one branch name.
 A squash- or rebase-merged branch's own commits are never reachable from the default branch, so `git branch -d`,
 `git cherry` and tree comparison all call it unmerged. So the PR decides. A branch is eligible only when it has a MERGED
 PR and its local tip is that PR's headRefOid or an ancestor of it (checked against refs/pull/<n>/head, which GitHub
-keeps after the branch is deleted): behind is fine, since every local commit is still in what merged. Everything else
-is kept, with a reason:
+keeps after the branch is deleted): behind is fine, since every local commit is still in what merged. A tip in
+origin/<default> is eligible too (a branch rebased onto its own squash commit holds nothing else). Everything else is
+kept, with a reason:
   No PR, PR open, PR closed (not merged), Local tip ahead of PR (local commits in no PR), Checked out (the current
   branch, or checked out in a worktree: `worktrees.py remove` clears those), gh error (never delete unverified)
 
@@ -69,6 +70,8 @@ def classify(cfg: config.Config, co: gitgh.Checkout, name: str, sha: str) -> dic
         if git_ok(main, "merge-base", "--is-ancestor", sha, head):
             behind = int(git(main, "rev-list", "--count", f"{sha}..{head}"))
             return {**entry, "pr": pr["number"], "url": pr["url"], "behind": behind}
+    if merged and git_ok(main, "merge-base", "--is-ancestor", sha, f"origin/{cfg.default_branch}"):
+        return {**entry, "pr": merged[0]["number"], "url": merged[0]["url"], "behind": 0}
     if merged:
         return {**entry, "keep": "Local tip ahead of PR", "pr": merged[0]["number"]}
     if any(p["state"] == "OPEN" for p in prs):

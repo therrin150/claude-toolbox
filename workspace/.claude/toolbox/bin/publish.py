@@ -25,22 +25,25 @@ becomes the PR title, from the oldest commit on the branch, and the body the PR 
 
 What each step does, and what makes it stop:
   commit    precheck every repo first (not on the default branch, branch name matches `git.branch`, no operation in
-            progress, a message with a subject, a body and no trailer); any problem halts the batch with nothing
-            changed. Then per repo `git add -A` and `git commit -F`, checking the tree is clean, the subject is the
-            message's, and no trailer crept in.
+            progress, a message with a subject, a body and no trailer, no uncommitted files on a branch whose PR is
+            merged); any problem halts the batch with nothing changed. Then per repo `git add -A` and `git commit -F`,
+            checking the tree is clean, the subject is the message's, and no trailer crept in.
   push      per repo, `git rebase origin/<default>` when that has new code commits (commits touching only the vault,
-            when the vault is inside the repo, don't count). A conflict stops the batch (exit 4, `conflicts`) with the rebase
-            left in progress for the session to resolve, `git rebase --continue`, re-test, and run again. A branch
-            already on the remote that the rebase rewrote is pushed with --force-with-lease against the sha seen;
-            nothing else is ever forced. Without `pr.required`, nothing is pushed here: `merge` pushes the default
-            branch.
-  open-pr   (`pr.required` only) per repo, in order: look the branch up with `--state all` and reuse an open PR, else
-            create one. Title: the oldest non-merge commit's subject. Body: the template, with everything above
-            `# Checklist` replaced by the commits' bodies and every `- [ ]` ticked (the ticket-number box stays
-            unticked when neither the branch nor a subject carries a key); with no `# Checklist`, the commits' bodies
-            then the template; with no template, the commits' bodies. Ready for review, not a draft. With `pr.announce`,
-            prints `announce`: the approved text, the channel and the MCP server, for the session to post (a script
-            can't call an MCP tool). Records `prs`, `status: review` and `stage` through tasks.py.
+            when the vault is inside the repo, don't count). A conflict stops the batch (exit 4, `conflicts`) with the
+            rebase left in progress for the session to resolve, `git rebase --continue`, re-test, and run again. A
+            branch already on the remote that the rebase rewrote is pushed with --force-with-lease against the sha
+            seen; nothing else is ever forced. Without `pr.required`, nothing is pushed here: `merge` pushes the default
+            branch. A repo whose PR is merged (and none open) is skipped, never rebased or pushed: rebasing onto its
+            squash commit and pushing would recreate the branch GitHub deleted. Commits after the merge fail the
+            precheck; they belong on a new branch.
+  open-pr   (`pr.required` only) per repo, in order: skip a repo whose PR is merged; look the branch up with
+            `--state all` and reuse an open PR, else create one. Title: the oldest non-merge commit's subject. Body:
+            the template, with everything above `# Checklist` replaced by the commits' bodies and every `- [ ]` ticked
+            (the ticket-number box stays unticked when neither the branch nor a subject carries a key); with no
+            `# Checklist`, the commits' bodies then the template; with no template, the commits' bodies. Ready for
+            review, not a draft. With `pr.announce`, prints `announce`: the approved text, the channel and the MCP
+            server, for the session to post (a script can't call an MCP tool). Records `prs`, `status: review` and
+            `stage` through tasks.py.
   wait-ci   (`pr.wait_for_ci` only) poll each PR's checks until all are green (exit 0), any failed (exit 3) or
             --timeout seconds pass (exit 4). Run it in the background; it exits on a result, so nothing polls in the
             conversation. A PR with no checks at all after --grace seconds counts as green.
@@ -60,6 +63,7 @@ What each step does, and what makes it stop:
   run       preflight (every precheck above and the texts they need, before anything is written), then commit, push,
             open-pr, wait-ci, merge, cleanup. The first failure halts with `stopped_at`. Every step looks at what
             already happened (a clean tree, a pushed branch, an open PR, a merged PR), so running it again resumes.
+            With `pr.required` and every PR merged (on GitHub, say), it runs cleanup only, with `skipped`.
             --stop-after <step> ends the run after that step with `stopped_after` (exit 0): work-task publishes with
             `--stop-after open-pr` and runs it again, without the flag, on the user's merge instruction.
 
@@ -211,6 +215,34 @@ def record_code(out: dict) -> int:
 
 
 # ---------------------------------------------------------------------------------------------------------------------
+# A PR merged on GitHub
+
+
+def merged_pr(ctx: Context, co: Checkout, name: str) -> dict | None:
+    """The branch's merged PR when it has no open one (`pr.required` only). GitHub already has that change, so commit,
+    push and open-pr leave the repo alone: rebasing a squash-merged branch onto its squash commit and pushing it
+    recreates the branch GitHub deleted."""
+    if not ctx.cfg.pr["required"] or not name:
+        return None
+    prs = prs_for_branch(co.gh_repo, name)
+    if any(p["state"] == "OPEN" for p in prs):
+        return None
+    merged = [p for p in prs if p["state"] == "MERGED"]
+    return max(merged, key=lambda p: p["number"]) if merged else None
+
+
+def after_merge(ctx: Context, co: Checkout, pr: dict) -> bool:
+    """HEAD has commits that neither the merged PR nor the default branch has: work that belongs on a new branch."""
+    head = git(co.path, "rev-parse", "HEAD")
+    if head == pr["headRefOid"]:
+        return False
+    git(co.path, "fetch", "origin", "--prune", timeout=90)
+    git(co.path, "fetch", "origin", f"refs/pull/{pr['number']}/head", check=False, timeout=90)
+    return not (gitgh.git_ok(co.path, "merge-base", "--is-ancestor", head, pr["headRefOid"])
+                or gitgh.git_ok(co.path, "merge-base", "--is-ancestor", head, ctx.base()))
+
+
+# ---------------------------------------------------------------------------------------------------------------------
 # commit
 
 
@@ -287,6 +319,10 @@ def commit_precheck_one(ctx: Context, co: Checkout) -> dict:
         staged = [line[3:] for line in lines if line[0] not in " ?"]
         if staged:
             result["staged"] = staged
+        pr = merged_pr(ctx, co, name)
+        if pr:
+            problems.append(f"uncommitted files on a branch whose PR #{pr['number']} is merged; they belong on a new "
+                            "branch")
     else:
         pushed = remote_sha(co.path, name) if name else None
         since = f"{pushed or ctx.base()}..HEAD"
@@ -377,6 +413,11 @@ def push_precheck_one(ctx: Context, co: Checkout) -> dict:
     problems += branch_problems(ctx, name)
     if status_lines(co.path):
         problems.append("working tree not clean; commit first")
+    pr = merged_pr(ctx, co, name)
+    if pr:
+        result["merged_pr"] = pr["number"]
+        if after_merge(ctx, co, pr):
+            problems.append(f"commits after PR #{pr['number']} merged; they belong on a new branch")
     return result
 
 
@@ -386,12 +427,16 @@ def step_push(ctx: Context) -> tuple[dict, int]:
     if any(c["problems"] for c in checks):
         out["error"] = "precheck failed; nothing was rebased or pushed"
         return out, PRECHECK_FAILED
-    for co in ctx.checkouts:
+    merged = {c["repo"]: c["merged_pr"] for c in checks if "merged_pr" in c}
+    if merged:
+        out["skipped"] = [{"repo": r, "merged_pr": n} for r, n in sorted(merged.items())]
+    todo = [co for co in ctx.checkouts if co.name not in merged]
+    for co in todo:
         git(co.path, "fetch", "origin", "--prune", timeout=90)
-    behind = {co.name: code_commits_behind(ctx, co) for co in ctx.checkouts}
+    behind = {co.name: code_commits_behind(ctx, co) for co in todo}
     if ctx.dry_run:
         return {**out, "dry_run": True, "would_rebase": {k: v for k, v in behind.items() if v}}, OK
-    for co in ctx.checkouts:
+    for co in todo:
         name = branch(co.path)
         seen = remote_sha(co.path, name)
         before = git(co.path, "rev-parse", "HEAD")
@@ -488,6 +533,10 @@ def pr_precheck_one(ctx: Context, co: Checkout, resume: bool, pushed: bool) -> d
     name = branch(co.path)
     result["branch"] = name
     problems += branch_problems(ctx, name)
+    if pushed:
+        pr = merged_pr(ctx, co, name)
+        if pr:
+            return {**result, "merged_pr": pr["number"], "url": pr["url"]}
     template = co.path / TEMPLATE
     if template.is_file() and "# Checklist" not in template.read_text():
         result["note"] = f"{TEMPLATE} has no '# Checklist' heading: the description goes above the template"
@@ -559,9 +608,15 @@ def step_open_pr(ctx: Context) -> tuple[dict, int]:
     problems = [f"{c['repo']}: {p}" for c in checks for p in c["problems"]] + pr_preflight_problems(ctx)
     if problems:
         return {**out, "problems": problems, "error": "precheck failed; nothing was opened"}, PRECHECK_FAILED
+    merged = {c["repo"]: c for c in checks if "merged_pr" in c}
+    if len(merged) == len(checks):
+        return {**out, "skipped": "every PR is merged; nothing to open"}, OK
     if ctx.dry_run:
         return {**out, "dry_run": True}, OK
     for co in ctx.checkouts:
+        if co.name in merged:
+            out["prs"].append({"repo": co.name, "status": "merged", "url": merged[co.name]["url"]})
+            continue
         try:
             out["prs"].append(create_pr(ctx, co, getattr(ctx.args, "reviewer", None)))
         except Failed as e:
@@ -571,12 +626,13 @@ def step_open_pr(ctx: Context) -> tuple[dict, int]:
     created = [p for p in out["prs"] if p["status"] == "created"]
     if ctx.cfg.announce and not getattr(ctx.args, "no_announce", False):
         if created or getattr(ctx.args, "announce_existing", False):
-            out["announce"] = announcement(ctx.cfg, out["prs"], read_announcement(ctx.announce_path()))
+            out["announce"] = announcement(ctx.cfg, [p for p in out["prs"] if p["status"] != "merged"],
+                                           read_announcement(ctx.announce_path()))
         else:
             out["announce"] = None
             out["note"] = "every PR was already open, so nothing new to announce (--announce-existing forces it)"
     stage = "awaiting-ci" if ctx.cfg.pr["wait_for_ci"] else "awaiting-merge"
-    record_all(ctx, out, ("append", "prs", *[p["url"] for p in out["prs"]]),
+    record_all(ctx, out, ("append", "prs", *[p["url"] for p in out["prs"] if p["status"] != "merged"]),
                ("set", "status=review", f"stage={stage}"))
     return out, record_code(out)
 
@@ -860,6 +916,10 @@ def step_cleanup(ctx: Context) -> tuple[dict, int]:
 
 def step_run(ctx: Context) -> tuple[dict, int]:
     out = {"work_id": ctx.wid, "steps": {}}
+    if ctx.cfg.pr["required"] and all(merged_pr(ctx, co, branch(co.path)) for co in ctx.checkouts):
+        # Merged on GitHub: everything before cleanup already happened there.
+        out["skipped"] = "every PR is merged; cleanup only"
+        return run_steps(ctx, out, [("cleanup", step_cleanup)])
     checks = [commit_precheck_one(ctx, co) for co in ctx.checkouts]
     pr_checks = [pr_precheck_one(ctx, co, resume=True, pushed=False) for co in ctx.checkouts] \
         if ctx.cfg.pr["required"] else []
@@ -871,8 +931,11 @@ def step_run(ctx: Context) -> tuple[dict, int]:
                 "error": "preflight failed; nothing was committed, pushed or opened"}, PRECHECK_FAILED
     if ctx.dry_run:
         return {**out, "precheck": checks, "dry_run": True}, OK
-    steps = [("commit", step_commit), ("push", step_push), ("open-pr", step_open_pr), ("wait-ci", step_wait_ci),
-             ("merge", step_merge), ("cleanup", step_cleanup)]
+    return run_steps(ctx, out, [("commit", step_commit), ("push", step_push), ("open-pr", step_open_pr),
+                                ("wait-ci", step_wait_ci), ("merge", step_merge), ("cleanup", step_cleanup)])
+
+
+def run_steps(ctx: Context, out: dict, steps: list) -> tuple[dict, int]:
     for name, fn in steps:
         result, code = fn(ctx)
         out["steps"][name] = result
