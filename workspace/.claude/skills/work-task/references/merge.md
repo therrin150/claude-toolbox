@@ -77,7 +77,10 @@ Before merging, or if the user says to stop watching, stop the watcher (`TaskSto
     - waiting for a review approval, or CI timed out: start the watcher ("Watch the PRs") and run again on `ready`.
     - `conflicts`: as in "Publish".
 
-   A refused worktree removal (uncommitted files) is a STOP. Report its `warnings`.
+   A PR whose merge precheck shows `admin_merge` (every file it changes is path-filtered out of the workflows behind
+   its required checks, so they never report) merges with `--admin`; the user's merge instruction covers it. Name it
+   and its `missing_checks` in the report. A refused worktree removal (uncommitted files) is a STOP. Report its
+   `warnings`.
 2. With the `review-ui` feature, forget the task's review and its comments, and prune reviews whose repos are gone:
    `python3 .claude/skills/local-review-ui/scripts/review.py forget <work id> --delete-comments`, then `... prune`.
 3. Hook `after-the-merge`: by default SKILL.md "### After the merge".
@@ -87,7 +90,9 @@ Before merging, or if the user says to stop watching, stop the watcher (`TaskSto
 After the shared-library cycle's merge (SKILL.md "### Plan the cycles"): `review`, `awaiting-ci`, `cycle:
 shared-library` and no `worktrees`. Start `<bin>/watch_task.py pipeline <work id>` with `run_in_background: true` and
 end your turn. It finds the default branch's runs of each merge commit (the merged PRs', or without PRs the commits
-`publish.py` pushed) and watches them; a green run means the release is published.
+`publish.py` pushed) and watches them; a green run means the release is published. A PR merged with `admin` may
+publish no release (the default branch's build likely filters the same paths): if no run carries `tags`, STOP and ask
+whether the consumers cycle still applies.
 
 - Exit 0: notify, naming the release (each pipeline's `tags`, a build number, say, when there are any), and start the
   consumers cycle without asking: it has its own stops, and nothing in it writes to git before stop 2's approval.

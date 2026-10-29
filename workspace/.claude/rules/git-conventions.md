@@ -44,7 +44,9 @@ default branch. Either way:
   `--force-with-lease` against the exact sha seen, after `publish.py push` rebased a branch the remote already had.
 - A task branch is rebased onto the latest `origin/<default>`, never merged into. Commits on the default branch that
   touch only a vault inside the repo don't force a rebase.
-- Merging never uses `--admin`: a merge refused by branch protection is the protection working.
+- Merging never uses `--admin`: a merge refused by branch protection is the protection working. The one exception is
+  `publish.py merge`'s `admin_merge`: an approved, green PR whose required checks never run because every file it
+  changes is in their workflow's path filter.
 
 ## Cleanup
 

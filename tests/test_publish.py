@@ -128,5 +128,81 @@ class SquashMergedTest(unittest.TestCase):
         self.assertEqual(entry["pr"], 7)
 
 
+WORKFLOW = """\
+name: pr
+'on':
+  pull_request:
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+jobs:
+  build:
+    uses: o/w/.github/workflows/build.yaml@v1
+"""
+
+
+class PathFilteredTest(unittest.TestCase):
+    """PR #8 is approved and its reported checks are green, but GitHub says BLOCKED: the required `build / build` check
+    comes from a workflow whose `paths-ignore` may leave out every file the PR changes."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        origin = root / "origin.git"
+        git(root, "init", "-q", "--bare", "-b", "master", str(origin))
+        self.work = clone(origin, root / "work")
+        (self.work / ".github" / "workflows").mkdir(parents=True)
+        commit(self.work, ".github/workflows/pr.yaml", WORKFLOW, "base")
+        git(self.work, "push", "-q", "origin", "HEAD:master")
+        git(self.work, "checkout", "-q", "-b", BRANCH)
+        self.pr = {"number": 8, "url": "https://github.com/o/r/pull/8", "title": "ABC-1 docs", "state": "OPEN",
+                   "reviewDecision": "APPROVED", "mergeable": "MERGEABLE", "mergeStateStatus": "BLOCKED",
+                   "statusCheckRollup": [{"name": "Analyze", "status": "COMPLETED", "conclusion": "SUCCESS"}]}
+        for name, value in (("prs_for_branch", [self.pr]), ("view", self.pr), ("required_checks", {"build / build"}),
+                            ("unresolved_threads", 0)):
+            patcher = mock.patch.object(publish, name, return_value=value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def precheck(self, name: str) -> dict:
+        (self.work / name).parent.mkdir(parents=True, exist_ok=True)
+        commit(self.work, name, "text\n", "ABC-1 change")
+        git(self.work, "push", "-q", "-u", "origin", BRANCH)
+        return publish.merge_precheck_one(Ctx(self.work), Checkout("work", self.work))
+
+    def test_docs_only_change_merges_with_admin(self):
+        check = self.precheck("docs/guide.md")
+        self.assertEqual(check["status"], "ready", check)
+        self.assertEqual(check["admin_merge"], {"missing_checks": ["build / build"], "files": ["docs/guide.md"]})
+        with mock.patch.object(publish, "gh") as gh, \
+                mock.patch.object(publish, "view", return_value={"state": "MERGED", "mergeCommit": {"oid": "abc1234"}}):
+            merged = publish.merge_one(Ctx(self.work), Checkout("work", self.work), check)
+        self.assertIn("--admin", gh.call_args.args)
+        self.assertTrue(merged["admin"])
+
+    def test_code_change_stays_blocked(self):
+        check = self.precheck("src/Main.java")
+        self.assertEqual(check["status"], "blocked", check)
+        self.assertEqual(check["problems"], ["merge state: BLOCKED"])
+
+    def test_unresolved_thread_stays_blocked(self):
+        with mock.patch.object(publish, "unresolved_threads", return_value=1):
+            check = self.precheck("docs/guide.md")
+        self.assertEqual(check["status"], "blocked", check)
+
+    def test_unapproved_stays_blocked(self):
+        self.pr["reviewDecision"] = "REVIEW_REQUIRED"
+        check = self.precheck("docs/guide.md")
+        self.assertEqual(check["status"], "blocked", check)
+        self.assertNotIn("admin_merge", check)
+
+    def test_failing_check_stays_blocked(self):
+        self.pr["statusCheckRollup"][0]["conclusion"] = "FAILURE"
+        check = self.precheck("docs/guide.md")
+        self.assertEqual(check["status"], "blocked", check)
+        self.assertNotIn("admin_merge", check)
+
+
 if __name__ == "__main__":
     unittest.main()

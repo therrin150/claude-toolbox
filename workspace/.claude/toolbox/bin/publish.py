@@ -51,7 +51,10 @@ What each step does, and what makes it stop:
             `pr.review_required`), local tree clean and pushed; any blocked PR halts the batch with nothing merged. A PR
             behind the default branch is blocked: run `push` to rebase it, then `wait-ci`. A squash that collapses
             several commits halts (exit 4, `needs_confirmation`) unless --confirm-squash. Then `gh pr merge --<pr.merge>
-            --delete-branch` per PR, re-queried after: a merge that left the PR open is a failure. Never --admin.
+            --delete-branch` per PR, re-queried after: a merge that left the PR open is a failure. --admin only for a
+            PR whose precheck shows `admin_merge`: approved, mergeable, up to date, no unresolved review thread, every
+            reported check green, and BLOCKED only by required checks that never ran because every file the PR
+            changes is in their `pull_request` workflow's path filter (`paths-ignore`, say a docs-only change).
             Without `pr.required`, pushes HEAD to the default branch (it must be a fast-forward) and deletes the branch,
             noting each repo's pushed commit in the publish folder's `merged.json` ({repo: sha}), where
             `watch_task.py pipeline` finds the commits whose default-branch runs release them.
@@ -86,6 +89,8 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+
+import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -727,6 +732,118 @@ def view(co: Checkout, ref: str, fields: str = PR_FIELDS) -> dict:
     return pr
 
 
+def filter_regex(pattern: str) -> re.Pattern | None:
+    """A GitHub Actions path filter pattern as a regex: `**` crosses folders, `*` doesn't. None for `?`, `+` or `[...]`,
+    whose GitHub meanings this doesn't model."""
+    if re.search(r"[?+\[\]]", pattern):
+        return None
+    out, i = "", 0
+    while i < len(pattern):
+        if pattern.startswith("**/", i):
+            out, i = out + "(?:.*/)?", i + 3
+        elif pattern.startswith("**", i):
+            out, i = out + ".*", i + 2
+        elif pattern[i] == "*":
+            out, i = out + "[^/]*", i + 1
+        else:
+            out, i = out + re.escape(pattern[i]), i + 1
+    return re.compile(out + r"\Z")
+
+
+def filter_skips(trigger, files: list[str]) -> bool:
+    """Whether a `pull_request` trigger's `paths-ignore` or `paths` filter leaves out every file, so the workflow never
+    runs. False with no filter, or one this can't read."""
+    if not isinstance(trigger, dict) or ("paths" in trigger) == ("paths-ignore" in trigger):
+        return False
+    patterns = trigger.get("paths-ignore") or trigger.get("paths")
+    if not isinstance(patterns, list) or not patterns or not files:
+        return False
+    compiled = [(p.startswith("!"), filter_regex(p.removeprefix("!"))) for p in patterns]
+    if any(regex is None for _, regex in compiled):
+        return False
+
+    def matched(path: str) -> bool:  # the last pattern that matches wins; a `!` one negates
+        hit = False
+        for negated, regex in compiled:
+            if regex.match(path):
+                hit = not negated
+        return hit
+
+    if "paths-ignore" in trigger:
+        return all(matched(f) for f in files)
+    return not any(matched(f) for f in files)
+
+
+def path_skipped_jobs(co: Checkout, files: list[str]) -> set[str]:
+    """Job ids and names of the PR's workflows (at HEAD) whose `pull_request` path filter leaves out every file."""
+    jobs = set()
+    for path in git(co.path, "ls-tree", "--name-only", "HEAD", ".github/workflows/").splitlines():
+        if not path.endswith((".yml", ".yaml")):
+            continue
+        try:
+            workflow = yaml.safe_load(git(co.path, "show", f"HEAD:{path}")) or {}
+        except yaml.YAMLError:
+            continue
+        on = workflow.get("on", workflow.get(True))  # YAML 1.1 reads a bare `on:` key as True
+        if isinstance(on, dict) and filter_skips(on.get("pull_request"), files):
+            for job_id, job in (workflow.get("jobs") or {}).items():
+                jobs.update({job_id, *([job["name"]] if isinstance(job, dict) and job.get("name") else [])})
+    return jobs
+
+
+def required_checks(co: Checkout, base: str) -> set[str] | None:
+    """The status checks `base` requires, by branch protection and rulesets. None when either can't be read."""
+    try:
+        found = set((gh_json("api", f"repos/{co.gh_repo}/branches/{base}/protection/required_status_checks")
+                     or {}).get("contexts") or [])
+    except Failed as e:
+        if "not protected" not in str(e).lower():
+            return None
+        found = set()
+    try:
+        rules = gh_json("api", f"repos/{co.gh_repo}/rules/branches/{base}") or []
+    except Failed:
+        return None
+    for rule in rules:
+        if rule.get("type") == "required_status_checks":
+            found.update(c["context"] for c in (rule.get("parameters") or {}).get("required_status_checks") or [])
+    return found
+
+
+def unresolved_threads(co: Checkout, number: int) -> int | None:
+    owner, name = co.gh_repo.split("/")
+    query = ("query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n)"
+             "{reviewThreads(first:100){nodes{isResolved}}}}}")
+    try:
+        data = gh_json("api", "graphql", "-f", f"query={query}", "-F", f"o={owner}", "-F", f"r={name}",
+                       "-F", f"n={number}")
+    except Failed:
+        return None
+    threads = data["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"]
+    return sum(not t["isResolved"] for t in threads)
+
+
+def path_filtered(ctx: Context, co: Checkout, pr: dict) -> dict | None:
+    """When an approved, mergeable, up-to-date PR is BLOCKED only because required checks never ran, every file it
+    changes being in their workflows' path filter (`paths-ignore`, say a docs-only change): the checks never reported
+    and the files. `merge` merges such a PR with --admin; nothing else ever gets --admin."""
+    if pr.get("reviewDecision") != "APPROVED" or pr.get("mergeable") != "MERGEABLE":
+        return None
+    if not gitgh.git_ok(co.path, "merge-base", "--is-ancestor", ctx.base(), "HEAD"):
+        return None
+    required = required_checks(co, ctx.cfg.default_branch)
+    missing = sorted((required or set()) - {check_name(i) for i in pr.get("statusCheckRollup") or []})
+    if not missing:
+        return None
+    files = git(co.path, "diff", "--name-only", "--no-renames", f"{ctx.base()}...HEAD").splitlines()
+    jobs = path_skipped_jobs(co, files)
+    if any(c not in jobs and c.split(" / ")[0] not in jobs for c in missing):
+        return None
+    if unresolved_threads(co, pr["number"]) != 0:
+        return None
+    return {"missing_checks": missing, "files": files}
+
+
 def merge_precheck_one(ctx: Context, co: Checkout) -> dict:
     name = branch(co.path)
     result = {"repo": co.name, "path": str(co.path), "branch": name, "problems": []}
@@ -770,6 +887,11 @@ def merge_precheck_one(ctx: Context, co: Checkout) -> dict:
     result.update(commits=[c["subject"] for c in own])
     if len(own) > 1 and ctx.cfg.pr["merge"] == "squash":
         result["squash_collapses"] = True
+    if problems == ["merge state: BLOCKED"] and state in ("pass", "none"):
+        skipped = path_filtered(ctx, co, pr)
+        if skipped:
+            problems.clear()
+            result["admin_merge"] = skipped
     result["status"] = "blocked" if problems else "ready"
     return result
 
@@ -803,7 +925,8 @@ def merge_one(ctx: Context, co: Checkout, check: dict) -> dict:
         return {"repo": co.name, "merge_commit": git(co.path, "rev-parse", "--short", "HEAD"),
                 "remote_branch_deleted": deleted}
     method = ctx.cfg.pr["merge"]
-    args = ["pr", "merge", str(check["number"]), "--repo", co.gh_repo, f"--{method}", "--delete-branch"]
+    args = ["pr", "merge", str(check["number"]), "--repo", co.gh_repo, f"--{method}", "--delete-branch",
+            *(["--admin"] if check.get("admin_merge") else [])]
     error = None
     try:
         gh(*args)
@@ -814,7 +937,8 @@ def merge_one(ctx: Context, co: Checkout, check: dict) -> dict:
         raise Failed(f"{co.name}: PR #{check['number']} is {pr.get('state')} after merge" +
                      (f": {error}" if error else " although gh reported success"))
     return {"repo": co.name, "number": check["number"], "url": check["url"],
-            "merge_commit": (pr.get("mergeCommit") or {}).get("oid", "")[:7], "remote_branch_deleted": True}
+            "merge_commit": (pr.get("mergeCommit") or {}).get("oid", "")[:7], "remote_branch_deleted": True,
+            **({"admin": True} if check.get("admin_merge") else {})}
 
 
 def step_merge(ctx: Context) -> tuple[dict, int]:

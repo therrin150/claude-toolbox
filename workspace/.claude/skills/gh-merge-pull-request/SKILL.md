@@ -56,6 +56,7 @@ Don't flag wording, a missing key or a mismatch with the diff, and don't offer `
 One table: repo, PR number, title, commit count, merge method, and that the remote branch goes. Under it, name every PR
 with `squash_collapses`: its commits become one squashed commit on the default branch, their messages surviving only in
 its body. That's nearly always still right; Allen just needs to know first, and the batch needs `--confirm-squash`.
+Then name every PR with `admin_merge` and its `missing_checks`: it merges with `--admin` (Step 3).
 
 Then **stop and wait for approval.** One approval covers the batch.
 
@@ -68,7 +69,11 @@ Run `publish.py merge` with the same arguments.
 
 - **Exit 3:** a merge failed or left the PR open; the output lists `merged` and `not_merged`. Report it. Re-running is
   safe: merged PRs come back `already-merged`.
-- Never `--admin`: a merge blocked by branch protection is the protection working.
+- `--admin` only where the precheck set `admin_merge`, which `merge` passes itself; never add it by hand. That is a PR
+  approved, mergeable, up to date, with no unresolved review thread and every reported check green, blocked only by
+  required checks that will never report: every file it changes is in their `pull_request` workflow's path filter
+  (`paths-ignore`, say a docs-only change). Allen's approval covers it. Any other merge blocked by branch protection is
+  the protection working.
 - With `pr.required: false` there is no PR: the branch must be a fast-forward of `origin/<default>`, which `merge`
   pushes to the default branch and then deletes the branch.
 
