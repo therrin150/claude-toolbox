@@ -16,6 +16,10 @@ global/                          → ~/.claude
   CLAUDE.md                      response style
   rules/git.md                   Git writes need Allen's explicit instruction; no commit trailers; commit voice
   rules/obsidian.md              the Personal vault and Obsidian formatting
+  rules/java-conventions.md      Allen's Java style: layered packages, no records, Optional, commons utilities, ITs
+  rules/sql-conventions.md       uppercase keywords, named constraints, UTC timestamps
+  rules/angular-conventions.md   singular folders, one folder per component
+  rules/api-collections.md       the Bruno collection lives in bruno/ at the project root
   personal/voice.md              Allen's writing voice (read where referenced)
   personal/ticket-style.md       Allen's Jira ticket style (read where referenced)
   personal/commit-style.md       Allen's commit message style (read where referenced)

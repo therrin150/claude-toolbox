@@ -107,6 +107,10 @@ are, so a resume lands back here. On the user's answer, log it (`tasks.py log <w
 
 ## Setup (every session)
 
+0. **Update the default branch** before anything reads the record or checks `depends_on`, so a dependency merged in
+   another session is seen as landed: in the workspace root (every repo, in a `nested` workspace), `git pull --ff-only`
+   on the default branch (the toolbox-config rule names it). A failure (diverged, or local changes in the way) is a
+   STOP; never merge, rebase or stash to get past it. Skip it only in a session resumed at a review stop or a wait.
 1. **Load the tools** in one `ToolSearch` call, `select:` with `PushNotification`, `TaskStop`,
    `mcp__ccd_session_mgmt__set_session_title` and `mcp__ccd_session_mgmt__get_usage`, plus, under the `jira` tracker,
    `mcp__<server>__getJiraIssue` and, with `pr.announce`, `mcp__<server>__slack_send_message` (servers from the
