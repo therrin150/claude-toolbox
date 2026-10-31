@@ -6,10 +6,10 @@ session runs it in the background and wakes once.
   run_tests.py unit|integration|format <area>[=<dir>]... [--test T] [--label L] [--jobs N]
 
 Each area's command is the config's workspace.areas.<area>.unit, .integration or .format (the "*" area's when it has
-none). It
-runs in <dir>, the area's folder in a worktree or checkout; a bare <area> means the workspace root's folder of that
-name. Areas run in parallel (--jobs caps how many), each with its output in $TMPDIR/<label>-<area>-<kind>.log (--label
-defaults to the workspace name; a task's key keeps two worktrees' logs apart).
+none). It runs in <dir>, the area's folder in a worktree or checkout; a bare <area> means the area's folder in the
+workspace root (its `dir`, else the folder of its name). Areas run in parallel (--jobs caps how many), each with its
+output in $TMPDIR/<label>-<area>-<kind>.log (--label defaults to the workspace name; a task's key keeps two worktrees'
+logs apart).
 
 --test T replaces {test} in the command, for running one class or method; an area whose command has no {test} fails
 with that reason rather than running everything. Without --test, {test} is replaced with nothing, so one command serves
@@ -119,7 +119,7 @@ def parse_areas(specs: list[str], cfg: config.Config) -> list[tuple[str, Path]]:
     areas = []
     for spec in specs:
         name, _, folder = spec.partition("=")
-        areas.append((name, Path(folder).expanduser().resolve() if folder else cfg.root / name))
+        areas.append((name, Path(folder).expanduser().resolve() if folder else cfg.root / cfg.area_dir(name)))
     return areas
 
 

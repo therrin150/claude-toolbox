@@ -25,6 +25,9 @@ workspace:
       integration: <command>       # runs its integration tests against running services
       start: <command>             # starts its local services
       stop: <command>              # stops them
+      dir: <path>                  # single layout: the area's folder, relative to the checkout (. for the checkout
+                                   # itself); its commands run there, and a changed file belongs to the area whose
+                                   # folder holds it most closely; default: the folder named for the area
       files: []                    # globs (from the area's folder) of the changed files that make its checks apply,
                                    # such as ["*.java", "pom.xml"]; default: any changed file in the area
     "*":

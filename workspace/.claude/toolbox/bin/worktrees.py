@@ -25,10 +25,11 @@ Commands:
       Per worktree, its whole change against the branch point (the merge-base with origin/<default>): committed,
       uncommitted and untracked files alike, read without touching the index. `diff` is the stat line a stop report
       shows ("4 files, +50 −7"). `areas` are the areas whose checks apply, as `<area>=<dir>` for run_tests.py: in a
-      nested workspace the repo, in a single one each configured area folder holding a changed file, plus, when the
-      config has a "*" area, the workspace itself for changed files outside every area folder. An area's `files` globs
-      (fnmatch, against the path from the area's folder or the file's name) narrow what counts; an area with changes
-      but none matching is listed under `skipped`.
+      nested workspace the repo, in a single one each configured area folder holding a changed file (an area's `dir`,
+      else the folder of its name; a file in two areas' folders belongs to the one that holds it most closely), plus,
+      when the config has a "*" area, the workspace itself for changed files outside every area folder. An area's
+      `files` globs (fnmatch, against the path from the area's folder or the file's name) narrow what counts; an area
+      with changes but none matching is listed under `skipped`.
 """
 
 from __future__ import annotations
@@ -192,11 +193,14 @@ def area_hits(cfg: config.Config, co: gitgh.Checkout, files: list[dict]) -> tupl
     if cfg.nested:
         groups[co.name] = (co.path, [f["path"] for f in files])
     else:
-        listed = [a for a in cfg.data["workspace"]["areas"] if a != config.ANY_AREA]
+        folders = {a: cfg.area_dir(a) for a in cfg.data["workspace"]["areas"] if a != config.ANY_AREA}
         for f in files:
-            area = next((a for a in listed if f["path"].startswith(a.rstrip("/") + "/")), None)
+            holding = [a for a, folder in folders.items() if not folder or f["path"].startswith(folder + "/")]
+            area = max(holding, key=lambda a: len(folders[a]), default=None)
             if area:
-                groups.setdefault(area, (co.path / area, []))[1].append(f["path"][len(area.rstrip("/")) + 1:])
+                folder = folders[area]
+                rel = f["path"][len(folder) + 1:] if folder else f["path"]
+                groups.setdefault(area, (co.path / folder, []))[1].append(rel)
             elif config.ANY_AREA in cfg.data["workspace"]["areas"]:
                 groups.setdefault(cfg.name, (co.path, []))[1].append(f["path"])
     applies, skipped = [], []

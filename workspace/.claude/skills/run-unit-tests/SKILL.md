@@ -27,8 +27,9 @@ attempts). Needs no local services and no lock.
   run in parallel. If omitted, the areas the change touches: those with changed files in `git status` / the diff against
   the default branch, or every area when unsure.
 - **dir**: the area's folder when it isn't the workspace root's: a task's worktree
-  (`<worktrees>/<work id>/<repo>` in a `nested` workspace, `<worktrees>/<work id>/<area>` in a `single` one). A bare
-  area runs in the workspace root's folder of that name.
+  (`<worktrees>/<work id>/<repo>` in a `nested` workspace; in a `single` one, the area's folder under
+  `<worktrees>/<work id>`, as `worktrees.py changes` prints it). A bare area runs in its folder in the workspace root:
+  its `dir` (`workspace.areas.<area>.dir`), else the folder named for it.
 - **--test**: run one test class or method. It replaces `{test}` in the area's command; an area whose command has no
   `{test}` fails with that reason instead of running everything. Without it, `{test}` is replaced with nothing.
 

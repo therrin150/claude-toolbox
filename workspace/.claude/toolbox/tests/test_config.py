@@ -324,6 +324,38 @@ class AccessorTest(Workspace):
         self.assertEqual(loaded.area_files("search"), ["*.java", "pom.xml"])
         self.assertEqual(config.load(self.make("single", "other")).area_files("pantry-app"), [])
 
+    def test_area_dir_defaults_to_the_area_name(self):
+        raw = self.raw("single")
+        raw["workspace"]["areas"]["pantry-app"]["dir"] = "./"
+        raw["workspace"]["areas"]["pantry-web"]["dir"] = "./clients/web/"
+        loaded = config.load(self.write(raw))
+        self.assertEqual(loaded.area_dir("pantry-app"), "")
+        self.assertEqual(loaded.area_dir("pantry-web"), "clients/web")
+        self.assertEqual(config.load(self.make("single", "other")).area_dir("pantry-web"), "pantry-web")
+
+    def test_area_dir_must_be_a_folder_of_its_own_inside_the_checkout(self):
+        for folder in ("/srv/app", "~/app", "../app", "app/../.."):
+            raw = self.raw("single")
+            raw["workspace"]["areas"]["pantry-app"]["dir"] = folder
+            self.assertEqual(self.errors(raw), [f"workspace.areas.pantry-app.dir: must be a folder inside the "
+                                                f"checkout, like . or services/api; got {folder!r}"])
+        raw = self.raw("single")
+        raw["workspace"]["areas"]["pantry-app"]["dir"] = "pantry-web/"
+        self.assertEqual(self.errors(raw), ["workspace.areas.pantry-app.dir: 'pantry-web/' is already "
+                                            "'pantry-web''s folder"])
+        raw["workspace"]["areas"]["pantry-app"]["dir"] = "."
+        raw["workspace"]["areas"]["pantry-web"]["dir"] = "./"
+        self.assertEqual(len(self.errors(raw)), 1)
+
+    def test_area_dir_only_on_a_named_area_of_a_single_workspace(self):
+        raw = self.raw("nested")
+        raw["workspace"]["areas"]["billing"]["dir"] = "."
+        raw["workspace"]["areas"]["*"]["dir"] = "."
+        self.assertEqual(sorted(self.errors(raw)), [
+            'workspace.areas.*.dir: the "*" area has no folder of its own; set dir on a named area',
+            "workspace.areas.billing.dir: only a single workspace's areas take a dir (a nested workspace's area is "
+            "its repo)"])
+
     def test_no_star_area(self):
         loaded = config.load(self.make("single"))
         self.assertEqual(loaded.command("pantry-app", "start"), "docker compose up -d")

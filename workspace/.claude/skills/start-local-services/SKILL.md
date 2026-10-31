@@ -41,7 +41,8 @@ some other way replaces hook `start-the-services` in an extension; the lock step
   itself the target checkout. If it can't be determined, ask.
 - **Areas to start**: in a `nested` workspace, the one repo the checkout is (its folder name, which a worktree keeps).
   In a `single` workspace, the named area, or else every area with a `start` command (`toolbox.py config show
-  workspace.areas`). An area's directory is its folder under the checkout.
+  workspace.areas`). An area's directory is its folder under the checkout: its `dir` when the config sets one (`.` is
+  the checkout itself), else the folder named for it.
 - **Lock name**: as in `lock-local-services` ("Lock name").
 
 If no area has a `start` command, report that `workspace.areas.<area>.start` isn't configured and stop, unless an

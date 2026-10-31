@@ -363,6 +363,21 @@ class TestWorktreesSingle(ChangesTests, WorktreeTests, Workbench):
         self.assertEqual((out["areas"], out["skipped"]), ([], []))
         self.assertEqual(out["checkouts"][0]["diff"], "1 file, +1 −0")
 
+    def test_changes_give_a_file_to_the_area_whose_dir_holds_it_most_closely(self):
+        self.set_areas({"api": {"unit": "true", "dir": ".", "files": ["pom.xml", "api/src/*", "model/src/*"]},
+                        "web": {"unit": "true"}})
+        self.start()
+        path = self.worktree("DM-1")
+        for name in ("model/src/V.java", "web/x.ts", "vault/n.md"):
+            (path / name).parent.mkdir(parents=True, exist_ok=True)
+            (path / name).write_text("x\n")
+        out = self.cli(worktrees, "changes", "DM-1")[1]
+        self.assertEqual(out["areas"], [f"api={path}", f"web={path / 'web'}"])
+        (path / "model" / "src" / "V.java").unlink()
+        out = self.cli(worktrees, "changes", "DM-1")[1]
+        self.assertEqual(out["areas"], [f"web={path / 'web'}"])
+        self.assertEqual([(s["area"], s["files"]) for s in out["skipped"]], [("api", 1)])
+
     def test_worktree_is_one_folder_per_task(self):
         self.start()
         self.assertTrue((self.root / ".worktrees" / "DM-1" / ".git").exists())

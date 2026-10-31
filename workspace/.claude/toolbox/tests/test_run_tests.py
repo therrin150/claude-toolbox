@@ -115,6 +115,12 @@ class NonMavenTest(RunTestsCase):
         code, out = self.run_script("unit", f"app={elsewhere}")
         self.assertEqual((code, "pass" in out), (0, True))
 
+    def test_a_bare_area_runs_in_its_dir(self):
+        self.configure({"app": {"unit": "test -f marker", "dir": "."}})
+        (self.root / "marker").write_text("")
+        code, out = self.run_script("unit", "app")
+        self.assertEqual((code, "pass" in out), (0, True))
+
     def test_test_replaces_the_placeholder_or_fails_without_one(self):
         self.configure({"a": {"unit": "test '{test}' = FooTest"}, "b": {"unit": "true"}})
         self.folder("a"), self.folder("b")

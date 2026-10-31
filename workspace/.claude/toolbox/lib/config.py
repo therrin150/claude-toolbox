@@ -22,7 +22,7 @@ import os
 import re
 import string
 from dataclasses import dataclass, replace
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 import yaml
@@ -89,9 +89,11 @@ class ListOf:
     kind: type
 
 
-# `files`: globs (fnmatch, against the path from the area's folder) for the changed files that make the area's checks
-# apply; with none, any changed file in the area does.
-AREA = Section({**{name: Value(str) for name in AREA_COMMANDS}, "files": ListOf(str)})
+# `dir`: the area's folder, relative to the checkout (`.` for the checkout itself), when it isn't the folder named for
+# the area; a single workspace only. Its commands run there, and a changed file belongs to the area whose folder holds
+# it most closely. `files`: globs (fnmatch, against the path from the area's folder) for the changed files that make
+# the area's checks apply; with none, any changed file in the area does.
+AREA = Section({**{name: Value(str) for name in AREA_COMMANDS}, "dir": Value(str), "files": ListOf(str)})
 
 SCHEMA = Section({
     "version": Value(int, required=True),
@@ -271,6 +273,7 @@ def _check_values(data: dict, errors: list[str]) -> None:
     worktrees = data["workspace"]["worktrees"]
     if isinstance(worktrees, str) and _absolute(worktrees):
         errors.append(f"workspace.worktrees: must be relative to the workspace root; got {worktrees!r}")
+    _check_area_dirs(data["workspace"], errors)
     for index, doc in enumerate(data["extensions"]["disabled"]):
         if isinstance(doc, str) and ("/" in doc or not doc.strip()):
             errors.append(f"extensions.disabled[{index}]: must be a doc's file name in .claude/extensions/, like "
@@ -339,6 +342,34 @@ def _check_values(data: dict, errors: list[str]) -> None:
         else:
             for name in sorted(fields - set(LIBRARY_FIELDS)):
                 errors.append(f"shared_libraries.update.command: unknown placeholder {{{name}}}; use {{libraries}}")
+
+
+def _check_area_dirs(workspace: dict, errors: list[str]) -> None:
+    areas = {area: spec or {} for area, spec in workspace["areas"].items()}
+    folders = {area: area for area, spec in areas.items() if area != ANY_AREA and not isinstance(spec.get("dir"), str)}
+    for area, spec in areas.items():
+        folder = spec.get("dir")
+        if not isinstance(folder, str):
+            continue
+        where = f"workspace.areas.{area}.dir"
+        if area == ANY_AREA:
+            errors.append(f"{where}: the \"*\" area has no folder of its own; set dir on a named area")
+        elif workspace["layout"] != "single":
+            errors.append(f"{where}: only a single workspace's areas take a dir (a nested workspace's area is its "
+                          "repo)")
+        elif _absolute(folder) or ".." in PurePosixPath(folder).parts:
+            errors.append(f"{where}: must be a folder inside the checkout, like . or services/api; got {folder!r}")
+        else:
+            normalized = _area_folder(folder)
+            owner = next((other for other, taken in folders.items() if _area_folder(taken) == normalized), None)
+            if owner is not None:
+                errors.append(f"{where}: {folder!r} is already {owner!r}'s folder")
+            folders.setdefault(area, folder)
+
+
+def _area_folder(folder: str) -> str:
+    """A folder relative to the checkout, normalized: `""` for the checkout itself."""
+    return "/".join(part for part in PurePosixPath(folder).parts if part != ".")
 
 
 def _absolute(path: str) -> bool:
@@ -484,6 +515,11 @@ class Config:
             names.update(child.name for child in self.root.iterdir()
                          if child.is_dir() and not child.name.startswith(".") and (child / ".git").exists())
         return sorted(names)
+
+    def area_dir(self, area: str) -> str:
+        """An area's folder relative to the checkout: its `dir`, else its name; `""` is the checkout itself."""
+        own = (self.data["workspace"]["areas"].get(area) or {}).get("dir")
+        return _area_folder(own if own is not None else area)
 
     def area_files(self, area: str) -> list[str]:
         """The globs that make an area's checks apply, falling back to the `"*"` area's; empty means any file."""
