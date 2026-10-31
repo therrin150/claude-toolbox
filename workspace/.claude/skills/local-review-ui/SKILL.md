@@ -8,8 +8,8 @@ allowed-tools: Bash(*), Read, Edit, Write, Grep, Glob
 
 A local diff viewer with line comments, for reviewing a change before it's committed or published. One small server
 per machine (Python standard library, bound to `127.0.0.1`) serves every review; each review gets its own browser tab
-with a repo dropdown, a file list, red/green diffs with line numbers, and comment threads. Comments come back to this
-session through `review.py`, and this session's replies show up in the reviewer's tab.
+with a repo dropdown, a file list (a folder tree, or flat), red/green diffs with line numbers, and comment threads.
+Comments come back to this session through `review.py`, and this session's replies show up in the reviewer's tab.
 
 The scripts are in this skill's folder, `.claude/skills/local-review-ui` under the workspace root (`<skill-dir>`
 below; the workspace's absolute path is in the toolbox-config rule). Run them with `python3` on macOS and Linux and

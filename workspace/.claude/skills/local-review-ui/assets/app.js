@@ -127,6 +127,8 @@
 
   const ICON_OPEN = '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M1.5 3A1.5 1.5 0 0 1 3 1.5h10A1.5 1.5 0 0 1 14.5 3v7a1.5 1.5 0 0 1-1.5 1.5H8.2L5 14.2V11.5H3A1.5 1.5 0 0 1 1.5 10z"/></svg>';
   const ICON_RESOLVED = '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.2" d="M1.5 3A1.5 1.5 0 0 1 3 1.5h10A1.5 1.5 0 0 1 14.5 3v7a1.5 1.5 0 0 1-1.5 1.5H8.2L5 14.2V11.5H3A1.5 1.5 0 0 1 1.5 10z"/><path class="chk" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M5 6.6l2 2 4-4"/></svg>';
+  const ICON_CHEVRON = '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M6 4l4 4-4 4"/></svg>';
+  const ICON_FOLDER = '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M1.75 2h4.1c.2 0 .4.08.53.22L7.6 3.5h6.65c.41 0 .75.34.75.75v8.5c0 .41-.34.75-.75.75H1.75A.75.75 0 0 1 1 12.75v-10c0-.41.34-.75.75-.75z"/></svg>';
   const isOpen = (c) => c.status === "open";
   const lastAuthor = (c) => (c.replies && c.replies.length ? c.replies[c.replies.length - 1].author : c.author);
   const awaitingYou = (c) => isOpen(c) && lastAuthor(c) === "claude";
@@ -156,6 +158,8 @@
     closeOnDone: local.get("lrui-close-on-done") !== "false",
     full: false,
     filter: "",
+    tree: local.get("lrui-tree") !== "false",
+    collapsed: new Set(),
     composer: null,
     lastClick: null,
     drafts: {},
@@ -173,6 +177,40 @@
     const mark = S.viewed[viewedKey(file.path)];
     return mark === true || (mark && mark === file.sig);
   };
+
+  // The tree lists folders before files at every level, as GitHub does; flat keeps the server's plain path order.
+  // S.files holds the order on screen, so [ and ], the arrows and "next unviewed" all walk it as shown.
+  function treeOrder(a, b) {
+    const x = a.path.toLowerCase().split("/");
+    const y = b.path.toLowerCase().split("/");
+    for (let i = 0; ; i++) {
+      const xDir = i < x.length - 1;
+      const yDir = i < y.length - 1;
+      if (xDir !== yDir) return xDir ? -1 : 1;
+      if (x[i] !== y[i]) return x[i] < y[i] ? -1 : 1;
+      if (!xDir) return 0;
+    }
+  }
+
+  function pathOrder(a, b) {
+    const x = a.path.toLowerCase();
+    const y = b.path.toLowerCase();
+    return x < y ? -1 : x > y ? 1 : 0;
+  }
+
+  const arrange = (files) => [...files].sort(S.tree ? treeOrder : pathOrder);
+
+  const collapsedKey = () => `lrui-collapsed:${S.id}:${S.repo}`;
+
+  function loadCollapsed() {
+    try {
+      S.collapsed = new Set(JSON.parse(local.get(collapsedKey()) || "[]"));
+    } catch (e) {
+      S.collapsed = new Set();
+    }
+  }
+
+  const saveCollapsed = () => local.set(collapsedKey(), JSON.stringify([...S.collapsed]));
 
   // --- boot ---------------------------------------------------------------------------------------------------------
 
@@ -248,7 +286,8 @@
     if (seq !== S.filesSeq) return;
     // The user picked another file while this was in flight: keep their pick rather than jump back.
     if (S.path !== pathAtStart) preferPath = S.path;
-    S.files = result.files;
+    S.files = arrange(result.files);
+    loadCollapsed();
     S.filesFp = result.fingerprint;
     S.baseRef = result.baseRef;
     const has = (p) => p && S.files.some((f) => f.path === p);
@@ -269,6 +308,11 @@
     if (changed) {
       S.composer = null;
       S.full = false;
+    }
+    const hidden = [...S.collapsed].filter((dir) => path.startsWith(`${dir}/`));
+    if (hidden.length) {
+      hidden.forEach((dir) => S.collapsed.delete(dir));
+      saveCollapsed();
     }
     // A slow diff that lands after a later click must not render under the later file's header.
     const seq = ++S.openSeq;
@@ -387,8 +431,11 @@
       S.filter = e.target.value.toLowerCase();
       renderSidebarList();
     } });
+    const layout = el("span", { class: "seg", title: "File list layout" },
+      el("button", { class: S.tree ? "on" : "", onclick: () => setTree(true) }, "Tree"),
+      el("button", { class: S.tree ? "" : "on", onclick: () => setTree(false) }, "Flat"));
     side.replaceChildren(
-      el("div", { class: "files-head" }, el("div", { class: "totals", id: "totals" }), input),
+      el("div", { class: "files-head" }, el("div", { class: "files-bar" }, el("div", { class: "totals", id: "totals" }), layout), input),
       el("ul", { class: "file-list", id: "flist" }),
       el("div", { id: "others" }),
     );
@@ -407,28 +454,8 @@
       ` · ${seen}/${S.files.length} viewed`,
     );
 
-    list.replaceChildren(...S.files
-      .filter((f) => !S.filter || f.path.toLowerCase().includes(S.filter))
-      .map((f) => {
-        const parts = f.path.split("/");
-        const name = parts.pop();
-        const comments = fileComments(S.repo, f.path);
-        const open = comments.filter(isOpen).length;
-        const attn = comments.filter(awaitingYou).length;
-        const resolved = comments.length - open;
-        return el("li", {
-          class: `file-item${f.path === S.path ? " active" : ""}${isViewed(f) ? " viewed" : ""}`,
-          title: f.oldPath !== f.path ? `${f.oldPath} → ${f.path}` : f.path,
-          onclick: () => openFile(f.path),
-        },
-        el("span", { class: `st st-${f.status}` }, f.status),
-        el("span", { class: "name" }, el("span", { class: "fname" }, name), parts.length ? el("span", { class: "dir" }, `‎${parts.join("/")}`) : null),
-        el("span", { class: "meta" },
-          open ? el("span", { class: `cmt-count${attn ? " attn" : ""}`, title: attn ? `${attn} awaiting your reply, ${open} open` : `${open} open`, html: `${ICON_OPEN}${open}` }) : null,
-          resolved ? el("span", { class: "cmt-count resolved", title: `${resolved} resolved`, html: `${ICON_RESOLVED}${resolved}` }) : null,
-          f.binary ? el("span", { class: "muted" }, "bin") : [el("span", { class: "plus" }, `+${f.additions}`), el("span", { class: "minus" }, `−${f.deletions}`)],
-          isViewed(f) ? el("span", { class: "seen", title: "Viewed" }, "✓") : null));
-      }));
+    const shown = S.files.filter((f) => !S.filter || f.path.toLowerCase().includes(S.filter));
+    list.replaceChildren(...(S.tree ? treeRows(buildTree(shown), 0, []) : shown.map((f) => fileRow(f, null))));
 
     const changed = new Set(S.files.map((f) => f.path));
     const elsewhere = S.data.comments.filter((c) => c.repo === S.repo && !changed.has(c.path));
@@ -440,6 +467,129 @@
         e.preventDefault();
         openFile(p);
       } }, p), ` (${elsewhere.filter((c) => c.path === p).length})`))) : "");
+  }
+
+  const indent = (depth) => `padding-left: ${12 + depth * 14}px`;
+
+  // A depth puts the row in the tree, where its folder row already says where it lives; flat rows show the folder.
+  function fileRow(f, depth) {
+    const parts = f.path.split("/");
+    const name = parts.pop();
+    const comments = fileComments(S.repo, f.path);
+    return el("li", {
+      class: `file-item${f.path === S.path ? " active" : ""}${isViewed(f) ? " viewed" : ""}`,
+      style: depth == null ? null : indent(depth),
+      title: f.oldPath !== f.path ? `${f.oldPath} → ${f.path}` : f.path,
+      onclick: () => openFile(f.path),
+    },
+    el("span", { class: `st st-${f.status}` }, f.status),
+    el("span", { class: "name" }, el("span", { class: "fname" }, name), depth == null && parts.length ? el("span", { class: "dir" }, `‎${parts.join("/")}`) : null),
+    el("span", { class: "meta" },
+      commentCounts(comments),
+      f.binary ? el("span", { class: "muted" }, "bin") : [el("span", { class: "plus" }, `+${f.additions}`), el("span", { class: "minus" }, `−${f.deletions}`)],
+      isViewed(f) ? el("span", { class: "seen", title: "Viewed" }, "✓") : null));
+  }
+
+  // Files arrive in tree order, so each folder's subfolders are inserted, and listed, in order too.
+  function buildTree(files) {
+    const root = { path: "", dirs: new Map(), files: [] };
+    for (const f of files) {
+      let node = root;
+      for (const part of f.path.split("/").slice(0, -1)) {
+        if (!node.dirs.has(part)) node.dirs.set(part, { path: node.path ? `${node.path}/${part}` : part, dirs: new Map(), files: [] });
+        node = node.dirs.get(part);
+      }
+      node.files.push(f);
+    }
+    return root;
+  }
+
+  const filesUnder = (node) => [...node.files, ...[...node.dirs.values()].flatMap(filesUnder)];
+
+  // A chain of folders that each hold only one folder is one row, as GitHub shows java/org/…/service. A filter
+  // shows every folder open, so a match is never hidden.
+  function treeRows(node, depth, rows) {
+    for (let dir of node.dirs.values()) {
+      while (!dir.files.length && dir.dirs.size === 1) dir = dir.dirs.values().next().value;
+      const collapsed = !S.filter && S.collapsed.has(dir.path);
+      rows.push(folderRow(dir, dir.path.slice(node.path ? node.path.length + 1 : 0), depth, collapsed));
+      if (!collapsed) treeRows(dir, depth + 1, rows);
+    }
+    node.files.forEach((f) => rows.push(fileRow(f, depth)));
+    return rows;
+  }
+
+  function folderRow(dir, name, depth, collapsed) {
+    const files = filesUnder(dir);
+    const comments = files.flatMap((f) => fileComments(S.repo, f.path));
+    const viewed = files.every(isViewed);
+    return el("li", {
+      class: `dir-item${collapsed ? " collapsed" : ""}${viewed ? " viewed" : ""}`,
+      style: indent(depth),
+      title: dir.path,
+      onclick: () => toggleFolder(dir.path),
+    },
+    el("span", { class: "chev", html: ICON_CHEVRON }),
+    el("span", { class: "name" }, el("span", { class: "ficon", html: ICON_FOLDER }), el("span", { class: "dname" }, name.split("/").flatMap((part, i) => (i ? ["/", el("wbr"), part] : [part])))),
+    el("span", { class: "meta" },
+      commentCounts(comments),
+      viewed ? el("span", { class: "seen", title: "All viewed" }, "✓") : null));
+  }
+
+  // Each count goes to its first thread: the open one to a thread awaiting your reply before one waiting on Claude,
+  // the resolved one to the first resolved thread. Ties go to the file order on screen, then the line.
+  function commentCounts(comments) {
+    const open = comments.filter(isOpen);
+    const resolved = comments.filter((c) => !isOpen(c));
+    const attn = open.filter(awaitingYou).length;
+    return [
+      open.length ? el("span", {
+        class: `cmt-count jump${attn ? " attn" : ""}`,
+        title: `${attn ? `${attn} awaiting your reply, ${open.length} open` : `${open.length} open`}; click for the first`,
+        html: `${ICON_OPEN}${open.length}`,
+        onclick: (e) => jumpTo(e, open),
+      }) : null,
+      resolved.length ? el("span", {
+        class: "cmt-count jump resolved",
+        title: `${resolved.length} resolved; click for the first`,
+        html: `${ICON_RESOLVED}${resolved.length}`,
+        onclick: (e) => jumpTo(e, resolved),
+      }) : null,
+    ];
+  }
+
+  function jumpTo(event, comments) {
+    event.stopPropagation();
+    const order = new Map(S.files.map((f, i) => [f.path, i]));
+    const rank = (c) => (awaitingYou(c) ? 0 : 1);
+    const [first] = [...comments].sort((a, b) => rank(a) - rank(b) || order.get(a.path) - order.get(b.path) || a.line - b.line);
+    showComment(first);
+  }
+
+  async function showComment(c) {
+    if (!isOpen(c)) S.expanded[c.id] = true;
+    if (c.path !== S.path) await openFile(c.path);
+    else renderMain();
+    const node = document.querySelector(`#main [data-cid="${CSS.escape(String(c.id))}"]`);
+    if (!node) return;
+    node.scrollIntoView({ block: "center" });
+    node.classList.add("flash");
+    setTimeout(() => node.classList.remove("flash"), 1500);
+  }
+
+  function toggleFolder(dir) {
+    if (S.collapsed.has(dir)) S.collapsed.delete(dir);
+    else S.collapsed.add(dir);
+    saveCollapsed();
+    renderSidebarList();
+  }
+
+  function setTree(tree) {
+    S.tree = tree;
+    local.set("lrui-tree", String(tree));
+    S.files = arrange(S.files);
+    renderSidebar();
+    renderMain();
   }
 
   // --- main ---------------------------------------------------------------------------------------------------------
@@ -843,7 +993,7 @@
     const resolved = c.status === "resolved";
     const collapsed = resolved && !S.expanded[c.id];
     const range = c.line === c.endLine ? `line ${c.line}` : `lines ${c.line}–${c.endLine}`;
-    const node = el("div", { class: `thread${resolved ? " resolved" : ""}${collapsed ? " collapsed" : ""}` });
+    const node = el("div", { class: `thread${resolved ? " resolved" : ""}${collapsed ? " collapsed" : ""}`, dataset: { cid: String(c.id) } });
 
     const bar = el("div", { class: "thread-bar", onclick: () => {
       if (resolved) {
