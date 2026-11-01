@@ -11,5 +11,7 @@ paths:
   column is ambiguous. The entity field stays `id`, mapped with `@Column(name = "person_id")`.
 - **Name every key, declared after the columns**: `person_id UUID NOT NULL`, then `CONSTRAINT pk_person PRIMARY KEY (person_id)`.
   Names are `pk_<table>`, `fk_<table>_<column>`, `uk_<table>_<columns>`; for a composite too long to spell, describe it.
+- **Name every index `idx_<table>_<columns>`** (`idx_invitation_person_id`), so a key's constraint (`pk_`, `fk_`, `uk_`) and
+  its index never share a prefix.
 - **Timestamps are `timestamptz` and UTC** everywhere, whatever the host zone; clients convert to local time.
 - **No comments** that repeat what the table or a decision note already says.
