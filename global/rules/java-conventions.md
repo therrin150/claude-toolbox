@@ -18,6 +18,10 @@ anything it decides differently.
 - **Test packages mirror main.**
 - **Models**: the entity is `Person`, its API shape `PersonView`. Concrete classes with Lombok; **no records**.
 - **Own file for anything shared**: a nested class or interface used outside its own file moves to a file of its own.
+- **Controllers are thin pass-throughs**: they hand the request to a service and return what it returns. Validation
+  stays in the controller only when it serves no purpose in the service layer; reading a request body, choosing between
+  paths, building a view, calling two service methods and everything else belongs in a service (`PersonService`, or a
+  smaller dedicated one).
 - **Names**: `GlobalExceptionHandler`, `{Domain}Controller`, `{Domain}Service`, `{Entity}Repository`. Name a method for
   what it does (`fetchAdministrator`, not `requireAdministrator`).
 
