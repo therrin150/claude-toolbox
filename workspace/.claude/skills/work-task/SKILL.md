@@ -145,13 +145,15 @@ are, so a resume lands back here. On the user's answer, log it (`tasks.py log <w
 | `review`, `publish-review` | `references/publish-review.md` | "Resuming": re-present the saved stop 2 |
 | `review`, `awaiting-ci`, `cycle: shared-library` and no `worktrees` | `references/merge.md` | "Wait for the Release" |
 | `review`, `awaiting-ci` or `awaiting-merge` | `references/merge.md` | "Watch the PRs" |
-| `done`, no `usage_total` | `references/merge.md` | "Done" (the final sweep), then "Usage" |
+| `done`, no `usage_total` | `references/done.md` | "Done" (the final sweep), then "Usage" |
 | `done`, `usage_total` set | nothing | say in one line that the task is done, with its `usage_total.cost` |
 | `stopped` | nothing yet | show `work_note` and ask the user; their answer names the phase |
 
 A `work_note` with `owner` the user's (a STOP still open) is shown and asked about first, whatever the row. A stage
 this table doesn't list comes from an extension: its rows (hook `dispatch`) say what to read and where to start. Paths
-are relative to this skill's folder, `.claude/skills/work-task/`.
+are relative to this skill's folder, `.claude/skills/work-task/`. Read them with the Read tool, whole or by `offset`
+and `limit`, never through Bash (`sed`, `awk`): the folder is a symlink out of the workspace, and a Bash read Claude
+Code can't prove read-only asks the user for write access there.
 
 ## Progress
 

@@ -1,8 +1,8 @@
 # Merge Phase
 
-Publish on the user's approval at stop 2, watch the PRs, merge on their instruction, clean up, and report usage; after a
+Publish on the user's approval at stop 2, watch the PRs, merge on their instruction and clean up; after a
 shared-library cycle, wait for the release and start the consumers cycle. Stages `awaiting-ci` and `awaiting-merge`,
-then `status: done`. `<bin>` is the scripts folder (SKILL.md). Every
+then `status: done`, where `done.md` takes over. `<bin>` is the scripts folder (SKILL.md). Every
 `publish.py` command prints JSON; its exit codes are 0 done, 2 a precheck failed (nothing changed), 3 a step failed part
 way, 4 halted for the session or the user. A run resumes from wherever it stopped, so after fixing a cause, run the
 same command again.
@@ -84,8 +84,8 @@ Before merging, or if the user says to stop watching, stop the watcher (`TaskSto
 2. With the `review-ui` feature, forget the task's review and its comments, and prune reviews whose repos are gone:
    `python3 .claude/skills/local-review-ui/scripts/review.py forget <work id> --delete-comments`, then `... prune`.
 3. Hook `after-the-merge`. By default: after the shared-library cycle (`publish.py` set `status=review
-   stage=awaiting-ci owner=claude` and printed `next: release`), "Wait for the Release". Otherwise nothing: go on to
-   "Done".
+   stage=awaiting-ci owner=claude` and printed `next: release`), "Wait for the Release". Otherwise nothing: read
+   `done.md` and follow it.
 
 ## Wait for the Release
 
@@ -104,17 +104,3 @@ whether the consumers cycle still applies.
 - Exit 3: notify with its `error` (and the run's URL, when a run failed). When the user says it's been re-run (or the
   workflow dispatched on the same commit), start the watcher again.
 - Exit 2: STOP (a PR not merged, or nothing recorded to watch).
-
-## Done
-
-`<worktrees>/<work id>/` must be gone, leftovers included: an IDE can write into a folder after its worktree was
-removed. `<bin>/worktrees.py list <work id>` lists nothing once it is; if the folder is still there, run
-`<bin>/worktrees.py remove <work id>` once more and report anything it refuses. Then hook `before-done`, and say the
-task is done in one line.
-
-## Usage
-
-Last thing, once the task is done: read the `Weekly · all models` window from `get_usage` (leave the weekly flags off
-unless `plan.status` is `ok`), run
-`<bin>/session_usage.py --task <work id> --weekly-percent <percentUsed> --weekly-resets-at <resetsAt>`,
-and show its `markdown` as is. It writes `usage` and `usage_total` to the record and carries its own caveats.

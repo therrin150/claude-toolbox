@@ -65,7 +65,7 @@ def dispatch(fields: dict) -> str:
         return {"code-review": "code-review.md", "publish-review": "publish-review.md",
                 "awaiting-ci": "merge.md", "awaiting-merge": "merge.md"}[stage]
     if status == "done":
-        return "nothing" if fields.get("usage_total") else "merge.md"
+        return "nothing" if fields.get("usage_total") else "done.md"
     return "ask"
 
 
@@ -242,7 +242,7 @@ class SingleVaultTest(Walkthrough):
                             "main"), "PT-1 add shelf counts")
         fields = self.fields(wid)
         self.assertEqual((fields["status"], fields["stage"], fields["worktrees"]), ("done", None, []))
-        self.assertEqual(dispatch(fields), "merge.md")
+        self.assertEqual(dispatch(fields), "done.md")
         self.assertEqual(self.script("worktrees.py", "list", wid)["results"], [])
         self.assertFalse((self.root / ".worktrees" / wid).exists())
         self.finish(wid, ["s1", "s2", "s3"])

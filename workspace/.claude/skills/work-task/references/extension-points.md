@@ -26,7 +26,7 @@ headings freely, never an id. A default in a phase file is the text at the hook.
 | `needs-a-release` | `other-tasks.md` "Needs a Release": the task needs another task's release | that section's text | add, replace |
 | `before-publishing` | `merge.md` "Publish", after stop 2's approval, before `publish.py` | nothing | add |
 | `after-the-merge` | `merge.md` "Merge", step 3 | that step's text | add |
-| `before-done` | `merge.md` "Done", after the cleanup (`publish.py` has set `status=done`), before the done line and "Usage" | nothing | add |
+| `before-done` | `done.md` "Done", after the cleanup (`publish.py` has set `status=done`), before the done line and "Usage" | nothing | add |
 
 Built-in steps (`format`, `unit-tests`, `integration-tests`, `code-review`, `verify`) take `add` and `skip`, never
 `replace`, since replacing one would bypass its record updates. A skipped step is listed at both stops beside the
