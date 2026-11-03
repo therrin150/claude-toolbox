@@ -3,7 +3,8 @@
 From the task record to stop 1, the code review (`code-review.md`). Status `in-progress`, stages `implementing` and
 `testing`; a resume re-checks the cycle's `worktrees` against `worktrees.py list` and picks up where they stand. The
 commit messages are drafted later, after "Done reviewing" (`code-review.md`, "Close Out the Review"). `<bin>` is the
-scripts folder (SKILL.md). At each `hook <id>`, follow the extensions at that hook (SKILL.md "Extension Points").
+scripts folder (SKILL.md). At each `hook <id>`, follow the extension docs at that hook, if Setup found any
+(`extension-points.md` places them).
 
 ## Before the First Cycle
 
@@ -27,9 +28,14 @@ scripts folder (SKILL.md). At each `hook <id>`, follow the extensions at that ho
    (background, a related change) isn't one.
 5. **Check dependencies.** For each `depends_on` key: its record's status (`<bin>/tasks.py get <key> status`), or,
    under `jira` with no record, the issue's status category. If one isn't done, or the code shows the task needs
-   another that hasn't landed: with `work.dependencies: block` (`<bin>/toolbox.py config show work.dependencies`),
+   another that hasn't merged: with `work.dependencies: block` (`<bin>/toolbox.py config show work.dependencies`),
    STOP; with `isolate`, read `other-tasks.md` before planning.
-6. **Plan the cycles** (hook `plan-the-cycles`): SKILL.md "### Plan the cycles".
+6. **Plan the cycles** (hook `plan-the-cycles`). List the areas the task changes (in a `nested` workspace, its repos)
+   from the record, the plan and the code, then read the shared libraries: `<bin>/toolbox.py config show
+   shared_libraries`. **One cycle** when `names` is empty or the task changes none of them (a task that changes only the
+   consumers of a library that's already released included): every area worked and published together, as "Each
+   Cycle" describes; a `single` workspace has one worktree whatever the areas. No `cycle` field. **Two cycles** when it
+   changes a shared library: read `cycles.md` and follow it.
 7. **Start:** on a fresh start, `<bin>/tasks.py set <work id> status=in-progress owner=claude stage=implementing`.
 8. **Extensions** (hook `before-first-cycle`): on a fresh start only, before any worktree.
 
@@ -60,11 +66,12 @@ check at both stops.
 
 1. **Worktrees:** `<bin>/worktrees.py create <work id> [--repos <a,b>] [--desc <kebab-desc>]` for this cycle's repos
    (`--repos` in a `nested` workspace only), from the latest `origin/<default>` (so a consumers cycle starts after the
-   shared library merged), as `git-worktrees`'s "Create" describes. With a key the description is required; without one, leave it off and the branch is named by the work
-   id. Record them: `<bin>/tasks.py set-list <work id> worktrees <path>...`. A `failed` repo is a STOP.
+   shared library merged), as `.claude/skills/git-worktrees/SKILL.md`'s "Create" describes (read it; it isn't a
+   Skill-tool skill). With a key the description is required; without one, leave it off and the branch is named by the
+   work id. Record them: `<bin>/tasks.py set-list <work id> worktrees <path>...`. A `failed` repo is a STOP.
 2. **Implement** the change in the worktrees, following the workspace's rules, including anything carried from another
    in-flight task (`other-tasks.md`). In a consumers cycle, first pick up the release in each consumer worktree, as
-   SKILL.md "### Plan the cycles" says. Then hook `after-implementing`, before any check.
+   `cycles.md` step 3 says (read it, if this session hasn't). Then hook `after-implementing`, before any check.
 3. **Format** (hook `format`) every applying area that has a `format` command, before the first test run, so the
    tests, `/code-review`, the verifier and the user all see formatted code:
    `<bin>/run_tests.py format <area=dir>... --label <work id>`. A formatter that rewrites whole files brings unrelated
@@ -75,8 +82,9 @@ check at both stops.
    Fix and re-run the failing areas only; at most three attempts per area, then STOP. After a fix, format again before
    the re-run.
 5. **Integration tests** (hook `integration-tests`), for each applying area with an `integration` command, when the
-   workspace has the `services-lock` feature. First hook `before-integration-tests`, by default
-   SKILL.md "### Before integration tests".
+   workspace has the `services-lock` feature. First hook `before-integration-tests`: by default nothing to check
+   beyond what `start-local-services` checks itself. When a check an extension adds there fails (a network that must
+   be up, say), STOP and ask the user to fix it, and spawn the runners when they say it's done.
 
    Each attempt is one lock bracket (start the services, run the tests, stop the services), run by the
    `services-runner` agent so the bracket's many mechanical steps stay out of this session's context. Spawn it with
@@ -87,15 +95,16 @@ check at both stops.
     - `pass`: done with that area.
     - `fail`: an attempt. Fix the code, format, re-run its unit tests, then spawn a new runner. At most three attempts
       per area, then STOP.
-    - `blocked`: hook `blocked-bracket` (by default SKILL.md "### A blocked bracket").
+    - `blocked`: hook `blocked-bracket`. By default: not an attempt. If its reason is a STOP condition or something
+      you can't clear yourself, STOP. If it took over the user's expired manual lock (`notes`), notify them and go on.
     - `lock: NOT RELEASED`, in any result: STOP.
     - A takeover in `notes`: notify the user that their manual lock was taken over.
 
    Don't edit a worktree while its runner is running. If the runner itself misbehaves, the fix goes in its agent file
    (`services-runner`), never a by-hand bracket.
-6. **Review:** `/code-review` on the cycle's change (hook `code-review`), then `verify-change <work id> <worktree>...`
-   (hook `verify`), then the checks extensions add beside them (hook `review-checks`). Sort every finding from all of
-   them into one of three groups before changing anything:
+6. **Review:** `/code-review` on the cycle's change (hook `code-review`), then the `verify-change` skill with the Skill
+   tool, args `<work id> <worktree>...` (hook `verify`), then the checks extensions add beside them (hook
+   `review-checks`). Sort every finding from all of them into one of three groups before changing anything:
     - **Fix:** clearly right, inside the task's scope, and no behavior change beyond what the task asks for.
     - **Decline:** clearly wrong or not applicable (a false positive, already handled, outside the code changed, a bump
       of a dependency the config's `verify.ignore_bumps` names). You must be able to say why in one line.

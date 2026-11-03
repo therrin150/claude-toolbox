@@ -169,8 +169,7 @@ def check_extensions(cfg: config.Config) -> dict:
             continue
         skill = doc.extends
         if skill not in tables:
-            skill_md = cfg.root / ".claude" / "skills" / skill / "SKILL.md"
-            tables[skill] = extensions.points(skill_md.read_text(encoding="utf-8")) if skill_md.is_file() else None
+            tables[skill] = extensions.skill_points(cfg.root / ".claude" / "skills" / skill)
         if tables[skill] is None:
             problems.append(f"{doc.name}: extends {skill}, which isn't installed in this workspace (disable the doc "
                             "with extensions.disabled if that's intended)")

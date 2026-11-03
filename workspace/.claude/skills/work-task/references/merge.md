@@ -18,9 +18,9 @@ approved message, rebases onto `origin/<default>` when that has new code, pushes
 
 1. Post the announcement as `gh-create-pull-request`'s "Step 4" says, verbatim; the approval covered it.
 2. `<bin>/tasks.py set <work id> owner=<user>`; the merge is their move.
-3. Report the PR links and end with the hand-off block (SKILL.md "Hand-offs"). Don't start a watcher here: it belongs
-   to the session that resumes from the pasted prompt, whose wake is cheap. If the user answers here instead, go on
-   with "Watch the PRs" in this session.
+3. Report the PR links and end with the hand-off block (read `hand-off.md` for it). Don't start a watcher here: it
+   belongs to the session that resumes from the pasted prompt, whose wake is cheap. If the user answers here instead,
+   go on with "Watch the PRs" in this session.
 
 **Without `pr.required`:** `<bin>/publish.py run <work id>`. It commits, rebases onto `origin/<default>` when needed,
 pushes the branch to the default branch (a fast-forward), removes the worktrees and the branch, and sets
@@ -83,11 +83,13 @@ Before merging, or if the user says to stop watching, stop the watcher (`TaskSto
    `warnings`.
 2. With the `review-ui` feature, forget the task's review and its comments, and prune reviews whose repos are gone:
    `python3 .claude/skills/local-review-ui/scripts/review.py forget <work id> --delete-comments`, then `... prune`.
-3. Hook `after-the-merge`: by default SKILL.md "### After the merge".
+3. Hook `after-the-merge`. By default: after the shared-library cycle (`publish.py` set `status=review
+   stage=awaiting-ci owner=claude` and printed `next: release`), "Wait for the Release". Otherwise nothing: go on to
+   "Done".
 
 ## Wait for the Release
 
-After the shared-library cycle's merge (SKILL.md "### Plan the cycles"): `review`, `awaiting-ci`, `cycle:
+After the shared-library cycle's merge (`cycles.md`): `review`, `awaiting-ci`, `cycle:
 shared-library` and no `worktrees`. Start `<bin>/watch_task.py pipeline <work id>` with `run_in_background: true` and
 end your turn. It finds the default branch's runs of each merge commit (the merged PRs', or without PRs the commits
 `publish.py` pushed) and watches them; a green run means the release is published. A PR merged with `admin` may

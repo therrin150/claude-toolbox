@@ -5,19 +5,19 @@ them. It ends at "Done reviewing", which is the cue to draft (never to publish),
 Stage `code-review`. Review comments, decisions and code changes all happen here; the commit messages don't exist yet.
 
 `<review>` stands for `python3 <workspace>/.claude/skills/local-review-ui/scripts/review.py`, with the workspace's
-absolute path from the toolbox-config rule: write it out in full in every call, as SKILL.md says of `<bin>`, never in a
-shell variable (zsh won't run a command held in one). The review's id is the work id. Without the `review-ui` feature
-there is no review page: skip the steps that name `<review>`, and the user answers stop 1 in chat, comments and all.
+absolute path from the toolbox-config rule: write it out in full in every call, as SKILL.md says of `<bin>`. The
+review's id is the work id. Without the `review-ui` feature there is no review page: skip the steps that name
+`<review>`, and the user answers stop 1 in chat, comments and all.
 
 ## Presenting the Stop
 
 Order of the turn, so the report lands after `wrap_up` (text before the call can reach the user cut to a short
 summary) and the waiter is running before the turn ends:
 
-1. **Register the review, without the tab:** `local-review-ui <work id>` with `--no-browser`, as its Arguments
-   describe: it covers the task's worktrees, titles the review `<work id> <summary>`, diffs against the default base,
-   and passes `--resume-hint "/work-task <work id>"`. Note the URL it prints. Opening again is safe: the same id
-   reopens the same review with its comments.
+1. **Register the review, without the tab:** run the `local-review-ui` skill with the Skill tool, args `<work id>
+   --no-browser --resume-hint "/work-task <work id>"`. As its Arguments describe, it covers the task's worktrees,
+   titles the review `<work id> <summary>` and diffs against the default base. Note the URL it prints. Opening again
+   is safe: the same id reopens the same review with its comments.
 2. **Seed the decisions:** one thread per **Ask** finding and per **Decided alone** item that has a code location, on
    its line: `<review> note <work id> --repo <repo> --path <file> --line <n> --body "<the question, with the
    options>"`. Anything with no location stays in the report. Don't seed a decision that already has a thread (a stop
@@ -31,8 +31,8 @@ summary) and the waiter is running before the turn ends:
    `<review> wait <work id> --session "$CLAUDE_CODE_SESSION_ID" --until <HH:MM>`, the hand-off time in 24-hour local
    time. One call gives both forms, `h:mm` for the block and `HH:MM` for `--until`: `date -v+1H +'%-I:%M %H:%M'`.
 6. **Notify** (`PushNotification`), call `wrap_up` with a recap only, then write the report as the closing message,
-   ending with the hand-off block (SKILL.md "Hand-offs"). Never write the report before `wrap_up`, and never end the
-   turn with a one-line pointer to a report the user can't see.
+   ending with the hand-off block (read `hand-off.md` for it). Never write the report before `wrap_up`, and never end
+   the turn with a one-line pointer to a report the user can't see.
 
 ````markdown
 ## ABC-12 · code review
@@ -87,7 +87,7 @@ directory, which can't see the worktrees.
 
 ## On Each Wake or Answer
 
-Check first that the task is still this session's (SKILL.md "Hand-offs", step 2), then:
+Check first that the task is still this session's (`hand-off.md`, step 2), then:
 
 | Event | Do |
 |---|---|
@@ -131,7 +131,8 @@ A session that starts at `code-review` (a pasted prompt, or the user back after 
 1. Run `<bin>/worktrees.py changes <work id>`. If a worktree's `diff` differs from `code-review.md`'s, someone changed
    it since: say which, and re-run the unit tests (and integration tests, if they apply) before presenting. Without a
    `code-review.md`, rebuild the report: re-run the checks that apply for its Testing list.
-2. `local-review-ui <work id>` opens (reopens) the review.
+2. Reopen the review: the `local-review-ui` skill with the Skill tool, args `<work id> --resume-hint "/work-task
+   <work id>"`.
 3. Start the waiter with no `--until`: a new session's context is small, so a wake is cheap. A finished round it
    hasn't read makes it exit at once, and that wake handles the round (table above) right after the report.
 4. Present `code-review.md`, after `wrap_up` as above, with no hand-off block.

@@ -1,12 +1,13 @@
 ---
 name: toolbox-doctor
-description: Check this workspace's toolbox setup in one pass - the config, the install, the generated rule and rendered files, gh's account, the vault folders and every extension doc's hooks, then the Jira and Slack MCP connections and accounts - and report each check with its fix. Read-only. Use when Allen says "toolbox doctor", "check the toolbox", "is the toolbox set up right", after /setup-workspace, or when a toolbox skill or script behaves as if the setup were wrong.
+description: Read-only check of this workspace's toolbox setup (config, install, generated files, gh, vault, extension hooks, Jira and Slack MCP accounts), reporting each failing check with its fix. Invoked as /toolbox-doctor.
 allowed-tools: Bash(*), Read
+disable-model-invocation: true
 ---
 
 # Toolbox Doctor
 
-Checks; never fixes. Each failing check is reported with the fix, and Allen decides. Named `toolbox-doctor` because
+Checks; never fixes. Each failing check is reported with the fix, and the user decides. Named `toolbox-doctor` because
 `/doctor` is Claude Code's own command.
 
 ## Workflow
@@ -48,4 +49,4 @@ These are reads only. A wrong account is a failure even when the tools work: no 
 ### Report
 
 A table, one row per check (script and MCP): check, status, and for each failure its detail and fix. End with the
-overall result. Don't fix anything unless Allen asks.
+overall result. Don't fix anything unless the user asks.

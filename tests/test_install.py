@@ -375,6 +375,84 @@ class GeneratedRule(InstallerTest):
         self.assertIn(install.norm(self.ws1 / RULE), self.state()["generated"])
 
 
+class WorkspaceRules(InstallerTest):
+    """The workspace folder's rules are written into each workspace, not linked: Claude Code skips a project rule
+    that links outside the project."""
+
+    def setUp(self):
+        super().setUp()
+        self.source = write(self.repo / "workspace" / ".claude" / "rules" / "house.md", "# House\n\nBe kind.\n")
+        self.gated = write(self.repo / "workspace" / ".claude" / "rules" / "locks.md", "# Locks\n")
+        write(self.repo / "workspace" / "features.yml", yaml.safe_dump({
+            "services-lock": [".claude/skills/lock-local-services", ".claude/rules/locks.md"],
+        }))
+        self.target = self.ws1 / ".claude" / "rules" / "house.md"
+        self.note = f"Generated from `{self.source}` on every toolbox sync; edits here are lost."
+
+    def test_a_rule_installs_as_a_file_with_the_generated_note(self):
+        code, plan = self.run_install("--apply")
+        self.assertEqual(code, 0, plan)
+        self.assertIn(f"{self.target} (new, copied from house.md)", self.section(plan, "Write generated rules"))
+        self.assertFalse(self.target.is_symlink())
+        text = self.target.read_text(encoding="utf-8")
+        self.assertTrue(text.startswith(f"# House\n\n{self.note}"), text)
+        self.assertTrue(text.endswith("\n\nBe kind.\n"), text)
+        self.assertIn(install.norm(self.target), self.state()["generated"])
+        self.assertNotIn(install.norm(self.target), self.state()["links"])
+        self.assertTrue((self.ws1 / ".claude" / "rules" / "locks.md").is_file())
+        self.assertFalse((self.ws2 / ".claude" / "rules" / "locks.md").exists())
+        self.assertIn("\n/.claude/rules/house.md\n",
+                      (self.ws2 / ".git" / "info" / "exclude").read_text(encoding="utf-8"))
+
+        _, plan = self.run_install()
+        self.assertIn(f"{self.target} (copied)", self.section(plan, "Already in place"))
+        self.assertEqual(self.section(plan, "Write generated rules"), [])
+
+    def test_the_installers_old_link_is_replaced(self):
+        self.run_install("--apply")
+        state = self.state()
+        for path in (self.target, self.ws2 / ".claude" / "rules" / "house.md"):
+            path.unlink()
+            os.symlink(self.source, path)
+            del state["generated"][install.norm(path)]
+            state["links"][install.norm(path)] = {"target": str(path), "source": str(self.source),
+                                                  "part": "workspace", "workspace": install.norm(path.parents[2])}
+        (self.repo / ".install-state.json").write_text(json.dumps(state), encoding="utf-8")
+
+        code, plan = self.run_install()
+        self.assertEqual(code, 0, plan)
+        self.assertIn(f"{self.target} (replaces a link, copied from house.md)",
+                      self.section(plan, "Write generated rules"))
+        self.assertIn(str(self.target), self.section(plan, "Remove stale links"))
+        self.run_install("--apply")
+        self.assertFalse(self.target.is_symlink())
+        self.assertIn(self.note, self.target.read_text(encoding="utf-8"))
+        self.assertEqual([key for key in self.state()["links"] if key.endswith("house.md")], [])
+
+    def test_a_source_edit_rewrites_it(self):
+        self.run_install("--apply")
+        write(self.source, "# House\n\nBe kinder.\n")
+        _, plan = self.run_install()
+        self.assertIn(f"{self.target} (changed, copied from house.md)", self.section(plan, "Write generated rules"))
+        self.run_install("--apply")
+        self.assertIn("Be kinder.", self.target.read_text(encoding="utf-8"))
+
+    def test_a_removed_source_prunes_it(self):
+        self.run_install("--apply")
+        self.source.unlink()
+        _, plan = self.run_install()
+        self.assertIn(str(self.target), self.section(plan, "Remove generated rules"))
+        self.run_install("--apply")
+        self.assertFalse(self.target.exists())
+        self.assertNotIn(install.norm(self.target), self.state()["generated"])
+
+    def test_frontmatter_stays_first(self):
+        write(self.source, "---\npaths:\n  - \"src/**\"\n---\n\n# House\n\nBe kind.\n")
+        self.run_install("--apply")
+        text = self.target.read_text(encoding="utf-8")
+        self.assertTrue(text.startswith(f"---\npaths:\n  - \"src/**\"\n---\n\n# House\n\n{self.note}"), text)
+
+
 class GitExcludes(InstallerTest):
     def exclude(self) -> str:
         path = self.ws2 / ".git" / "info" / "exclude"

@@ -6,13 +6,9 @@ allowed-tools: Bash(*), Read, Grep, Glob
 
 # Run Unit Tests
 
-**Extensions.** Before anything else, run `.claude/toolbox/bin/toolbox.py config extensions run-unit-tests` from the
-workspace root (its absolute path is in the toolbox-config rule) and read every doc it lists. Each `##` section of a doc
-is a verb and one of this skill's hook ids ("Extension Points" below): at that hook, follow an `add` section after the
-hook's own text and a `replace` section instead of it; for a `skip` section, don't run the step, and list it wherever
-this skill reports its steps as `⏭️ <step>: skipped by <doc>: <reason>`. An added step that fails stops the skill for
-the user, unless its doc says otherwise, and what a step reports goes in this skill's next report. If two docs replace
-or skip the same hook, stop and ask the user which applies.
+**Extensions.** Before anything else, run `.claude/toolbox/bin/toolbox.py config extensions run-unit-tests --apply` from
+the workspace root (its absolute path is in the toolbox-config rule). If it lists docs, read each and apply them at this
+skill's hooks ("Extension Points" below) as its `apply` text says.
 
 Runs the unit tests of areas, in parallel. It doesn't fix code; the caller decides what to do with a failure (and counts
 attempts). Needs no local services and no lock.

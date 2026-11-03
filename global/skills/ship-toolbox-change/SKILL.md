@@ -1,14 +1,14 @@
 ---
 name: ship-toolbox-change
-description: Ship a change to any Claude toolbox repo end to end. Commits (drafting the message), then lands it by PR or straight on the default branch as the toolbox's toolbox.yml says (ship - pr or direct), cleans up, and previews the installer. Use when Allen says to commit, PR, ship or merge a toolbox change; git-commit and the gh-* skills are for workspace repos.
+description: Ship a change to any Claude toolbox repo end to end. Commits (drafting the message), then merges it by PR or pushes it straight to the default branch as the toolbox's toolbox.yml says (ship - pr or direct), cleans up, and previews the installer. Use when the user says to commit, PR, ship or merge a toolbox change; git-commit and the gh-* skills are for workspace repos.
 allowed-tools: Bash(*), Read, Write, Grep, Glob
 ---
 
 # Ship Toolbox Change
 
-A toolbox repo (a folder with a `toolbox.yml`) holds Allen's rules, skills and agents, and changes to it are his own
-work, so invoking this skill **is** the instruction to commit, push and land the change. How it lands is the toolbox's
-own choice, the top-level `ship` key of its `toolbox.yml`:
+A toolbox repo (a folder with a `toolbox.yml`) holds the user's rules, skills and agents, and changes to it are their
+own work, so invoking this skill **is** the instruction to commit, push and merge the change. How it ships is the
+toolbox's own choice, the top-level `ship` key of its `toolbox.yml`:
 
 | `ship:` | The change |
 |---|---|
@@ -20,7 +20,7 @@ applies: no reviewer, template or announcement, and the commit message needs no 
 
 | Workspace repos (`git-commit`, `gh-create-pull-request`, `gh-merge-pull-request`) | A toolbox repo |
 |---|---|
-| Allen supplies or approves the commit message | Draft it and commit. Invoking this skill is the instruction to commit, push and land |
+| The user supplies or approves the commit message | Draft it and commit. Invoking this skill is the instruction to commit, push and merge |
 | Branch from `git.branch` | `<branch_prefix>/<desc>`, no ticket |
 | Merge method from `pr.merge` | Merge commit (`pr`), or a push (`direct`) |
 

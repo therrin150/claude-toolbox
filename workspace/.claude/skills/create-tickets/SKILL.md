@@ -1,6 +1,6 @@
 ---
 name: create-tickets
-description: File a discussion's approved drafts as tasks, the "ready" step after propose-tickets. With the vault tracker it gives them keys and moves them into the tasks folder; with the jira tracker the jira-filer agent files them in Jira and the keys it returns are checked and recorded. Use when Allen says "file these", "create these tickets", "these are ready", or names a discussion to file.
+description: File a discussion's approved drafts as tasks, the "ready" step after propose-tickets. With the vault tracker it gives them keys and moves them into the tasks folder; with the jira tracker the jira-filer agent files them in Jira and the keys it returns are checked and recorded. Use when the user says "file these", "create these tickets", "these are ready", or names a discussion to file.
 ---
 
 # Create Tickets
@@ -21,8 +21,10 @@ agreement first.
 
 ## 1. The discussion and its drafts
 
-Use the discussion Allen named (a path, a path in the vault, or the folder's name). Otherwise list discussions whose
-`tickets/` folder holds drafts and ask which.
+Use the discussion the user named (a path, a path in the vault, or the folder's name). Otherwise list discussions whose
+`tickets/` folder holds drafts and ask which. An older discussion may keep drafts in `jira-tickets/` instead, from
+before this draft contract: they are history and never filed from there; an unfiled one is redrafted with
+`propose-tickets`.
 
 Only drafts with `status: approved` are filed; the rest are reported as skipped. **Don't assess quality.** The drafts
 were reviewed in the vault: an instruction to file means they're ready, so file what's there. Stop only for what can't
@@ -50,21 +52,17 @@ With no keys this writes nothing and prints the filing plan: `to_file` (each dra
 summary, epic, dependencies, estimate, sprint, labels, components), `keyed_not_moved` (drafts an interrupted run gave a
 key), `already_filed`, `skipped`, `no_epic` and the configured `fields`. Show it as a table.
 
-- A story with no epic (`no_epic`) can't be filed: ask which epic, unless Allen has said it goes without one.
+- A story with no epic (`no_epic`) can't be filed: ask which epic, unless the user has said it goes without one.
 - **Sprint.** A row whose `sprint` is a name needs its id: resolve it with `jira-find-current-sprint` (installed with
   the `jira-sprints` feature) and follow its rules for calling skills. Without that skill, ask for the id; never guess
-  one. A flagged result needs Allen's pick before anything is filed.
+  one. A flagged result needs the user's pick before anything is filed.
 - A `keyed_not_moved` draft was filed by an earlier run: never file it again. Include its key in step 3's `--keys`.
-
-### Identity
-
-Follow `references/identity-check.md` in the toolbox folder (the scripts folder's parent) for the Jira server before
-filing anything. Stop on a mismatch.
 
 ### File with jira-filer
 
-Spawn the `jira-filer` agent with the discussion, the plan's rows to file and the sprint ids. It owns the field
-mechanics (AC field or description, ADF, panels, labels, sprint, estimate) and returns `Filed: NN=KEY ...`.
+Spawn the `jira-filer` agent (it runs the identity check before its first write) with the discussion, the plan's rows to
+file and the sprint ids. It owns the field mechanics (AC field or description, ADF, panels, labels, sprint, estimate)
+and returns `Filed: NN=KEY ...`.
 
 1. **The epic first.** If `to_file` has an epic draft, ask the agent to file only the epic and return. Record it at
    once (the next step, with just `00=<KEY>`), so the plan holds the epic's key before any story exists. If the epic
@@ -90,7 +88,7 @@ issues (the site, the summary, the issue type, a story's parent epic) and writes
 key another record holds and a draft that already holds a different key, which is the duplicate-filing guard: never
 force past it. On a mismatch, report it and stop: the issues exist in Jira, so the fix is to correct the mapping (or
 the issue), never to file again. `warnings` (a missing `Blocks` link or label) don't stop anything: report them, and
-ask the agent to fix them if Allen wants.
+ask the agent to fix them if the user wants.
 
 A filed issue whose key isn't recorded shows as unfiled and invites a duplicate, so if recording fails, say so loudly
 and list the keys.
@@ -112,4 +110,4 @@ which; never imply a clean sweep.
 ## Notes
 
 - Obsidian may have the files open; writes still land, and it shows them on refocus.
-- No git. The vault may live in a repo, but commits are Allen's.
+- No git. The vault may live in a repo, but commits are the user's.

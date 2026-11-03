@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Turn detect.py's values and Allen's answers into a workspace's toolbox config, for /setup-workspace.
+"""Turn detect.py's values and the user's answers into a workspace's toolbox config, for /setup-workspace.
 
 Usage:
   draft.py render <detect.json> [--mcp KEY=VALUE]... [--set KEY=VALUE]... [--drop KEY]... [--write [--force]]
@@ -7,7 +7,7 @@ Usage:
 
 render prints JSON: `yaml` (the config, each value commented with its origin: detected, default or asked), `valid`,
 `errors` (the schema's), `missing` (keys still without a value) and `unanswered` (keys detect.py said to ask that no
---set answered). --mcp gives a value the skill read through an MCP tool (origin detected); --set gives Allen's answer
+--set answered). --mcp gives a value the skill read through an MCP tool (origin detected); --set gives the user's answer
 (origin asked); --drop removes a key and everything under it (`--drop pr.announce` for no announcement). VALUE is read
 as YAML, so `true`, `[a, b]` and `{unit: make test}` work. Keys that don't apply to the tracker are left out:
 `tracker.jira.*` unless it is jira, `tracker.key_prefix` unless it is vault. --write writes

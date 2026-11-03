@@ -1,13 +1,14 @@
 ---
 name: git-worktrees
-description: Create, list or remove a task's git worktrees, one per repo (nested workspace) or one per task (single-repo workspace), from the latest origin default branch. The work id is the ticket key, else a slug of the summary; the branch comes from the config's branch format. Create resumes an existing branch; remove refuses a worktree with uncommitted files and keeps the branches. Use when starting, resuming or cleaning up a task or a change with no ticket; work-task calls it.
+description: Create, list or remove a task's git worktrees from the latest origin default branch. Create resumes an existing branch; remove refuses a worktree with uncommitted files and keeps the branches. Invoked as /git-worktrees.
 allowed-tools: Bash(*), Read
+disable-model-invocation: true
 ---
 
 # Worktrees
 
-Gives a task (or a change with no ticket) its own checkout of each repo it touches, so parallel tasks, and Allen's own
-work in the main checkouts, never share a working tree. Everything is keyed by the **work id**: the ticket key when
+Gives a task (or a change with no ticket) its own checkout of each repo it touches, so parallel tasks, and the user's
+own work in the main checkouts, never share a working tree. Everything is keyed by the **work id**: the ticket key when
 there is one, else a kebab-case slug of the summary or title. The worktrees live under the config's
 `workspace.worktrees` folder: `<work id>/<repo>` in a nested workspace, `<work id>` in a single-repo one. All the git
 work is in one script, run from the workspace root or by the absolute path in the toolbox-config rule:
@@ -49,13 +50,13 @@ It never checks out, stashes or changes anything in a main checkout, never delet
    | `exists` | The worktree is already set up on this branch |
    | `failed` | The fetch failed, the path is on another branch, or the branch is checked out elsewhere (see `reason`) |
 
-3. **Don't fix failures by force.** A branch checked out in the main checkout has to be switched there by Allen.
+3. **Don't fix failures by force.** A branch checked out in the main checkout has to be switched there by the user.
 
 A fresh worktree starts cold: build output and gitignored local files (`.env`) aren't copied from the main checkout.
 
 ## Remove
 
-1. **Look first:** `worktrees.py list <id>`. Show Allen any worktree with commits that aren't on its remote branch
+1. **Look first:** `worktrees.py list <id>`. Show the user any worktree with commits that aren't on its remote branch
    (`remote_branch: false` with `ahead_of_default` above 0). Removing a worktree keeps its branch, so nothing is lost,
    but unpushed work is worth mentioning.
 2. **Remove:** run the script. It refuses, per repo, when the worktree has uncommitted or untracked files (it lists

@@ -1,6 +1,6 @@
 ---
 name: work-tasks
-description: Start or resume several tasks at once, one work-task session each. With the vault tracker, report what waits on the user and any services lock held, resume tasks handed back to Claude that have no live session, and start new ones from the queue within the WIP limits; with Jira or no tracker, start the tasks the user names (keys, task records, story docs, plans). Use when the user says "/work-tasks", "/work-tasks ABC-12 13", "work these tasks", "what's next", or hands over a batch of keys or doc paths.
+description: Start or resume several tasks at once, one work-task session each, within the WIP limits. Use when the user says "/work-tasks", "/work-tasks ABC-12 13", "work these tasks", "what's next", or hands over a batch of keys or doc paths.
 allowed-tools: Bash(*), Read, Write, ToolSearch, mcp__ccd_session__start_session, mcp__ccd_session_mgmt__list_sessions
 ---
 
@@ -34,8 +34,8 @@ in the toolbox-config rule; anywhere else, say so and stop), since the workspace
 ## Workflow
 
 1. **Load the tools** in one `ToolSearch` call: `select:mcp__ccd_session__start_session,
-   mcp__ccd_session_mgmt__list_sessions`, plus `mcp__ccd_session__dismiss_task` with chips and, under the `jira` tracker, `mcp__<server>__getJiraIssue` (server from
-   the toolbox-config rule). Skip `start_session` with `--dry-run`.
+   mcp__ccd_session_mgmt__list_sessions`, plus `mcp__ccd_session__dismiss_task` with chips and, under the `jira`
+   tracker, `mcp__<server>__getJiraIssue` (server from the toolbox-config rule). Skip `start_session` with `--dry-run`.
 2. **List the sessions.** `list_sessions` with `limit: 100` (archived excluded), and write the result as JSON to the
    session scratchpad as `sessions.json`. `work-task` names its session `<work id> <summary>` as its first step, so
    that prefix is how a task's live session is found.

@@ -1,6 +1,6 @@
 ---
 name: create-defect
-description: Write a defect straight into the tasks folder with the next key, from Allen's or Claude's description of an unrelated problem found along the way. Vault tracker only. Use when Allen says "file a defect", "log a bug", "make a defect for this", or a session finds a problem outside its task.
+description: Write a defect straight into the tasks folder with the next key, from the user's or Claude's description of an unrelated problem found along the way. Vault tracker only. Use when the user says "file a defect", "log a bug", "make a defect for this", or a session finds a problem outside its task.
 ---
 
 # Create Defect
@@ -19,13 +19,13 @@ From the description you were given, fill in what a session needs to reproduce a
 
 | Option | Holds |
 |---|---|
-| `--summary` | the symptom, in Title Case, per the ticket-docs rule (`Shelf Count Wrong After Move`) |
+| `--summary` | the symptom, in Title Case, per `.claude/toolbox/references/ticket-docs.md` (`Shelf Count Wrong After Move`) |
 | `--description` | what was seen, where and by whom, the evidence, then cause and fix as far as they're known |
 | `--steps` | numbered steps to reproduce, when it isn't obvious |
 | `--expected`, `--actual` | what should happen, and what does |
 | `--acceptance` | usually brief: the expected result at the relevant repro step |
 | `--found-in` | where it was found, when known: a key, a version, a page |
-| `--owner` | `claude` (the default), or Allen's owner value for work only he can do |
+| `--owner` | `claude` (the default), or the user's owner value for work only they can do |
 | `--epic`, `--depends-on` | only when they're known |
 
 Ask only for what's missing to reproduce it. Don't investigate the cause beyond what you already know: that's the
@@ -38,8 +38,8 @@ defect's work.
   --actual "..." --acceptance "..." [--found-in ...] [--owner ...] [--epic ...] [--depends-on KEY ...] --dry-run
 ```
 
-Show Allen the dry run's key and summary when he didn't ask for the defect himself; then run it without `--dry-run`.
-It takes the next key under the tasks lock, so parallel sessions never share one.
+Show the user the dry run's key and summary when they didn't ask for the defect themselves; then run it without
+`--dry-run`. It takes the next key under the tasks lock, so parallel sessions never share one.
 
 ## 3. Report
 

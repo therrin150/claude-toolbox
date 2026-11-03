@@ -31,7 +31,8 @@ The scan covers what the verifier would; verification runs in CI.
 - Each `##` heading is exactly `## <verb> <hook id>`. The prose under it, `###` subsections included, is the
   instruction: run a skill, then any follow-up. For `skip`, it is the reason.
 - The hook ids are the skill's own, in the `## Extension Points` table of its `SKILL.md`
-  (`.claude/skills/<skill>/SKILL.md`): when each hook runs, its default, and the verbs it allows.
+  (`.claude/skills/<skill>/SKILL.md`), or of its `references/extension-points.md` when it keeps the table there (as
+  `work-task` does): when each hook runs, its default, and the verbs it allows.
 
 | Verb | Meaning |
 |---|---|
@@ -72,13 +73,9 @@ with one backticked id per row; names each id where it runs (``hook `<id>` ``); 
 word, right after its title, with its own name for `<skill>`:
 
 ```markdown
-**Extensions.** Before anything else, run `.claude/toolbox/bin/toolbox.py config extensions <skill>` from the workspace
-root (its absolute path is in the toolbox-config rule) and read every doc it lists. Each `##` section of a doc is a verb
-and one of this skill's hook ids ("Extension Points" below): at that hook, follow an `add` section after the hook's own
-text and a `replace` section instead of it; for a `skip` section, don't run the step, and list it wherever this skill
-reports its steps as `⏭️ <step>: skipped by <doc>: <reason>`. An added step that fails stops the skill for the user,
-unless its doc says otherwise, and what a step reports goes in this skill's next report. If two docs replace or skip
-the same hook, stop and ask the user which applies.
+**Extensions.** Before anything else, run `.claude/toolbox/bin/toolbox.py config extensions <skill> --apply` from the
+workspace root (its absolute path is in the toolbox-config rule). If it lists docs, read each and apply them at this
+skill's hooks ("Extension Points" below) as its `apply` text says.
 ```
 
 Rename headings freely; a hook's id never changes once a doc may use it.

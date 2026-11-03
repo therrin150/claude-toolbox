@@ -1,12 +1,12 @@
 ---
 name: git-draft-commit-message
-description: Draft commit messages for Allen to approve, one per repo, from the diff and the task, in his commit style; optionally the one-sentence announcement for the PR batch. Drafts only; never commits.
+description: Draft commit messages for the user to approve, one per repo, from the diff and the task, in their commit style; optionally the one-sentence announcement for the PR batch. Drafts only; never commits.
 allowed-tools: Bash(*), Read, Grep, Glob
 ---
 
 # Draft Commit Message
 
-Drafts only. Committing is `git-commit`, with the message Allen approves.
+Drafts only. Committing is `git-commit`, with the message the user approves.
 
 ## Arguments
 
@@ -54,7 +54,8 @@ tacked-on aside, and a clause list of what the diff does in place of what the ch
 
 ## Output
 
-Per repo, the subject and body in a code block so Allen can copy them, then the announcement if asked. Flag anything in
-a diff the message doesn't cover (an unrelated file, a stray debug line) instead of quietly leaving it out. When the
-task has a publish folder (`Tasks/.publish/<work id>/`), offer to save the approved texts there as `<repo>.txt` (or
-`commit.txt` in a single-repo workspace) and `announce.txt`, which is where `publish.py` reads them.
+Per repo, the subject and body in a code block so the user can copy them, then the announcement if asked. Flag anything
+in a diff the message doesn't cover (an unrelated file, a stray debug line) instead of quietly leaving it out. When the
+task has a publish folder (`<tasks>/.publish/<work id>/`, the tasks folder the toolbox-config rule names), offer to save
+the approved texts there as `<repo>.txt` (or `commit.txt` in a single-repo workspace) and `announce.txt`, which is where
+`publish.py` reads them.

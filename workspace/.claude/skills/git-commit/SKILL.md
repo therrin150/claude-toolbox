@@ -1,6 +1,6 @@
 ---
 name: git-commit
-description: Commit and push the working-tree changes in one or more repos or task worktrees with a message Allen supplied or approved, after showing what will be staged. Use when Allen says to commit; work-task publishes through the same script.
+description: Commit and push the working-tree changes in one or more repos or task worktrees with a message the user supplied or approved, after showing what will be staged. Use when the user says to commit in a workspace repo (a toolbox repo is ship-toolbox-change); work-task publishes through the same script.
 allowed-tools: Bash(*), Read, Write, Grep, Glob
 ---
 
@@ -44,20 +44,17 @@ If that's ambiguous, ask.
 
 ## The Message
 
-The message is Allen's, verbatim: subject, blank line, body. Write it to a file in the session scratchpad. Don't edit
+The message is the user's, verbatim: subject, blank line, body. Write it to a file in the session scratchpad. Don't edit
 it. If something looks wrong (a typo in the key, a branch with a key whose subject lacks it, a subject the diff
 doesn't support), say so and wait. A subject-only message gets a request for a body, never an invented one;
-`git-draft-commit-message` drafts one for Allen to approve.
+`git-draft-commit-message` drafts one for the user to approve.
 
-Two rules exist because `gh-create-pull-request` builds the PR from these commits:
-
-- The **subject becomes the PR title verbatim**, from the *oldest* commit on the branch, so a second commit on a branch
-  won't change the title.
-- The **body becomes the PR description**.
+The subject becomes the PR title and the body the PR description (`.claude/toolbox/references/git-conventions.md`,
+"Commit messages"), so a second commit on a branch won't change the title.
 
 When one message covers a batch, check it's true of every repo. If a repo's diff holds something the message doesn't
-describe (a dependency bump, a rename, a test), say so before committing, so Allen can extend the message or give that
-repo its own.
+describe (a dependency bump, a rename, a test), say so before committing, so the user can extend the message or give
+that repo its own.
 
 ## Step 1: Precheck
 
@@ -74,9 +71,6 @@ files too: they were in the index before this run.
 
 Then **stop and wait for approval.** One approval covers the whole batch, commit and push.
 
-**Called by `work-task`:** it publishes through `publish.py run`. Allen's approval at its publish review stop covers
-the repos, messages and changes, so nothing here waits again.
-
 ## Step 3: Commit and push
 
 Run `publish.py commit`, then `publish.py push` (skip the push for `--no-push`). Per repo, alphabetically, the commit
@@ -84,7 +78,7 @@ step stages everything listed (`git add -A`), commits with the message file, and
 matches and no trailer crept in (a hook or commit template can add one; if so it stops before pushing, and you say so
 plainly). The push step first rebases onto the latest `origin/<default>` when that has new code commits, then pushes.
 
-- A rejected commit (a hook) leaves the index staged for Allen to inspect. Report the hook's output verbatim.
+- A rejected commit (a hook) leaves the index staged for the user to inspect. Report the hook's output verbatim.
 - A rebase `conflicts` result (exit 4) leaves the rebase in progress. Resolve it, `git rebase --continue`, re-run the
   tests the task needs, and run the push step again.
 - A rejected push means the remote has commits this branch doesn't. Report it; never force, fetch, merge or retry on

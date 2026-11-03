@@ -1,13 +1,14 @@
 ---
 name: setup-workspace
-description: Configure a workspace for the toolbox and install it there in one pass - detect what the workspace, git, gh and the session's MCP tools can tell, ask Allen only the rest, write .claude/toolbox.local.yml on approval, add the workspace to machine.yml, preview and apply the install, and finish with toolbox-doctor. Use when Allen says "set up this workspace", "set up the toolbox here", "/setup-workspace", or a toolbox script says to run it.
+description: Configure a workspace for the toolbox and install into it: detect what it can, ask the rest, write .claude/toolbox.local.yml on approval, install, then check it with toolbox-doctor. Invoked as /setup-workspace.
+disable-model-invocation: true
 ---
 
 # Setup Workspace
 
 Global, because it runs in a workspace that has nothing of the toolbox installed yet. It writes one untracked file in
 the workspace, `.claude/toolbox.local.yml`, and one line in `claude-toolbox`'s `machine.yml`; the installer does the
-rest. Nothing is written or applied without Allen's approval.
+rest. Nothing is written or applied without the user's approval.
 
 ## Arguments
 
@@ -37,7 +38,7 @@ It changes nothing. Its JSON has `values`: each dotted config key with its `valu
 the MCP tools it names (step 3). `toolbox` gives the paths the later steps use: `draft_py`, `installer`, `toolbox_py`,
 `machine`, and whether `machine.yml` already lists the workspace.
 
-If `existing_config` is set, the workspace already has a config: show it and ask Allen whether to replace it (step 6
+If `existing_config` is set, the workspace already has a config: show it and ask the user whether to replace it (step 6
 then passes `--force`) or stop and run `/toolbox-doctor` instead.
 
 ### 3. Read what the MCP tools know
@@ -54,11 +55,11 @@ Only the session can call MCP tools; the script can't. Use the servers the sessi
 | `tracker.jira.fields` | the `discover` tool's field listing, or on a server without it `getJiraIssueTypeMetaWithFields` for the project's story type (`requiredFieldsOnly: false`), matched by name: "Acceptance Criteria" → `acceptance_criteria`, "Sprint" → `sprint`. No match: ask, or leave the field out |
 | `tracker.jira.project` | detected from key prefixes; with none, ask, and check the key exists in the site's projects |
 
-With no Atlassian tools in the session, ask for the site, cloud id and account, or let Allen pick another tracker.
+With no Atlassian tools in the session, ask for the site, cloud id and account, or let the user pick another tracker.
 
 The pull request announcement is always asked: the channel's **name**, resolved to its id with
 `slack_search_channels`, as `--mcp pr.announce.channel=<id>`, with `pr.announce.mcp_server` set to the session's Slack
-server when it isn't `slack`. If Allen wants no announcement, `--drop pr.announce`.
+server when it isn't `slack`. If the user wants no announcement, `--drop pr.announce`.
 
 ### 4. Ask the rest
 
@@ -67,8 +68,8 @@ outside the workspace, such as `~/Notes/Work`, is a fine answer for `vault.path`
 it has an `.obsidian/` folder), the announcement channel, and the
 `confirm` values: `tracker.kind`, `features` (offer `known_features`, saying what each installs), and
 `work` (session model, dispatch, WIP limits), and `shared_libraries.names` when detected (a task changing one runs
-`work-task`'s shared-library cycle, then its consumers cycle). Ask nothing detected and nothing the table below doesn't name; Allen can
-correct any value when he sees the draft.
+`work-task`'s shared-library cycle, then its consumers cycle). Ask nothing detected and nothing the table below doesn't
+name; the user can correct any value when they see the draft.
 
 | Value | Asked when |
 |---|---|
@@ -87,17 +88,17 @@ correct any value when he sees the draft.
 python3 <draft_py> render <scratchpad>/detect.json --mcp KEY=VALUE... --set KEY=VALUE... [--drop KEY...]
 ```
 
-`--set` carries Allen's answers (origin `asked`); a value is read as YAML (`true`, `[tasks, pr]`, `{unit: make
+`--set` carries the user's answers (origin `asked`); a value is read as YAML (`true`, `[tasks, pr]`, `{unit: make
 test}`). Keys the tracker doesn't use drop out by themselves. The JSON has the config as `yaml`, each value commented
-with its origin, plus `errors`, `missing` and `unanswered`. Fix what those name (ask again if needed) and re-render until
-all three are empty.
+with its origin, plus `errors`, `missing` and `unanswered`. Fix what those name (ask again if needed) and re-render
+until all three are empty.
 
-Present the `yaml` verbatim, then ask Allen to approve writing it. An edit he asks for is one more `--set` or `--drop`
-and a re-render, never a hand edit of the YAML.
+Present the `yaml` verbatim, then ask the user to approve writing it. An edit they ask for is one more `--set` or
+`--drop` and a re-render, never a hand edit of the YAML.
 
 ### 6. Write and list the workspace
 
-On approval, run the same render with `--write` (and `--force` when replacing a config Allen agreed to replace). It
+On approval, run the same render with `--write` (and `--force` when replacing a config the user agreed to replace). It
 writes `<workspace>/.claude/toolbox.local.yml` only when the config is valid with nothing missing or unanswered. Then:
 
 ```bash
@@ -115,7 +116,7 @@ python3 <installer> --workspace <workspace>
 
 Present it as `/sync-toolbox` does: the counts, every generated-rule change, conflict, warning and problem verbatim,
 and `install-plan.txt`'s path. A real file where a link goes is usually a copy from before the toolbox: never delete or
-move it without Allen saying so. On approval, run it again with `--apply` and report the counts and any errors.
+move it without the user saying so. On approval, run it again with `--apply` and report the counts and any errors.
 
 ### 8. Toolbox doctor
 
@@ -124,7 +125,8 @@ cd <workspace> && .claude/toolbox/bin/toolbox.py doctor
 ```
 
 Then follow the installed `toolbox-doctor` skill (`<workspace>/.claude/skills/toolbox-doctor/SKILL.md`; this session
-hasn't loaded it, so read it) for the MCP checks and the report. A failing check is reported with its fix; don't fix anything unasked.
+hasn't loaded it, so read it) for the MCP checks and the report. A failing check is reported with its fix; don't fix
+anything unasked.
 
 ### 9. Report
 

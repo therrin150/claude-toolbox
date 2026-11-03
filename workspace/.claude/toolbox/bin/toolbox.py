@@ -6,7 +6,8 @@ Commands:
   config validate              {"ok": true, "config": <path>} or {"ok": false, "errors": [...]}
   config render                The generated rule's text (.claude/rules/toolbox-config.md)
   config extensions <skill>    The extension docs in .claude/extensions/ that extend a skill (minus
-                               extensions.disabled), in name order, as absolute paths in a JSON list
+                               extensions.disabled), in name order, as absolute paths in a JSON list. With --apply,
+                               {"docs": [...], "apply": <how a skill applies them>}, "apply" only when docs exist
   doctor                       Check the workspace's toolbox setup (see lib/doctor.py): JSON, one line per check, and
                                the MCP checks the toolbox-doctor skill makes; exit 1 when any check isn't ok
 
@@ -27,9 +28,20 @@ import doctor  # noqa: E402
 
 OK, INVALID, USAGE = 0, 1, 2
 
+# How a skill applies its extension docs, printed by `config extensions --apply` only when it has some, so the skills
+# carry one line instead of this text.
+APPLY = (
+    "Each `##` section of a doc is a verb and one of the skill's hook ids (its \"Extension Points\" table): at that "
+    "hook, follow an `add` section after the hook's own text and a `replace` section instead of it; for a `skip` "
+    "section, don't run the step, and list it wherever the skill reports its steps as "
+    "`⏭️ <step>: skipped by <doc>: <reason>`. An added step that fails stops the skill for the user, unless "
+    "its doc says otherwise, and what a step reports goes in the skill's next report. If two docs replace or skip the "
+    "same hook, stop and ask the user which applies."
+)
+
 
 def emit(value) -> None:
-    print(json.dumps(value, indent=2, default=str))
+    print(json.dumps(value, indent=2, default=str, ensure_ascii=False))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -43,6 +55,7 @@ def main(argv: list[str] | None = None) -> int:
     actions.add_parser("render", help="print the generated rule")
     extensions = actions.add_parser("extensions", help="list the extension docs that extend a skill")
     extensions.add_argument("skill")
+    extensions.add_argument("--apply", action="store_true", help="also print how the skill applies the docs")
     commands.add_parser("doctor", help="check the workspace's toolbox setup")
     args = parser.parse_args(argv)
 
@@ -71,7 +84,8 @@ def main(argv: list[str] | None = None) -> int:
     elif args.action == "render":
         sys.stdout.write(config.render_rule(loaded))
     elif args.action == "extensions":
-        emit([str(path) for path in loaded.extensions(args.skill)])
+        docs = [str(path) for path in loaded.extensions(args.skill)]
+        emit(({"docs": docs, "apply": APPLY} if docs else {"docs": docs}) if args.apply else docs)
     return OK
 
 

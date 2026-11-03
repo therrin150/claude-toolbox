@@ -1,6 +1,6 @@
 ---
 name: sync-toolbox
-description: Sync the Claude toolboxes on this machine - re-sync everything after pulling or editing a toolbox, add or remove a toolbox repo or a workspace in machine.yml and sync, or tear everything down. Previews first and applies only after Allen approves. Use when Allen says "sync my toolbox", "re-link my skills", "install the <name> toolbox", "remove the <name> toolbox", "stop installing into <workspace>", "tear down my toolbox", or after adding, renaming or deleting rules, skills or agents in a toolbox repo.
+description: Sync the Claude toolboxes on this machine: after pulling or editing a toolbox, adding or removing a toolbox or workspace in machine.yml, or tearing it all down. Previews, then applies on approval. Use for "sync my toolbox", "re-link my skills".
 ---
 
 # Sync Toolbox
@@ -63,7 +63,7 @@ Show the counts, then every generated-rule change, conflict, warning and problem
 
 - **Conflicts** are left alone by the installer. Explain each: a real file in the way usually means content not yet
   moved into the toolbox; a link pointing elsewhere is usually an old link from before the toolbox. Never delete or move
-  either without Allen saying so.
+  either without the user saying so.
 - **Problems** include a workspace with no `.claude/toolbox.local.yml` or an invalid one (nothing there is installed or
   removed until `/setup-workspace` runs there or the config is fixed), a toolbox whose manifest is missing or still
   `domains.yml` (nothing of it is installed or removed until it's renamed), and a `machine.yml` that still has
@@ -72,7 +72,7 @@ Show the counts, then every generated-rule change, conflict, warning and problem
   workspace's config names that no `features.yml` mentions, and `features.yml` paths that don't exist. Mention them;
   they don't block applying.
 
-Ask Allen to approve applying. On decline, restore `machine.yml` if step 2 changed it.
+Ask the user to approve applying. On decline, restore `machine.yml` if step 2 changed it.
 
 ### 5. Apply and report
 

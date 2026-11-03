@@ -8,9 +8,9 @@ Prints JSON. `values` maps each dotted config key to {"value", "origin", "from"}
 the workspace, git or gh) or `default` (nothing to read, or a default from the layout and tracker). An entry may also
 carry:
 
-  ask      why the skill must ask Allen (nothing found, or the table in the plan says always ask); value is a
+  ask      why the skill must ask the user (nothing found, or the table in the plan says always ask); value is a
            suggestion or null
-  confirm  the value is a suggestion the skill confirms with Allen before writing
+  confirm  the value is a suggestion the skill confirms with the user before writing
   mcp      the MCP tools the skill reads it with; value is null until it does
 
 Beside `values`: `ask`, `confirm` and `mcp` list those keys; `known_features` the features features.yml gates on;

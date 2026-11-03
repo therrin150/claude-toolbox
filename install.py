@@ -5,7 +5,9 @@ This repo installs two folders of its own: global/ into ~/.claude, and workspace
 lists, gated by each workspace's features, with the workspace's generated config rule. Every other toolbox repo
 machine.yml lists installs whole: its toolbox.yml names one source folder and the folder it mirrors. Each source folder
 mirrors its target: folders are created, files are linked one at a time, and skill folders (anything containing
-SKILL.md) are linked whole. Previews by default and changes nothing; pass --apply to make the changes. See README.md.
+SKILL.md) are linked whole. The workspace folder's rules are written into each workspace instead, since Claude Code
+skips a project rule that links outside the project. Previews by default and changes nothing; pass --apply to make the
+changes. See README.md.
 """
 
 from __future__ import annotations
@@ -59,6 +61,11 @@ TASKS_FEATURE = "tasks"
 # workspace root. Its files are written, never linked, since Obsidian and synced vaults handle links poorly: rendered
 # when they end .tmpl, copied as they are otherwise.
 VAULT_DIR = ".vault"
+# The rules folder in a per-workspace part. Its rules are written into each workspace, never linked: Claude Code never
+# loads a project rule whose link resolves outside the project, and a per-workspace part's source always lies outside.
+# Each copy carries a generated note, after any frontmatter so `paths:` still works.
+RULES_DIR = ".claude/rules"
+RULE_FRONTMATTER = re.compile(r"\A---\n(?:.*?\n)?---[ \t]*(?:\n|\Z)", re.DOTALL)
 
 ALWAYS_SKIP = {".DS_Store", "Thumbs.db", "__pycache__", ".gitkeep"}
 SKILL_FILES = ("SKILL.md", "skill.md")
@@ -375,9 +382,10 @@ def skipper(per_workspace: bool, features: dict, have: list):
 
 
 def walk(part: str, src_root: Path, tgt_root: Path, ignore: list, skip, workspace, links: list, dirs: list,
-         templates: list | None = None) -> None:
-    """Collect a part's links and folders. With `templates` (a per-workspace part), each .tmpl file goes there as
-    (source, target without the suffix) instead of being linked."""
+         templates: list | None = None, rules: list | None = None) -> None:
+    """Collect a part's links and folders. With `templates` and `rules` (a per-workspace part), each .tmpl file goes in
+    `templates` as (source, target without the suffix), and each other rule in its rules folder goes in `rules` as
+    (source, target), instead of being linked."""
     suffix = import_templates().SUFFIX if templates is not None else None
 
     def visit(src: Path, tgt: Path, rel: str) -> None:
@@ -393,6 +401,9 @@ def walk(part: str, src_root: Path, tgt_root: Path, ignore: list, skip, workspac
                 visit(entry, target, relpath)
             elif suffix and entry.is_file() and entry.name.endswith(suffix) and entry.name != suffix:
                 templates.append((entry, tgt / entry.name[: -len(suffix)]))
+            elif rules is not None and entry.is_file() and entry.suffix == ".md" \
+                    and relpath.startswith(RULES_DIR + "/"):
+                rules.append((entry, target))
             else:
                 links.append(Link(part, entry, target, workspace=workspace))
 
@@ -423,6 +434,32 @@ def render_template(part: str, ws: Workspace, template: Path, path: Path, genera
         held.append((part, ws.key, path))
         return
     generated.append(Generated(part, ws.key, path, text, template))
+
+
+def noted_rule(text: str, source: Path) -> str:
+    """A rule's text with the generated note where toolbox-config.md has its note: after the frontmatter and title."""
+    note = f"Generated from `{show(source)}` on every toolbox sync; edits here are lost. Change the source and sync."
+    match = RULE_FRONTMATTER.match(text)
+    head = text[: match.end()].rstrip("\n") + "\n\n" if match else ""
+    body = text[match.end() if match else 0:].lstrip("\n")
+    title = ""
+    if body.startswith("# "):
+        title, _, body = body.partition("\n")
+        title, body = title + "\n\n", body.lstrip("\n")
+    return head + title + note + "\n" + ("\n" + body if body else "")
+
+
+def copy_rule(part: str, ws: Workspace, source: Path, path: Path, generated: list, held: list,
+              problems: list) -> None:
+    """Copy one rule, with its generated note, into `generated`, or report why it can't be."""
+    try:
+        text = source.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        problems.append(f"workspace {show(ws.path)}: can't copy {show(path)} from {source.name}, so it is left as it "
+                        f"is: {error}")
+        held.append((part, ws.key, path))
+        return
+    generated.append(Generated(part, ws.key, path, noted_rule(text, source), source))
 
 
 def vault_files(part: str, src_root: Path, ws: Workspace, ignore: list, skip, dirs: list, generated: list,
@@ -499,9 +536,12 @@ def desired(parts: dict, names: list, workspaces: list, problems: list, warnings
         for workspace, tgt_root, have in roots:
             skip = skipper(part.per_workspace, features, have)
             found = [] if part.per_workspace else None
-            walk(name, src_root, tgt_root, spec.get("ignore") or [], skip, workspace, links, dirs, found)
+            rules = [] if part.per_workspace else None
+            walk(name, src_root, tgt_root, spec.get("ignore") or [], skip, workspace, links, dirs, found, rules)
             for template, path in found or []:
                 render_template(name, by_key[workspace], template, path, generated, held, problems)
+            for source, path in rules or []:
+                copy_rule(name, by_key[workspace], source, path, generated, held, problems)
             if part.per_workspace:
                 vault_files(name, src_root, by_key[workspace], spec.get("ignore") or [], skip, dirs, generated, held,
                             problems)
@@ -860,11 +900,15 @@ def apply_plan(plan: Plan, state: dict) -> list:
 # Reporting
 
 
-def rendered_from(gen: Generated) -> str:
+def made_by(gen: Generated) -> str:
+    """`generated` (the config rule), `rendered` (from a template) or `copied` (a vault file or a rule)."""
     if not gen.template:
-        return ""
-    verb = "rendered" if gen.template.name.endswith(import_templates().SUFFIX) else "copied"
-    return f", {verb} from {gen.template.name}"
+        return "generated"
+    return "rendered" if gen.template.name.endswith(import_templates().SUFFIX) else "copied"
+
+
+def rendered_from(gen: Generated) -> str:
+    return f", {made_by(gen)} from {gen.template.name}" if gen.template else ""
 
 
 def describe_toolboxes(names: list) -> str:
@@ -889,7 +933,7 @@ def plan_sections(plan: Plan, errors: list) -> list:
         (
             "Already in place",
             [show(link.target) for link in plan.ok]
-            + [f"{show(gen.path)} ({'rendered' if gen.template else 'generated'})" for gen in plan.rules_ok],
+            + [f"{show(gen.path)} ({made_by(gen)})" for gen in plan.rules_ok],
         ),
         (
             "Conflicts, left alone",

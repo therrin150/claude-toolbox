@@ -33,8 +33,8 @@ blocks don't count. Pull what the work needs from the plan; never link to it. Ov
 ## Acceptance Criteria
 
 <!--
-House style (rules/ticket-docs.md): a bold scenario name, then one clause per line, GIVEN / WHEN / THEN / AND / OR in
-uppercase and not bold. 1-5 scenarios, asserting only what the user can observe. Spikes have no AC.
+House style (toolbox/references/ticket-docs.md): a bold scenario name, then one clause per line, GIVEN / WHEN / THEN /
+AND / OR in uppercase and not bold. 1-5 scenarios, asserting only what the user can observe. Spikes have no AC.
 -->
 
 **Scenario: **

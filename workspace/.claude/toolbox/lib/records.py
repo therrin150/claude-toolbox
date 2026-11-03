@@ -9,9 +9,9 @@ key folder as `<KEY>.<n>-<slug>.md`, titled for its scope, with a `## Scope` sec
 covers. Its work id is `<KEY>.<n>`. The ticket's own record (no `slice`) is the one a bare key names, and it covers
 whatever the slices haven't.
 
-What a record holds is in `.claude/rules/ticket-docs.md`; the templates beside `bin/` are what new records are
-made from. Which sources make a record, and how keys are assigned, is the tracker's business (`trackers/`); this
-module is the part every tracker shares.
+What a record holds is in `.claude/toolbox/references/ticket-docs.md`; the templates beside `bin/` are what new
+records are made from. Which sources make a record, and how keys are assigned, is the tracker's business
+(`trackers/`); this module is the part every tracker shares.
 
 Other scripts import it by path, as `bin/tasks.py` does:
 

@@ -9,13 +9,15 @@ lists (such as the work toolbox), each whole. A project's own conventions stay i
 
 This repo installs two folders, both always: `global/` mirrors `~/.claude`, and `workspace/` mirrors a workspace root
 and installs into every workspace `machine.yml` lists. The installer creates folders, links files one at a time, and
-links skill folders (anything containing `SKILL.md`) whole, so edits here take effect immediately.
+links skill folders (anything containing `SKILL.md`) whole, so edits here take effect immediately. The workspace
+folder's rules are the exception: they are copied, and an edit takes effect on the next sync.
 
 ```
 global/                          → ~/.claude
   CLAUDE.md                      response style
   rules/git.md                   Git writes need Allen's explicit instruction; no commit trailers; commit voice
-  rules/obsidian.md              the Personal vault and Obsidian formatting
+  rules/obsidian.md              the Personal vault and Obsidian formatting; discussions are the discussion skill's
+  rules/shell.md                 zsh pitfalls
   rules/java-conventions.md      Allen's Java style: layered packages, no records, Optional, commons utilities, ITs
   rules/sql-conventions.md       uppercase keywords, named constraints, UTC timestamps
   rules/angular-conventions.md   singular folders, one folder per component
@@ -25,11 +27,13 @@ global/                          → ~/.claude
   personal/commit-style.md       Allen's commit message style (read where referenced)
   skills/sync-toolbox/           re-sync, add or remove a toolbox or workspace, or tear down
   skills/setup-workspace/        configure a workspace and install into it
-  skills/ship-toolbox-change/    land a change to any toolbox repo
+  skills/ship-toolbox-change/    ship a change to any toolbox repo
+  skills/discussion/             start or extend a design discussion in a vault
 workspace/                       → every listed workspace (per-workspace)
   features.yml                   which paths need which config feature (not installed)
   .claude/toolbox/               scripts (bin/), their library (lib/), references and templates
   .vault/Templates/              Templater templates written into each workspace's vault (feature obsidian)
+  .claude/rules/                 workspace rules, copied into each workspace (not linked)
   .claude/skills/, agents/       generic workflow skills and agents
 install.py                       the installer; its two folders are fixed there
 toolbox.yml                      this repo's manifest (how changes ship), and the reference for other toolboxes' keys
@@ -89,6 +93,11 @@ On Windows, turn on Developer Mode first so Python can create symlinks without a
 - **Generated rule.** Each workspace gets `.claude/rules/toolbox-config.md`, rendered from its config on every sync. It
   is a real file, recorded as generated, so stale cleanup and teardown remove it; a file there the installer didn't
   write is a conflict.
+- **Workspace rules.** Claude Code never loads a project rule whose link resolves outside the project, so each rule in
+  `workspace/.claude/rules/` is copied into the workspace instead of linked, with a note after its title (and after
+  any frontmatter, so `paths:` keeps working) that it is generated and edits are lost. Like the generated rule, it is
+  recorded as generated: a changed source rewrites it, a removed one or a dropped feature removes it, and the link an
+  earlier sync made there is replaced. Other toolboxes' rules are still linked.
 - **Templates.** In the workspace folder, a file whose name ends `.tmpl` is rendered into each workspace at the same
   path without the suffix, instead of being linked: each `{{ dotted.config.key }}` becomes that key's value from the
   workspace's config. It is recorded as generated, like the rule, and `features.yml` gates it by its `.tmpl` name. A

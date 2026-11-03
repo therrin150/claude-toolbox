@@ -1,7 +1,6 @@
 ---
 paths:
-  - "**/*.java"
-  - "**/pom.xml"
+  - "**/com/allensudweeks/**"
 ---
 
 # Java Conventions

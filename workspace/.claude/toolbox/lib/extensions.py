@@ -3,9 +3,11 @@
 An extension doc lives in the workspace's `.claude/extensions/` folder. Its frontmatter says `type: extension` and
 `extends: <skill>`; each `##` section is `## <add|replace|skip> <hook id>`, the prose under it the instruction (for
 `skip`, the reason). A skill declares its hook ids in an `## Extension Points` table (id, when it runs, its default,
-the verbs it allows), so its headings can be renamed freely.
+the verbs it allows), so its headings can be renamed freely. The table is in its SKILL.md or, for a skill that keeps
+it out of its always-read text, in its `references/extension-points.md`, under the same heading.
 
-- parse() reads a doc's frontmatter and sections; points() reads a skill's Extension Points table.
+- parse() reads a doc's frontmatter and sections; points() reads an Extension Points table from text, and
+  skill_points() finds a skill's table in its folder.
 - docs() lists the folder's docs (never its README); discover() picks those extending one skill, minus disabled ones.
 - The doctor check validates every doc against the table of the skill it extends.
 """
@@ -24,6 +26,7 @@ VERBS = ("add", "replace", "skip")
 SECTION = re.compile(r"^## (add|replace|skip) ([a-z0-9-]+)$")
 SKILL_NAME = re.compile(r"^[a-z0-9-]+$")
 POINTS_HEADING = "## Extension Points"
+POINTS_FILE = Path("references/extension-points.md")  # where a skill may keep the table instead of its SKILL.md
 POINTS_COLUMNS = ["Id", "Runs", "Default", "Verbs"]
 POINT_ID = re.compile(r"^`([a-z0-9-]+)`$")
 LEVEL_TWO = re.compile(r"^## ")
@@ -198,6 +201,19 @@ def points(text: str) -> tuple[list[Point], list[str]]:
     if inside and not found and not problems:
         problems.append(f"{POINTS_HEADING} has no table of hooks")
     return found, problems
+
+
+def skill_points(skill_dir: Path) -> tuple[list[Point], list[str]] | None:
+    """A skill's hook ids, from its `references/extension-points.md` when it has one, else from its SKILL.md.
+
+    None when the folder has no SKILL.md: the skill isn't installed.
+    """
+    skill_dir = Path(skill_dir)
+    skill_md = skill_dir / "SKILL.md"
+    if not skill_md.is_file():
+        return None
+    table = skill_dir / POINTS_FILE
+    return points((table if table.is_file() else skill_md).read_text(encoding="utf-8"))
 
 
 def docs(root: Path) -> list[Path]:

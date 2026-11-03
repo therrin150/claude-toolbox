@@ -9,9 +9,9 @@ code change asked for here goes back through the checks and both stops (below).
 Same turn order as `code-review.md`, so the report lands after `wrap_up`: write `publish-review.md` to the publish
 folder (the report below without the hand-off block), set `status=review owner=<user> stage=publish-review`, notify
 (`PushNotification`), call `wrap_up` with a recap only, then write the report as the closing message, ending with the
-hand-off block (SKILL.md "Hand-offs"). Present it as ordinary Markdown, NOT inside a code block, so headings, bold and
-lists render. Only each commit message goes in a code block, because its exact text is what the user approves. Never
-end the turn with a one-line pointer to a report they can't see.
+hand-off block (read `hand-off.md` for it). Present it as ordinary Markdown, NOT inside a code block, so headings,
+bold and lists render. Only each commit message goes in a code block, because its exact text is what the user
+approves. Never end the turn with a one-line pointer to a report they can't see.
 
 ````markdown
 ## ABC-12 · publish review
@@ -61,7 +61,7 @@ before every worktree section and before the announcement.
 
 ## The User's Answer
 
-Check first that the task is still this session's (SKILL.md "Hand-offs", step 2), then:
+Check first that the task is still this session's (`hand-off.md`, step 2), then:
 
 - **Wording:** redraft the message or the announcement under the same `git-draft-commit-message` rules (re-read the
   style files when the skill isn't loaded in this session), keep the publish folder's files in step with their wording,
@@ -71,8 +71,8 @@ Check first that the task is still this session's (SKILL.md "Hand-offs", step 2)
   then on through format, unit tests, integration tests, `/code-review` and the verifier, stop 1 and stop 2 with fresh
   drafts. The review id and its comments carry over, so stop 1 shows the earlier threads.
 - **Approval,** with nothing `Pending`: read `merge.md` and publish.
-- **Approval with something `Pending`:** nothing publishes until it's out (SKILL.md "### Needs a release"); say so in
-  one line.
+- **Approval with something `Pending`:** nothing publishes until it's out (`other-tasks.md`, "Needs a
+  Release"); say so in one line.
 
 ## Resuming
 

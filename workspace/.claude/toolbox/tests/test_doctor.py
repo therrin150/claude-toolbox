@@ -90,7 +90,7 @@ class DoctorTest(unittest.TestCase):
         self.assertEqual({name: check["status"] for name, check in checks.items()}, {
             "config": "ok", "install": "ok", "rule": "ok", "rendered": "ok", "gh": "ok", "vault": "ok",
             "extensions": "ok"})
-        self.assertEqual(checks["rendered"]["detail"], "none rendered")
+        self.assertEqual(checks["rendered"]["detail"], "1 file(s) current")  # git-conventions.md, a copied rule
         lines = text.splitlines()
         self.assertTrue(all(line.startswith('{"check": ') for line in lines[1:8]))  # one line per check
         self.assertFalse((self.toolbox / "install-plan.txt").exists())  # --json writes no plan file
@@ -230,7 +230,7 @@ class DoctorTest(unittest.TestCase):
             self.assertIn("project `ABC` on `example.atlassian.net`", text)
             code, checks, out = self.doctor()
             self.assertEqual(code, 0, out)
-            self.assertEqual(checks["rendered"]["detail"], "1 file(s) current")
+            self.assertEqual(checks["rendered"]["detail"], "2 file(s) current")  # jira-filer.md and a copied rule
 
     def test_rendered_file_missing_or_out_of_date(self):
         agent = self.ws / ".claude" / "agents" / "jira-filer.md"
@@ -301,6 +301,31 @@ class DoctorTest(unittest.TestCase):
              "site": "example.atlassian.net"},
             {"check": "slack", "server": "slack", "channel": "C00000000"},
         ])
+
+
+
+class SkillPointsTest(unittest.TestCase):
+    """The doctor reads a skill's Extension Points table from its SKILL.md, or from references/extension-points.md."""
+
+    def test_table_in_skill_md_or_in_the_reference(self):
+        sys.path.insert(0, str(TESTS.parent / "lib"))
+        import extensions
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
+        table = "## Extension Points\n\n| Id | Runs | Default | Verbs |\n|---|---|---|---|\n| `{}` | a | b | add |\n"
+        self.assertIsNone(extensions.skill_points(tmp))  # no SKILL.md: not installed
+        (tmp / "SKILL.md").write_text("# Skill\n\n" + table.format("in-skill"))
+        self.assertEqual([p.id for p in extensions.skill_points(tmp)[0]], ["in-skill"])
+        (tmp / "SKILL.md").write_text("# Skill\n\n## Extension Points\n\nIn references/extension-points.md.\n")
+        (tmp / "references").mkdir()
+        (tmp / "references" / "extension-points.md").write_text("# Hooks\n\n" + table.format("in-reference"))
+        self.assertEqual(extensions.skill_points(tmp), (extensions.points(table.format("in-reference"))[0], []))
+        # work-task keeps its table in the reference, and the doctor finds it there.
+        work_task = REPO / "workspace" / ".claude" / "skills" / "work-task"
+        self.assertTrue((work_task / extensions.POINTS_FILE).is_file())
+        points, problems = extensions.skill_points(work_task)
+        self.assertEqual(problems, [])
+        self.assertIn("review-checks", [p.id for p in points])
 
 
 if __name__ == "__main__":

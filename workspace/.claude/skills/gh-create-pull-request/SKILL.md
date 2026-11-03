@@ -1,6 +1,6 @@
 ---
 name: gh-create-pull-request
-description: Open GitHub PRs for one or more pushed repos or task worktrees from their commits, using each repo's PR template, then announce the batch in the configured channel. Rebases onto the latest default branch first. Use after git-commit, when Allen says to open a PR.
+description: Open GitHub PRs for one or more pushed repos or task worktrees from their commits, using each repo's PR template, then announce the batch in the configured channel. Rebases onto the latest default branch first. Use after git-commit, when the user says to open a PR.
 allowed-tools: Bash(*), Read, Write, Grep, Glob, ToolSearch, PushNotification
 ---
 
@@ -50,13 +50,10 @@ branch isn't pushed, a PR is already open (its URL is reported), or the announce
 
 ## Step 2: The announcement, and wait
 
-**Called by `work-task`:** it publishes through `publish.py run`, with the announcement Allen approved at its publish
-review stop, so nothing here waits again.
-
 When the config has `pr.announce`, draft one sentence for the whole batch per `git-draft-commit-message`'s
-"The Announcement", show it with the PR titles from the precheck, and stop. Revise until Allen approves. **Approving
+"The Announcement", show it with the PR titles from the precheck, and stop. Revise until the user approves. **Approving
 the sentence authorizes both the PRs and the post**; no second confirmation. Write it to a file in the session
-scratchpad. With no `pr.announce`, show the PR titles and wait for Allen's go-ahead instead.
+scratchpad. With no `pr.announce`, show the PR titles and wait for the user's go-ahead instead.
 
 ## Step 3: Open
 
@@ -76,15 +73,16 @@ Run no build and no tests; the PR's CI builds the merged result.
 
 ## Step 4: Post the announcement
 
-When the output has `announce`, post it with the Slack send-message tool of the `announce.mcp_server` server
-(`mcp__<server>__slack_send_message`; load it with `ToolSearch` if it is deferred), verbatim: `text` to
-`announce.channel`. For a batch, reply in its thread (`thread_ts` = the parent's `ts`, no broadcast) with
-`thread_text`. If the channel id errors, search for it by name with the server's channel search and tell Allen.
+Before the first post in a session, run the Slack check in `.claude/toolbox/references/identity-check.md`. When the
+output has `announce`, post it with the Slack send-message tool of the `announce.mcp_server` server
+(`mcp__<server>__slack_send_message`; load it, and `slack_read_channel` for the check, with `ToolSearch` if deferred),
+verbatim: `text` to `announce.channel`. For a batch, reply in its thread (`thread_ts` = the parent's `ts`, no broadcast)
+with `thread_text`. If the channel id errors, search for it by name with the server's channel search and tell the user.
 
-If the post fails on auth, ask Allen to refresh the Slack MCP auth and retry once. Otherwise, or if it still fails,
-print the message text, the thread text and the channel so he can post it himself.
+If the post fails on auth, ask the user to refresh the Slack MCP auth and retry once. Otherwise, or if it still fails,
+print the message text, the thread text and the channel so they can post it themselves.
 
 ## Report
 
 The PR URLs, the commits per repo, the post's link, and each repo's rebase when it brought anything in. If the run
-halted, report only what failed and what Allen needs to do.
+halted, report only what failed and what the user needs to do.

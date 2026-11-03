@@ -1,6 +1,6 @@
 ---
 name: jira-find-current-sprint
-description: Resolve the current sprint, the next sprint, or a sprint by name to its Jira name and id from live data, never by date math. Use when Allen says "this sprint", "next sprint" or names one, and when another skill needs a sprint id. Read-only in Jira.
+description: Resolve the current sprint, the next sprint, or a sprint by name to its Jira name and id from live data, never by date math. Use when the user says "this sprint", "next sprint" or names one, and when another skill needs a sprint id. Read-only in Jira.
 ---
 
 # Find Current Sprint
@@ -53,7 +53,7 @@ project = <project> AND sprint in openSprints() ORDER BY created DESC
 
 - **Exactly one, and now is before its `endDate`:** that's the answer.
 - **Exactly one, but now is past its `endDate`:** it's planning day: the sprint has ended but nobody has closed it, and
-  Allen usually means the one being planned. Resolve **next** too and return both, flagged as ambiguous.
+  the user usually means the one being planned. Resolve **next** too and return both, flagged as ambiguous.
 - **None:** the gap between one sprint closing and the next starting. Resolve **next** and return it, flagged.
 - **More than one:** stop and list them, with their boards. Don't pick one.
 
@@ -98,7 +98,7 @@ If Jira rejects a cached id (a sprint closed early, say), run again with `refres
 
 ## Output
 
-One line per sprint, for Allen and the calling skill alike:
+One line per sprint, for the user and the calling skill alike:
 
 ```
 Current sprint: <name> (id 123, 2026-10-05 → 2026-10-19, active)
@@ -113,4 +113,4 @@ few words why it's ambiguous (past its end date, or no active sprint).
   filed two weeks after it was written would land in the wrong sprint.
 - **Jira gets the id,** in the sprint field as a bare integer: not the name, not an array. If a create call rejects
   it, create the issue without it and set it afterwards with `editJiraIssue`.
-- **A flagged result needs Allen's pick** before anything is written, in the vault or in Jira.
+- **A flagged result needs the user's pick** before anything is written, in the vault or in Jira.

@@ -2,6 +2,7 @@
 name: git-delete-merged-branches
 description: Delete local branches carrying the user's handle across the workspace repos whose PRs have merged, after showing the list. Use for branch cleanup after gh-merge-pull-request.
 allowed-tools: Bash(*), Read, Grep, Glob
+disable-model-invocation: true
 ---
 
 # Local Branch Cleanup
@@ -41,7 +42,7 @@ would be lost. Without `pr.required` there is no PR, so a branch is eligible whe
 |-----------------------|-----------------------------------------------------------------|
 | No PR                 | Never opened a PR: possibly unfinished work                     |
 | PR open               | Still in review                                                 |
-| PR closed, not merged | Abandoned or superseded: Allen decides                          |
+| PR closed, not merged | Abandoned or superseded: the user decides                       |
 | Local tip ahead of PR | Local commits beyond what merged (ahead of or diverged from it) |
 | Checked out           | The current branch, or checked out in a worktree                |
 | gh error              | Couldn't verify: never delete on an unverified answer           |
@@ -56,9 +57,6 @@ that's `behind` its PR head, with the count.
 
 Then **stop and wait for approval.** One approval covers the batch. A deleted local branch is recoverable only through
 the reflog, so this gate matters.
-
-**Called by `publish.py cleanup`:** it deletes only the task's own branch after its PR merged on Allen's instruction.
-Nothing here waits.
 
 ## Step 2: Delete
 

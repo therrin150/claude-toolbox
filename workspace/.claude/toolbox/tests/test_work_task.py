@@ -37,7 +37,7 @@ import doctor  # noqa: E402
 import extensions  # noqa: E402
 
 CLOUD = "00000000-test-4000-8000-000000000001"
-# work-task's hooks (SKILL.md "Extension Points"), in order, with the verbs each allows.
+# work-task's hooks (references/extension-points.md), in order, with the verbs each allows.
 HOOKS = {
     "ground-rules": "add", "stop-conditions": "add", "dispatch": "add", "before-first-cycle": "add",
     "plan-the-cycles": "add, replace", "after-implementing": "add", "format": "add, skip", "unit-tests": "add, skip",
@@ -422,7 +422,9 @@ class SkillTextTest(unittest.TestCase):
         self.texts = {p.name: p.read_text() for p in [SKILL / "SKILL.md", *sorted((SKILL / "references").glob("*.md"))]}
 
     def test_hooks_are_declared_and_each_is_named_where_it_runs(self):
-        points, problems = extensions.points(self.skill)
+        self.assertIn("## Extension Points", self.skill)  # the paragraph's "below", pointing at the reference
+        self.assertIn("references/extension-points.md", self.skill)
+        points, problems = extensions.skill_points(SKILL)
         self.assertEqual(problems, [])
         self.assertEqual({p.id: ", ".join(p.verbs) for p in points}, HOOKS)
         self.assertEqual([p.id for p in points], list(HOOKS))
@@ -449,8 +451,17 @@ class SkillTextTest(unittest.TestCase):
                 self.assertTrue((TOOLBOX / "references" / ref).is_file(), f"{name} names {ref}")
             for ref in re.findall(r"`([a-z-]+\.md)`[^`]*?\b(?:read|Read|follow)", text):
                 self.assertTrue((SKILL / "references" / ref).is_file(), f"{name} says to read {ref}")
+        # Every reference is reachable from SKILL.md, directly or through the references it names.
+        files = {p.name for p in (SKILL / "references").glob("*.md")}
         named = set(re.findall(r"(?<!toolbox/)references/([a-z-]+\.md)", self.skill))
-        self.assertEqual(named, {p.name for p in (SKILL / "references").glob("*.md")})
+        self.assertLessEqual(named, files)
+        reached, todo = set(), list(named)
+        while todo:
+            name = todo.pop()
+            if name not in reached:
+                reached.add(name)
+                todo += [ref for ref in re.findall(r"`([a-z-]+\.md)`", self.texts[name]) if ref in files]
+        self.assertEqual(reached, files)
 
     def test_every_script_command_exists(self):
         calls = set()
@@ -503,7 +514,7 @@ class ExtensionPointsTest(unittest.TestCase):
         for skill_md in sorted(SKILLS.glob("*/SKILL.md")):
             name = skill_md.parent.name
             text = skill_md.read_text()
-            points, problems = extensions.points(text)
+            points, problems = extensions.skill_points(skill_md.parent)
             has_paragraph = "**Extensions.**" in text
             with self.subTest(name):
                 self.assertEqual(problems, [])

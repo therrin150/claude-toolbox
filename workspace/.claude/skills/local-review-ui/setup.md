@@ -64,8 +64,9 @@ you can't. Ask everything you need in one message.
 5. **Verify.** `python3 scripts/install.py verify` starts the server and prints its URL. Open it in the browser: the
    index page lists reviews (none yet).
 6. **Tell the user** in a few lines: setup is done; in a session, `/local-review-ui <repos>` opens a review; they
-   comment by clicking a line number (shift-click for a range); "Finish review" sends the comments back to the
-   session, which answers them and then waits. Finishing never counts as approval to commit or publish.
+   comment by clicking a line number (shift-click for a range); "Finish review", then "Finish round", sends the
+   comments back to the session, which answers them and then waits. Finishing never counts as approval to commit or
+   publish.
 
 The skill itself is already installed in the workspace by the toolbox installer (feature `review-ui`); a new session
 is needed to see it if it was installed after this one started. If you came here from
