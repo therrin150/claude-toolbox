@@ -37,8 +37,9 @@ reply   adds the agent's reply to a comment's thread. Only the reviewer resolves
         never closes one: the reviewer reads it first.
 note    opens a thread of the agent's own at a line (--side new is the working copy, old is the base), to ask the
         reviewer something. It belongs to no round and `read` lists it only once the reviewer has replied.
-forget  drops one review by id. prune drops every review whose repos are all gone (path missing or not a git work
-        tree, or the registered branch deleted), comments and leftover lock files included; --dry-run only reports.
+forget  drops one review by id (--delete-comments also removes its comments and round snapshots). prune drops every
+        review whose repos are all gone (path missing or not a git work tree, or the registered branch deleted),
+        comments, snapshots and leftover lock files included; --dry-run only reports.
 
 Exit codes: 0 success, 1 failure (message on stderr), 2 bad arguments.
 """
@@ -51,6 +52,7 @@ import datetime as dt
 import json
 import os
 import re
+import shutil
 import signal
 import sys
 import time
@@ -515,6 +517,10 @@ def cmd_forget(args) -> int:
             if path.is_file():
                 path.unlink()
                 removed.append(str(path))
+        snapshots = common.snapshots_dir(registration)
+        if snapshots.is_dir():
+            shutil.rmtree(snapshots)
+            removed.append(str(snapshots))
     print(json.dumps({"forgot": args.id, "deleted": removed}))
     return 0
 
@@ -568,6 +574,7 @@ def prune_paths(registration: dict) -> dict:
             "data": [store / name for name in common.STORE_FILES],
             "locks": [store / f"{name}.lock" for name in common.STORE_FILES],
             "registryLock": common.registration_path(review_id).with_name(f"{review_id}.json.lock"),
+            "snapshots": common.snapshots_dir(registration),
             "store": store}
 
 
@@ -610,6 +617,9 @@ def prune_one(registration: dict) -> tuple[bool, str, list[str]]:
     # finds it replaced and retries (common.locked).
     for path in paths["locks"] + [paths["registryLock"]]:
         remove(path, best_effort=True)
+    if paths["snapshots"].is_dir():
+        shutil.rmtree(paths["snapshots"], ignore_errors=True)
+        removed.append(str(paths["snapshots"]))
     try:
         paths["store"].rmdir()  # only when empty: a custom --store may hold other things
         removed.append(str(paths["store"]))
@@ -627,7 +637,7 @@ def cmd_prune(args) -> int:
             kept.append({"id": review_id, "reason": why})
         elif args.dry_run:
             paths = prune_paths(registration)
-            files = [paths["registration"], *paths["data"], *paths["locks"], paths["registryLock"]]
+            files = [paths["registration"], *paths["data"], *paths["locks"], paths["registryLock"], paths["snapshots"]]
             would = [str(p) for p in files if p.exists()]
             store = paths["store"]
             if store.is_dir() and all(child in files for child in store.iterdir()):

@@ -154,13 +154,17 @@ step. Those happen only when the user asks for them in the conversation.
 | `review.py status <id>` | The review's repos, rounds, comment counts, listener and server state |
 | `review.py read <id> --all` | Every comment, resolved ones too (`--peek` leaves the round unread, `--json` for JSON) |
 | `review.py list` | Every registered review |
-| `review.py forget <id> [--delete-comments]` | Drop a review once its change is published (`--delete-comments` removes only the tool's own files from its store; its `.lock` files and folder stay) |
-| `review.py prune [--dry-run]` | After a merge: forget, comments included, every review whose repos are all gone (the path is missing or not a git work tree, or the branch `open` recorded for it was deleted), and remove its `.lock` files and empty store folder. Skips a review a session is listening on; a review registered without branches is judged on paths alone. Prints `pruned` and `kept`, each with a reason; `--dry-run` changes nothing |
+| `review.py forget <id> [--delete-comments]` | Drop a review once its change is published (`--delete-comments` removes only the tool's own files and round snapshots from its store; its `.lock` files and folder stay) |
+| `review.py prune [--dry-run]` | After a merge: forget, comments and snapshots included, every review whose repos are all gone (the path is missing or not a git work tree, or the branch `open` recorded for it was deleted), and remove its `.lock` files and empty store folder. Skips a review a session is listening on; a review registered without branches is judged on paths alone. Prints `pruned` and `kept`, each with a reason; `--dry-run` changes nothing |
 | `review.py stop` | Stop the server (the next `open` starts it again) |
 
 ## Notes
 
 - The server never writes to a repo: it reads diffs with git's optional locks off and reads untracked files from disk.
+- "Finish round" snapshots each repo's working tree (untracked files included) in a scratch index, with the git
+  objects kept in the review's store, not the repo. The page's "Changes since round N" picker then diffs that snapshot
+  against the working tree now, so the reviewer sees only what changed after that round. When master was merged or
+  rebased into a repo since then, its view falls back to all changes and says so.
 - Comments live outside every repo, under `~/.local-review/reviews/<work id>/` by default (`open --store DIR` to
   change), so they're never committed and survive a new session.
 - A session that resumes later picks up a finished round: `wait` exits at once with `submitted` when a finished round

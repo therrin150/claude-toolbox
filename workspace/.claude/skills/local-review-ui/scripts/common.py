@@ -5,7 +5,8 @@ State lives under LOCAL_REVIEW_HOME (default ~/.local-review):
   config.json                 port, workspaceRoot, defaultBase, editorCommand, editorUrl (install.py configure)
   server.json, server.log     the running server's pid, port and version, and its output
   registry/<id>.json          one review: its repos (path, base, branch), resume hint and store directory (review.py open)
-  reviews/<id>/               the default store: comments.json, viewed.json, listener.json and their .lock files
+  reviews/<id>/               the default store: comments.json, viewed.json, listener.json, their .lock files, and
+                              snapshots/<repo>/, the git objects of each finished round's working tree
 """
 
 from __future__ import annotations
@@ -263,6 +264,11 @@ def empty_comments() -> dict:
 
 
 STORE_FILES = ("comments.json", "viewed.json", "listener.json")
+
+
+def snapshots_dir(registration: dict) -> Path:
+    """Where the snapshots of each finished round keep their git objects, one object directory per repo."""
+    return store_dir(registration) / "snapshots"
 
 
 def comments_path(registration: dict) -> Path:

@@ -1,8 +1,9 @@
 """Read-only git diff helpers: a repo's whole change against its branch point, committed, staged, unstaged and
-untracked.
+untracked, or the change between two snapshots of its working tree.
 
 Never writes to a repo. GIT_OPTIONAL_LOCKS=0 stops `git status` from refreshing and rewriting the index, and
-untracked files are read from disk rather than marked with `git add -N`.
+untracked files are read from disk rather than marked with `git add -N`. A snapshot is built in a scratch index and
+its objects are written to an object directory outside the repo (objects_env).
 """
 
 from __future__ import annotations
@@ -10,7 +11,9 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 FULL_CONTEXT = 1_000_000
@@ -27,12 +30,13 @@ class GitError(RuntimeError):
     pass
 
 
-def git(repo: str, *args: str, check: bool = True) -> str:
+def git(repo: str, *args: str, check: bool = True, env: dict | None = None, input: bytes | None = None) -> str:
+    """`env` adds to the environment, for objects_env and a scratch index."""
     result = subprocess.run(
         # diff.suppressBlankEmpty would print blank context lines without their leading space, which parse_patch
         # can't tell from the patch's trailing newline, and every later line number would shift.
         ["git", "-c", "core.quotepath=off", "-c", "diff.suppressBlankEmpty=false", "-C", repo, *args],
-        capture_output=True, env=_ENV,
+        capture_output=True, env=dict(_ENV, **env) if env else _ENV, input=input,
     )
     if check and result.returncode != 0:
         raise GitError(result.stderr.decode("utf-8", "replace").strip() or f"git {args[0]} failed")
@@ -121,6 +125,35 @@ def file_at(repo: str, rev: str, path: str) -> str:
     return git(repo, "show", f"{rev}:{path}")
 
 
+def objects_env(repo: str, objects: Path) -> dict:
+    """Environment that reads the repo's objects and writes new ones to `objects`, a folder outside the repo, so a
+    snapshot's blobs and trees never enter the repo's object store and no `git gc` there can drop them."""
+    own = git(repo, "rev-parse", "--path-format=absolute", "--git-path", "objects").strip()
+    return {"GIT_OBJECT_DIRECTORY": str(objects), "GIT_ALTERNATE_OBJECT_DIRECTORIES": own}
+
+
+def snapshot(repo: str, objects: Path) -> str:
+    """The working tree as a tree id: the index plus unstaged edits and untracked files, as changed_files sees them
+    (untracked files over MAX_UNTRACKED_BYTES left out). Built in a scratch index, with its objects in `objects`; the
+    repo's index, refs and object store are untouched."""
+    objects.mkdir(parents=True, exist_ok=True)
+    env = objects_env(repo, objects)
+    with tempfile.TemporaryDirectory() as tmp:
+        index = Path(tmp) / "index"
+        # A copy keeps the real index's stat data, so `add` hashes only the files that changed.
+        real = Path(git(repo, "rev-parse", "--path-format=absolute", "--git-path", "index").strip())
+        if real.is_file():
+            shutil.copyfile(real, index)
+        env["GIT_INDEX_FILE"] = str(index)
+        # A split index would write its shared part into the repo's git dir.
+        git(repo, "-c", "core.splitIndex=false", "add", "--update", env=env)
+        untracked = [p for p in _untracked(repo) if _small(repo, p)]
+        if untracked:
+            git(repo, "-c", "core.splitIndex=false", "add", "--pathspec-from-file=-", "--pathspec-file-nul",
+                env=env, input="\0".join(untracked).encode())
+        return git(repo, "write-tree", env=env).strip()
+
+
 def fingerprint(repo: str) -> str:
     """Changes whenever HEAD, the index or any changed file's content does, so the page knows to reload."""
     digest = hashlib.sha256(git(repo, "rev-parse", "HEAD", check=False).encode())
@@ -145,6 +178,13 @@ def _untracked(repo: str) -> list[str]:
     return [p for p in git(repo, "ls-files", "--others", "--exclude-standard", "-z").split("\0") if p]
 
 
+def _small(repo: str, path: str) -> bool:
+    try:
+        return (Path(repo) / path).lstat().st_size <= MAX_UNTRACKED_BYTES
+    except OSError:
+        return False
+
+
 def _read_untracked(repo: str, path: str) -> tuple[bytes | None, str | None]:
     full = Path(repo) / path
     try:
@@ -159,10 +199,12 @@ def _read_untracked(repo: str, path: str) -> tuple[bytes | None, str | None]:
     return data, None
 
 
-def changed_files(repo: str, base: str) -> list[dict]:
-    """Every file that differs between <base> and the working tree, plus untracked files, with +/- counts."""
+def changed_files(repo: str, base: str, target: str | None = None, env: dict | None = None) -> list[dict]:
+    """Every file that differs between <base> and the working tree, plus untracked files, with +/- counts. With
+    `target` (a snapshot), the files that differ between the two trees instead; `env` is the snapshots' objects_env."""
+    revs = [base] if target is None else [base, target]
     files: dict[str, dict] = {}
-    parts = git(repo, "diff", "--no-color", "--no-ext-diff", "-M", "--name-status", "-z", base).split("\0")
+    parts = git(repo, "diff", "--no-color", "--no-ext-diff", "-M", "--name-status", "-z", *revs, env=env).split("\0")
     i = 0
     while i < len(parts) and parts[i]:
         code = parts[i]
@@ -175,7 +217,7 @@ def changed_files(repo: str, base: str) -> list[dict]:
         files[new] = {"path": new, "oldPath": old, "status": code[0], "additions": 0, "deletions": 0,
                       "binary": False, "untracked": False}
 
-    parts = git(repo, "diff", "--no-color", "--no-ext-diff", "-M", "--numstat", "-z", base).split("\0")
+    parts = git(repo, "diff", "--no-color", "--no-ext-diff", "-M", "--numstat", "-z", *revs, env=env).split("\0")
     i = 0
     while i < len(parts) and parts[i]:
         added, deleted, path = parts[i].split("\t", 2)
@@ -192,7 +234,7 @@ def changed_files(repo: str, base: str) -> list[dict]:
         else:
             entry["additions"], entry["deletions"] = int(added), int(deleted)
 
-    for path in _untracked(repo):
+    for path in _untracked(repo) if target is None else []:
         data, problem = _read_untracked(repo, path)
         lines = 0 if data is None else len(data.decode("utf-8", "replace").splitlines())
         files[path] = {"path": path, "oldPath": path, "status": "A", "additions": lines, "deletions": 0,
@@ -242,7 +284,9 @@ def parse_patch(text: str) -> list[dict]:
     return hunks
 
 
-def file_diff(repo: str, base: str, entry: dict, context: int = 3) -> dict:
+def file_diff(repo: str, base: str, entry: dict, context: int = 3, target: str | None = None,
+              env: dict | None = None) -> dict:
+    """One file's hunks, against the working tree or, with `target`, between two trees as in changed_files."""
     result = {"path": entry["path"], "oldPath": entry["oldPath"], "status": entry["status"],
               "binary": entry["binary"], "hunks": [], "truncated": False}
     if entry["binary"]:
@@ -268,7 +312,7 @@ def file_diff(repo: str, base: str, entry: dict, context: int = 3) -> dict:
 
     paths = [entry["oldPath"], entry["path"]] if entry["oldPath"] != entry["path"] else [entry["path"]]
     text = git(repo, "diff", "--no-color", "--no-ext-diff", "--no-textconv", "-M", f"-U{context}",
-               "--src-prefix=a/", "--dst-prefix=b/", base, "--", *paths)
+               "--src-prefix=a/", "--dst-prefix=b/", base, *([target] if target else []), "--", *paths, env=env)
     if len(text) > MAX_DIFF_BYTES:
         result["truncated"] = True
         return result

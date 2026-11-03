@@ -281,29 +281,63 @@ class Handler(BaseHTTPRequestHandler):
             self.server.diff_cache[key] = value
         return value
 
+    @staticmethod
+    def _objects(registration: dict, repo: dict) -> Path:
+        return common.inside(common.snapshots_dir(registration), repo["name"])
+
+    def _sides(self, registration: dict, repo: dict, query: dict,
+               fp: str) -> tuple[str, str | None, dict | None, dict | None]:
+        """What a repo's files and diffs compare, as (old, new, git env, since). All changes is the merge base against
+        the working tree. `since=N` is round N's snapshot against a snapshot of the working tree now; when the round
+        has no snapshot of this repo, or the branch's base moved since (master merged or rebased in, so the
+        difference would carry its changes too), it's all changes again and `since` says why."""
+        _, base = repo_base(registration, repo)
+        if not query.get("since"):
+            return base, None, None, None
+        n = int(query["since"])
+        entry = next((r for r in common.load_comments(registration)["rounds"] if r.get("n") == n), None)
+        snap = ((entry or {}).get("snapshots") or {}).get(repo["name"])
+        since = {"round": n, "fallback": None}
+        if snap is None:
+            since["fallback"] = f"Round {n} has no snapshot of {repo['name']}, so this shows all changes."
+        elif snap["mergeBase"] != base:
+            since["fallback"] = (f"{repo['name']}'s base branch was merged or rebased in since round {n}, so this "
+                                 "shows all changes.")
+        if since["fallback"]:
+            return base, None, None, since
+        objects = self._objects(registration, repo)
+        now = self._cached(("snapshot", repo["path"], fp), lambda: gitdiff.snapshot(repo["path"], objects))
+        return snap["tree"], now, gitdiff.objects_env(repo["path"], objects), since
+
+    def _changed(self, repo: dict, old: str, new: str | None, env: dict | None, fp: str) -> list[dict]:
+        return self._cached(("files", repo["path"], old, new, fp),
+                            lambda: gitdiff.changed_files(repo["path"], old, new, env))
+
     def _files(self, registration: dict, query: dict) -> dict:
         repo = find_repo(registration, query.get("repo", ""))
         base_ref, base = repo_base(registration, repo)
         fp = gitdiff.fingerprint(repo["path"])
-        files = self._cached(("files", repo["path"], base, fp), lambda: gitdiff.changed_files(repo["path"], base))
-        return {"repo": repo["name"], "baseRef": base_ref, "mergeBase": base, "fingerprint": fp, "files": files}
+        old, new, env, since = self._sides(registration, repo, query, fp)
+        return {"repo": repo["name"], "baseRef": base_ref, "mergeBase": base, "fingerprint": fp, "since": since,
+                "files": self._changed(repo, old, new, env, fp)}
 
     def _diff(self, registration: dict, query: dict) -> dict:
         repo = find_repo(registration, query.get("repo", ""))
         path = query.get("path", "")
         context = gitdiff.FULL_CONTEXT if query.get("context") == "full" else int(query.get("context") or 3)
-        _, base = repo_base(registration, repo)
         fp = gitdiff.fingerprint(repo["path"])
-        files = self._cached(("files", repo["path"], base, fp), lambda: gitdiff.changed_files(repo["path"], base))
-        entry = next((f for f in files if f["path"] == path), None)
+        old, new, env, since = self._sides(registration, repo, query, fp)
+        entry = next((f for f in self._changed(repo, old, new, env, fp) if f["path"] == path), None)
         if entry is None:
             raise ApiError(404, f"{path} has no changes in {repo['name']}")
-        diff = self._cached(("diff", repo["path"], base, fp, path, context),
-                            lambda: gitdiff.file_diff(repo["path"], base, entry, context))
+        diff = self._cached(("diff", repo["path"], old, new, fp, path, context),
+                            lambda: gitdiff.file_diff(repo["path"], old, entry, context, new, env))
+        # Old-side comments sit on the base's lines, which a since-round diff doesn't show; the page leaves them out.
         comments = [c for c in common.load_comments(registration)["comments"]
-                    if c.get("repo") == repo["name"] and c.get("path") == path]
-        return self._cached(("anchored", repo["path"], base, fp, path, context, anchors.digest(comments)),
-                            lambda: anchors.place(repo["path"], base, entry, diff, comments))
+                    if c.get("repo") == repo["name"] and c.get("path") == path and not (new and c["side"] == "old")]
+        placed = self._cached(("anchored", repo["path"], old, new, fp, path, context, anchors.digest(comments)),
+                              lambda: anchors.place(repo["path"], old, entry, diff, comments))
+        return dict(placed, since=since)
 
     # --- comments -----------------------------------------------------------------------------------------------------
 
@@ -439,16 +473,31 @@ class Handler(BaseHTTPRequestHandler):
             raise ApiError(500, f"couldn't start {command[0]}: {e}")
         return {"opened": True, "file": file}
 
+    def _snapshots(self, registration: dict) -> dict:
+        """Each repo's working tree as the reviewer leaves the round, for a later "since round N" diff. A repo that
+        can't be snapshotted gets none, and its since view shows all changes."""
+        snapshots = {}
+        for repo in registration["repos"]:
+            try:
+                _, base = repo_base(registration, repo)
+                tree = gitdiff.snapshot(repo["path"], self._objects(registration, repo))
+            except (gitdiff.GitError, OSError, ValueError) as e:
+                print(f"no snapshot of {repo['name']}: {e}", file=sys.stderr)
+                continue
+            snapshots[repo["name"]] = {"tree": tree, "mergeBase": base}
+        return snapshots
+
     def _submit(self, registration: dict, body: dict) -> dict:
         summary = body.get("summary")
         summary = summary.strip() if isinstance(summary, str) and summary.strip() else None
         done = bool(body.get("done"))
+        snapshots = self._snapshots(registration)
 
         def submit(data):
             n = common.current_round(data)
             entry = {"n": n, "submittedAt": common.now_iso(), "summary": summary, "done": done,
                      "comments": [c["id"] for c in data["comments"] if c.get("round") == n],
-                     "acknowledgedAt": None}
+                     "snapshots": snapshots, "acknowledgedAt": None}
             data["rounds"].append(entry)
             # Done reviewing closes the review: the agent answers what's left and stops waiting. Not approval.
             if done:

@@ -168,9 +168,16 @@
     editing: null,
     closedAt: null,
     pending: false,
+    since: null,
+    sinceInfo: null,
   };
 
   const reviewUrl = (suffix = "") => `/api/reviews/${enc(S.id)}${suffix}`;
+  // S.since is the round the reviewer compares against; S.sinceInfo is the server's answer for this repo, whose
+  // fallback says why it shows all changes instead.
+  const sinceParam = () => (S.since ? `&since=${S.since}` : "");
+  const sinceActive = () => Boolean(S.sinceInfo && !S.sinceInfo.fallback);
+  const snapshotRounds = () => S.data.rounds.filter((r) => r.snapshots && Object.keys(r.snapshots).length);
   const fileComments = (repo, path) => S.data.comments.filter((c) => c.repo === repo && c.path === path);
   const viewedKey = (path) => `${S.repo}:${path}`;
   const isViewed = (file) => {
@@ -232,13 +239,14 @@
 
   function parseHash() {
     const params = new URLSearchParams(location.hash.slice(1));
-    return { repo: params.get("repo"), file: params.get("file") };
+    return { repo: params.get("repo"), file: params.get("file"), since: Number(params.get("since")) || null };
   }
 
   function setHash() {
     const params = new URLSearchParams();
     if (S.repo) params.set("repo", S.repo);
     if (S.path) params.set("file", S.path);
+    if (S.since) params.set("since", String(S.since));
     history.replaceState(null, "", `#${params.toString()}`);
   }
 
@@ -256,6 +264,7 @@
     const wanted = parseHash();
     const repo = S.review.repos.find((r) => r.name === wanted.repo) || S.review.repos[0];
     S.repo = repo ? repo.name : null;
+    S.since = wanted.since;
     await loadComments();
     renderHeader();
     if (S.repo) await loadFiles(wanted.file);
@@ -282,7 +291,7 @@
     // Sequenced like openFile: a poll's reload that lands after a repo switch or a newer reload is dropped.
     const seq = ++S.filesSeq;
     const pathAtStart = S.path;
-    const result = await api("GET", reviewUrl(`/files?repo=${enc(S.repo)}`));
+    const result = await api("GET", reviewUrl(`/files?repo=${enc(S.repo)}${sinceParam()}`));
     if (seq !== S.filesSeq) return;
     // The user picked another file while this was in flight: keep their pick rather than jump back.
     if (S.path !== pathAtStart) preferPath = S.path;
@@ -290,6 +299,7 @@
     loadCollapsed();
     S.filesFp = result.fingerprint;
     S.baseRef = result.baseRef;
+    S.sinceInfo = result.since || null;
     const has = (p) => p && S.files.some((f) => f.path === p);
     const target = has(preferPath) ? preferPath : has(S.path) ? S.path : (S.files[0] || {}).path;
     renderSidebar();
@@ -320,7 +330,7 @@
     let diff = null;
     if (file) {
       try {
-        diff = await api("GET", reviewUrl(`/diff?repo=${enc(S.repo)}&path=${enc(path)}${S.full ? "&context=full" : ""}`));
+        diff = await api("GET", reviewUrl(`/diff?repo=${enc(S.repo)}&path=${enc(path)}${S.full ? "&context=full" : ""}${sinceParam()}`));
       } catch (e) {
         if (seq === S.openSeq) toast(e.message, "err");
       }
@@ -361,6 +371,18 @@
     const repo = repos.find((r) => r.name === S.repo);
     if (repo && repo.branch) {
       hdr.append(el("span", { class: "branch" }, el("code", {}, repo.branch), ` vs ${repo.baseRef} @ ${repo.mergeBase}`));
+    }
+    const rounds = snapshotRounds();
+    if (rounds.length || S.since) {
+      const when = (r) => new Date(r.submittedAt).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+      hdr.append(el("select", { title: "Show every change on the branch, or only what changed after you finished a round", onchange: async (e) => {
+        S.since = Number(e.target.value) || null;
+        S.composer = null;
+        await loadFiles(S.path);
+        setHash();
+      } },
+      el("option", { value: "", selected: !S.since }, "All changes"),
+      [...rounds].reverse().map((r) => el("option", { value: String(r.n), selected: r.n === S.since }, `Changes since round ${r.n} (${when(r)})`))));
     }
     hdr.append(el("span", { class: "spacer" }));
     hdr.append(el("span", { id: "listener" }));
@@ -462,7 +484,7 @@
     const others = document.getElementById("others");
     const paths = [...new Set(elsewhere.map((c) => c.path))];
     others.replaceChildren(paths.length ? el("div", { class: "side-section" },
-      el("h4", {}, "Comments on files no longer changed"),
+      el("h4", {}, sinceActive() ? `Comments on files unchanged since round ${S.since}` : "Comments on files no longer changed"),
       paths.map((p) => el("div", {}, el("a", { href: "#", onclick: (e) => {
         e.preventDefault();
         openFile(p);
@@ -612,16 +634,19 @@
     S.pending = false;
     const main = document.getElementById("main");
     const scroll = main.scrollTop;
+    const fallback = S.sinceInfo && S.sinceInfo.fallback ? el("div", { class: "notice warn" }, S.sinceInfo.fallback) : null;
     if (!S.path) {
-      setMain(el("div", { class: "empty" }, S.files.length ? "Pick a file." : "No changes against the base branch in this repo."));
+      const none = sinceActive() ? `No changes since round ${S.since} in this repo.` : "No changes against the base branch in this repo.";
+      setMain(fallback || "", el("div", { class: "empty" }, S.files.length ? "Pick a file." : none));
       return;
     }
     const file = S.files.find((f) => f.path === S.path);
-    const comments = fileComments(S.repo, S.path);
-    const nodes = [fileHead(file)];
+    // A since-round diff shows only new-side lines of the base; old-side comments belong to the all-changes view.
+    const comments = fileComments(S.repo, S.path).filter((c) => !sinceActive() || c.side === "new");
+    const nodes = [fallback || "", fileHead(file)];
 
     if (!file) {
-      nodes.push(el("div", { class: "notice" }, "This file has no changes against the base branch any more."));
+      nodes.push(el("div", { class: "notice" }, sinceActive() ? `No changes to this file since round ${S.since}.` : "This file has no changes against the base branch any more."));
       nodes.push(outdatedBox(comments, "Comments on this file"));
       setMain(...nodes);
       return;
@@ -907,6 +932,10 @@
     // In the unified view a context line's comment belongs to the new side, as on GitHub.
     if (S.mode === "unified" && !cell.closest("tr").classList.contains("del")) side = "new";
     const line = S.mode === "unified" && side === "new" ? Number(cell.closest("tr").children[1].dataset.line) : num;
+    if (side === "old" && sinceActive()) {
+      toast("Comment on removed lines from All changes: here the left side is the earlier round, not the base branch.");
+      return;
+    }
     let start = line;
     let end = line;
     const last = S.lastClick;
