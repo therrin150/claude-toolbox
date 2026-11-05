@@ -98,6 +98,9 @@ def describe(record: Record) -> dict:
 def get(store: records.Store) -> Tracker:
     """The workspace's tracker, from config `tracker.kind`."""
     kind = store.cfg.tracker
+    if kind is None:
+        raise TaskError(f"{store.cfg.path} has no tracker section, and the tasks feature needs one: add one "
+                        "(tracker.kind), or run /setup-workspace again")
     if kind == "vault":
         from trackers.vault import VaultTracker
         return VaultTracker(store)

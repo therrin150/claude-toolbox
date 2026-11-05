@@ -7,7 +7,8 @@ Each check returns {"check", "status", "detail"}, status `ok`, `fail` or `skip` 
   rule        .claude/rules/toolbox-config.md is what the config renders today
   rendered    every file the installer renders from a template (`.tmpl`) is there and what the config renders today
   gh          gh is signed in, as the GitHub account user.github names (user.handle when unset)
-  vault       the vault, tasks and discussions folders exist
+  vault       the vault, tasks and discussions folders exist (ok with no vault section: no picked feature needs one,
+              or the install check names the feature that does)
   extensions  every doc in .claude/extensions/ (but the README) parses, and each section's verb and hook id are
               ones the extended skill's Extension Points table allows; at most one doc replaces or skips a hook
 
@@ -134,6 +135,8 @@ def check_gh(cfg: config.Config) -> dict:
 
 
 def check_vault(cfg: config.Config) -> dict:
+    if cfg.vault is None:
+        return result("vault", "ok", "no vault in the config")
     folders = {"vault": cfg.vault_dir, "tasks": cfg.tasks_dir, "discussions": cfg.discussions_dir}
     absent = [f"{name} folder {path} doesn't exist" for name, path in folders.items() if not path.is_dir()]
     if absent:

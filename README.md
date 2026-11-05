@@ -1,9 +1,68 @@
 # Claude Toolbox
 
 Allen's personal Claude Code configuration: the global rules, skills and style guides that apply in every session,
-and the generic workflow tools installed into each workspace, configured per workspace by its untracked
-`.claude/toolbox.local.yml`. `install.py` is the one installer: it also installs every other toolbox repo this machine
-lists (such as the work toolbox), each whole. A project's own conventions stay in its own repo.
+and the generic workflow tools and stack conventions installed into each workspace, picked per workspace by the
+features in its untracked `.claude/toolbox.local.yml`. `install.py` is the one installer: it also installs every other
+toolbox repo this machine lists (such as the work toolbox), each whole. A project's own conventions stay in its own
+repo.
+
+## Three Layers
+
+Every session in a workspace (any folder sessions start in that the toolbox installs into) is fed by three layers:
+
+1. **Global** (`global/` → `~/.claude`): what holds in every session on the machine. The response style, the git,
+   shell and Obsidian rules, and the skills that run before a workspace has anything installed.
+2. **Feature-gated workspace items** (`workspace/` → each workspace's `.claude/`): what's shared but chosen per
+   project. Every skill, rule and agent here sits behind a feature in `workspace/features.yml`, and installs only into
+   a workspace whose config picks it: workflow skills (`git`, `tasks`, `pr`, `verify`, ...) and knowledge skills
+   (Allen's conventions for one technology, `java` to `bruno`). Only the runtime (`.claude/toolbox/`), `toolbox-doctor`
+   and the generated `toolbox-config.md` rule install everywhere.
+3. **The project's own files**: its `.claude/toolbox.local.yml` (features and values, untracked), and, checked in, its
+   prefixed rules (`.claude/rules/<prefix>-*.md`, only what it does differently) and extension docs
+   (`.claude/extensions/<prefix>-<skill>.md`, its own steps inside a shared skill).
+
+Overrides are additions in the project's own files, never edits to shared ones. In order of preference: a config
+value; an extension at a skill's extension point; a prefixed project rule or skill that states what differs; and last,
+dropping the feature and keeping a project-owned copy.
+
+### Where a New Thing Goes
+
+| You want… | Put it in | Loads |
+|---|---|---|
+| Something true in every session on the machine | `global/rules/` | session start, everywhere |
+| A procedure reused across projects | `workspace/.claude/skills/<name>/`, listed under a feature | Claude judges the description relevant, or `/name` |
+| A convention you'd follow in the next project on the same stack | the stack's knowledge skill in `workspace/.claude/skills/`, under its feature | Claude judges the description relevant |
+| Something only this project does differently (its modules, hosts, vendors, decisions) | the project's `.claude/rules/<prefix>-*.md`, checked in | session start, or a matching file read (`paths:`) |
+| A project's own step inside a shared skill | the project's `.claude/extensions/<prefix>-<skill>.md` | read by the skill at its extension point |
+| A project's values (build commands, branches, tracker) | `.claude/toolbox.local.yml` | read by the scripts and the generated `toolbox-config.md` |
+
+### Features
+
+| Feature | Installs | Needs |
+|---|---|---|
+| `git` | `git-commit`, `git-draft-commit-message`, `git-delete-merged-branches`, the `git-conventions.md` rule | |
+| `verify` | `verify-change`, the `change-verifier` agent | |
+| `tests` | `run-unit-tests` | `workspace.areas` |
+| `worktrees` | `git-worktrees` | |
+| `pr` | `gh-create-pull-request`, `gh-merge-pull-request` | |
+| `tasks` | `work-task`, `propose-tickets`, `create-tickets`, `create-defect`, the `ticket-docs.md` rule | `tracker`, `vault` |
+| `jira` | the `jira-filer` agent (a template) | `tracker.jira` |
+| `jira-sprints` | `jira-find-current-sprint` | `tracker.jira` |
+| `dispatcher` | `work-tasks`, `dispatch.py` | |
+| `services-lock` | `lock-`, `unlock-`, `start-`, `stop-local-services`, `run-integration-tests`, `services-runner` | `workspace.areas` |
+| `review-ui` | `local-review-ui` | |
+| `intellij` | `intellij-open-worktree` | |
+| `obsidian` | the vault's Templater templates (`.vault/`) | `vault`, `tracker` |
+| `java` | `java-conventions`, `java-testing-conventions` (knowledge) | |
+| `spring` | `spring-boot-conventions` (knowledge) | |
+| `postgres` | `database-conventions` (knowledge) | |
+| `angular` | `angular-conventions` (knowledge) | |
+| `playwright` | `playwright-conventions` (knowledge) | |
+| `bruno` | `bruno-api-collections` (knowledge) | |
+
+`/setup-workspace` suggests features from the folder (`.git`, `pom.xml`, `angular.json`, `bruno/`, `.obsidian/`, ...)
+and asks only for the config the picked ones need: the `vault` and `tracker` sections are optional, and a workspace
+with neither asks no vault or tracker questions.
 
 ## Layout
 
@@ -18,10 +77,6 @@ global/                          → ~/.claude
   rules/git.md                   Git writes need Allen's explicit instruction; no commit trailers; commit voice
   rules/obsidian.md              the Personal vault and Obsidian formatting; discussions are the discussion skill's
   rules/shell.md                 zsh pitfalls
-  rules/java-conventions.md      Allen's Java style: layered packages, no records, Optional, commons utilities, ITs
-  rules/sql-conventions.md       uppercase keywords, named constraints, UTC timestamps
-  rules/angular-conventions.md   singular folders, one folder per component
-  rules/api-collections.md       the Bruno collection lives in bruno/ at the project root
   personal/voice.md              Allen's writing voice (read where referenced)
   personal/ticket-style.md       Allen's Jira ticket style (read where referenced)
   personal/commit-style.md       Allen's commit message style (read where referenced)
@@ -30,11 +85,11 @@ global/                          → ~/.claude
   skills/ship-toolbox-change/    ship a change to any toolbox repo
   skills/discussion/             start or extend a design discussion in a vault
 workspace/                       → every listed workspace (per-workspace)
-  features.yml                   which paths need which config feature (not installed)
+  features.yml                   which paths need which feature, and which config each feature needs (not installed)
   .claude/toolbox/               scripts (bin/), their library (lib/), references and templates
   .vault/Templates/              Templater templates written into each workspace's vault (feature obsidian)
   .claude/rules/                 workspace rules, copied into each workspace (not linked)
-  .claude/skills/, agents/       generic workflow skills and agents
+  .claude/skills/, agents/       generic workflow skills and agents, and the stacks' knowledge skills
 install.py                       the installer; its two folders are fixed there
 toolbox.yml                      this repo's manifest (how changes ship), and the reference for other toolboxes' keys
 tests/                           the installer's tests: python3 -m unittest discover -s tests
@@ -89,7 +144,9 @@ On Windows, turn on Developer Mode first so Python can create symlinks without a
 - **The workspace folder** installs into every listed workspace. A workspace with no `.claude/toolbox.local.yml`, or an
   invalid one, is a problem line naming `/setup-workspace`, and nothing there is installed or removed. Otherwise its
   `features` gate what installs: `workspace/features.yml` maps each feature to paths, a path needs every feature that
-  lists it, and anything unlisted always installs. Dropping a feature removes its links on the next sync.
+  lists it, and anything unlisted always installs. Dropping a feature removes its links on the next sync. A feature
+  may also list the config it `needs` (`tasks` needs `tracker` and `vault`); a workspace that picks it without that
+  config is a problem, and nothing there is installed or removed until the config gains it or drops the feature.
 - **Generated rule.** Each workspace gets `.claude/rules/toolbox-config.md`, rendered from its config on every sync. It
   is a real file, recorded as generated, so stale cleanup and teardown remove it; a file there the installer didn't
   write is a conflict.

@@ -223,6 +223,8 @@ def default_runs(repo: str, sha: str, branch: str) -> list[dict]:
 
 def merged_commits(cfg: config.Config, wid: str) -> list[tuple[str, str]]:
     """(owner/name, sha) for each commit publish.py pushed straight to the default branch, from merged.json."""
+    if cfg.tasks_dir is None:  # no vault, so publish.py noted nothing
+        return []
     path = records.Store(cfg).publish_dir(wid) / "merged.json"
     try:
         merged = json.loads(path.read_text(encoding="utf-8"))

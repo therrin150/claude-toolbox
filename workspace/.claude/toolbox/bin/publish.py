@@ -15,7 +15,8 @@ CI, merge, and clean up. Everything after "approve", so a session spends no toke
   --repos a,b          only these repos of the task
   --dry-run            run the step's read-only checks and print them; change nothing
   --no-record          never write the task record (a change with no record)
-  --publish-dir D      default: <vault>/<tasks>/.publish/<work id>, where the approved texts live
+  --publish-dir D      default: <vault>/<tasks>/.publish/<work id>, where the approved texts live (with no vault in
+                       the config there is no default: pass the message, announcement and publish folder outright)
   --message-file F | --message-dir D   the commit message(s): one for every repo, or a folder of <repo>.txt
                        (default: <publish dir>/<repo>.txt, or commit.txt in a single-repo workspace)
   --announce-file F    the approved announcement (default: <publish dir>/announce.txt)
@@ -123,7 +124,7 @@ class Context:
         self.dry_run = bool(getattr(args, "dry_run", False))
         self.record = cfg.has("tasks") and not getattr(args, "no_record", False)
         self.publish_dir = (Path(args.publish_dir).expanduser() if getattr(args, "publish_dir", None)
-                            else cfg.tasks_dir / ".publish" / wid)
+                            else cfg.tasks_dir / ".publish" / wid if cfg.tasks_dir else None)
         self.checkouts = self._checkouts()
 
     def _checkouts(self) -> list[Checkout]:
@@ -146,13 +147,19 @@ class Context:
         a = self.args
         if getattr(a, "message_file", None):
             return Path(a.message_file).expanduser()
-        base = Path(a.message_dir).expanduser() if getattr(a, "message_dir", None) else self.publish_dir
+        base = Path(a.message_dir).expanduser() if getattr(a, "message_dir", None) else self.require_publish_dir()
         return base / (f"{co.name}.txt" if self.cfg.nested else "commit.txt")
 
     def announce_path(self) -> Path:
         a = self.args
         return Path(a.announce_file).expanduser() if getattr(a, "announce_file", None) else \
-            self.publish_dir / "announce.txt"
+            self.require_publish_dir() / "announce.txt"
+
+    def require_publish_dir(self) -> Path:
+        if self.publish_dir is None:
+            raise Failed(f"{self.cfg.path} has no vault, so there is no default publish folder; pass --message-file "
+                         "(or --message-dir), --announce-file or --publish-dir")
+        return self.publish_dir
 
     def base(self) -> str:
         return f"origin/{self.cfg.default_branch}"
@@ -194,7 +201,7 @@ def record_field(ctx: Context, name: str):
 
 def note_merge(ctx: Context, repo: str, sha: str) -> None:
     """Add a repo's commit on the default branch to the publish folder's merged.json, for watch_task.py pipeline."""
-    if not ctx.record or ctx.dry_run:
+    if not ctx.record or ctx.dry_run or ctx.publish_dir is None:
         return
     path = ctx.publish_dir / "merged.json"
     try:
@@ -388,6 +395,8 @@ def step_commit(ctx: Context) -> tuple[dict, int]:
 
 def vault_prefix(ctx: Context, co: Checkout) -> str | None:
     """The vault's folder relative to the repo, when the vault lives inside it (a single-repo workspace's `vault/`)."""
+    if ctx.cfg.vault_dir is None:
+        return None
     try:
         return str(ctx.cfg.vault_dir.resolve().relative_to(co.main.resolve()))
     except ValueError:

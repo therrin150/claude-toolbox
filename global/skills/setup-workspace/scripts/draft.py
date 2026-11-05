@@ -6,13 +6,16 @@ Usage:
   draft.py add-workspace <workspace> [--dry-run]
 
 render prints JSON: `yaml` (the config, each value commented with its origin: detected, default or asked), `valid`,
-`errors` (the schema's), `missing` (keys still without a value) and `unanswered` (keys detect.py said to ask that no
---set answered). --mcp gives a value the skill read through an MCP tool (origin detected); --set gives the user's answer
-(origin asked); --drop removes a key and everything under it (`--drop pr.announce` for no announcement). VALUE is read
-as YAML, so `true`, `[a, b]` and `{unit: make test}` work. Keys that don't apply to the tracker are left out:
-`tracker.jira.*` unless it is jira, `tracker.key_prefix` unless it is vault. --write writes
-`<workspace>/.claude/toolbox.local.yml` only when the config is valid with nothing missing or unanswered, and won't
-replace an existing one without --force.
+`errors` (the schema's), `missing` (keys still without a value), `unanswered` (keys detect.py said to ask that no
+--set answered) and `unmet` (each picked feature's needs, from features.yml, the config doesn't set yet). --mcp gives
+a value the skill read through an MCP tool (origin detected); --set gives the user's answer (origin asked); --drop
+removes a key and everything under it (`--drop pr.announce` for no announcement). VALUE is read as YAML, so `true`,
+`[a, b]` and `{unit: make test}` work. Keys the picked `features` don't use are left out, so
+they are neither asked nor written: `vault` and `tracker` unless a feature needs them (features.yml's `needs`; a vault
+tracker brings the vault too), `pr.announce` without `pr`, `shared_libraries` and `work` without `tasks`. So are keys
+that don't apply to the tracker: `tracker.jira.*` unless it is jira, `tracker.key_prefix` unless it is vault. --write
+writes `<workspace>/.claude/toolbox.local.yml` only when the config is valid with nothing missing, unanswered or
+unmet, and won't replace an existing one without --force.
 
 add-workspace adds the workspace to machine.yml's `workspaces:` (creating machine.yml from machine.example.yml when
 there is none), keeping the file's other text. Prints {"machine", "added", "already"}.
@@ -39,6 +42,11 @@ import config  # noqa: E402
 OK, INVALID, USAGE = 0, 1, 2
 MACHINE = REPO / "machine.yml"
 MACHINE_EXAMPLE = REPO / "machine.example.yml"
+FEATURES = REPO / "workspace" / "features.yml"
+# Sections written only when a picked feature needs them (features.yml's `needs`).
+NEEDED_SECTIONS = ("vault", "tracker")
+# Sections only one feature's skills read: written only when it is picked.
+FEATURE_SECTIONS = {"pr.announce": "pr", "shared_libraries": "tasks", "work": "tasks"}
 HEADER = """\
 # This workspace's toolbox config, written by /setup-workspace. Never tracked; credentials never go here.
 # Each value's comment says where it came from: detected (read from the workspace, git, gh or an MCP tool), default,
@@ -54,7 +62,30 @@ def parse_pair(text: str) -> tuple[str, object]:
     return key.strip(), yaml.safe_load(value) if value.strip() else None
 
 
-def applies(key: str, kind: str) -> bool:
+def feature_needs() -> dict[str, list[str]]:
+    try:
+        return config.read_features(yaml.safe_load(FEATURES.read_text(encoding="utf-8")))[1]
+    except OSError:
+        return {}
+
+
+def wanted_sections(features: list, kind: str | None, needs: dict) -> set[str]:
+    """The optional sections the picked features need: each need's top section, and a vault tracker's vault."""
+    wanted = {key.split(".", 1)[0] for feature in features for key in needs.get(feature, [])}
+    if "tracker" in wanted and kind == "vault":
+        wanted.add("vault")
+    return wanted
+
+
+def within(key: str, section: str) -> bool:
+    return key == section or key.startswith(section + ".")
+
+
+def applies(key: str, kind: str, features: list, wanted: set) -> bool:
+    if any(within(key, section) for section in NEEDED_SECTIONS if section not in wanted):
+        return False
+    if any(within(key, section) and feature not in features for section, feature in FEATURE_SECTIONS.items()):
+        return False
     if key.startswith("tracker.jira."):
         return kind == "jira"
     if key == "tracker.key_prefix":
@@ -62,7 +93,12 @@ def applies(key: str, kind: str) -> bool:
     return True
 
 
-def merge(detected: dict, mcp: list, answers: list, drops: list) -> dict:
+def picked(values: dict) -> list:
+    features = (values.get("features") or {}).get("value")
+    return [str(feature) for feature in features] if isinstance(features, list) else []
+
+
+def merge(detected: dict, mcp: list, answers: list, drops: list, needs: dict | None = None) -> dict:
     values = {key: dict(value) for key, value in detected.items()}
     for key, value in mcp:
         values[key] = {**values.get(key, {}), "value": value, "origin": "detected", "from": "MCP"}
@@ -72,7 +108,9 @@ def merge(detected: dict, mcp: list, answers: list, drops: list) -> dict:
         for key in [key for key in values if key == drop or key.startswith(drop + ".")]:
             del values[key]
     kind = (values.get("tracker.kind") or {}).get("value")
-    return {key: value for key, value in values.items() if applies(key, kind)}
+    features = picked(values)
+    wanted = wanted_sections(features, kind, feature_needs() if needs is None else needs)
+    return {key: value for key, value in values.items() if applies(key, kind, features, wanted)}
 
 
 def nest(values: dict) -> dict:
@@ -132,18 +170,25 @@ def render_yaml(values: dict) -> str:
 def render(args) -> int:
     report = json.loads(Path(args.detect).read_text(encoding="utf-8"))
     root = Path(report["workspace"])
-    values = merge(report["values"], args.mcp, args.set, args.drop)
+    needs = feature_needs()
+    values = merge(report["values"], args.mcp, args.set, args.drop, needs)
     text = render_yaml(values)
-    _, errors = config.validate(nest(values))
+    data, errors = config.validate(nest(values))
     missing = [key for key, item in values.items() if item.get("value") is None]
     unanswered = [key for key, item in values.items() if "ask" in item and not item.get("answered")]
+    # What a picked feature needs and nothing gives yet, such as tests' workspace.areas when no build file was found.
+    unmet = {} if errors else config.Config(root, data).unmet_needs(needs)
+    unmet = {feature: [key for key in keys if not any(within(gap, key) or within(key, gap) for gap in missing)]
+             for feature, keys in unmet.items()}
+    unmet = {feature: keys for feature, keys in unmet.items() if keys}
     result = {"workspace": str(root), "yaml": text, "valid": not errors, "errors": errors, "missing": missing,
-              "unanswered": unanswered, "written": None}
-    code = OK if not errors and not missing else INVALID
+              "unanswered": unanswered, "unmet": unmet, "written": None}
+    code = OK if not errors and not missing and not unmet else INVALID
     if args.write:
         target = root / config.CONFIG_PATH
-        if errors or missing or unanswered:
-            result["error"] = "not written: fix the errors and answer every missing and unanswered key first"
+        if errors or missing or unanswered or unmet:
+            result["error"] = ("not written: fix the errors, answer every missing and unanswered key, and give what "
+                               "the picked features need first")
             code = INVALID
         elif target.exists() and not args.force:
             result["error"] = f"not written: {target} exists; pass --force to replace it"

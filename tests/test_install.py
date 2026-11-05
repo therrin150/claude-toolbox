@@ -303,6 +303,62 @@ class PerWorkspace(InstallerTest):
         self.assertTrue(any("'telepathy' isn't in any features.yml" in line for line in warnings), warnings)
         self.assertTrue(any(".claude/skills/not-yet doesn't exist" in line for line in warnings), warnings)
 
+    def test_a_feature_with_unmet_needs_holds_the_workspace(self):
+        write(self.repo / "workspace" / "features.yml", yaml.safe_dump({
+            "services-lock": {"paths": [".claude/skills/lock-local-services"], "needs": ["workspace.areas"]},
+        }))
+        code, plan = self.run_install("--apply")
+        self.assertEqual(code, 1)
+        problems = self.section(plan, "Problems")
+        self.assertTrue(any(str(self.ws1) in line and "services-lock needs workspace.areas" in line
+                            and "nothing installed or removed there" in line for line in problems), problems)
+        self.assertFalse((self.ws1 / RULE).exists())
+        self.assertFalse((self.ws1 / ".claude" / "skills" / "always").exists())
+        self.assertTrue((self.ws2 / ".claude" / "skills" / "always").is_symlink())  # ws2 picks nothing that needs any
+
+        raw = yaml.safe_load(workspace_config("one", ["services-lock"]))
+        raw["workspace"]["areas"] = {"app": {"start": "docker compose up -d"}}
+        write(self.ws1 / CONFIG, yaml.safe_dump(raw))
+        code, plan = self.run_install("--apply")
+        self.assertEqual(code, 0, plan)
+        self.assertTrue((self.ws1 / ".claude" / "skills" / "lock-local-services").is_symlink())
+
+    def test_unmet_needs_keep_what_a_workspace_had(self):
+        self.run_install("--apply")
+        write(self.repo / "workspace" / "features.yml", yaml.safe_dump({
+            "services-lock": {"paths": [".claude/skills/lock-local-services"], "needs": ["tracker.jira"]},
+        }))
+        code, plan = self.run_install("--apply")
+        self.assertEqual(code, 1)
+        self.assertEqual(self.section(plan, "Remove stale links"), [])
+        self.assertTrue((self.ws1 / ".claude" / "skills" / "lock-local-services").is_symlink())
+
+    def test_a_need_that_isnt_a_config_key_warns(self):
+        write(self.repo / "workspace" / "features.yml", yaml.safe_dump({
+            "services-lock": {"paths": [".claude/skills/lock-local-services"], "needs": ["trackr"]},
+        }))
+        _, plan = self.run_install()
+        self.assertTrue(any("services-lock: needs trackr, which isn't a config key" in line
+                            for line in self.section(plan, "Warnings")))
+
+    def test_a_malformed_features_file_exits(self):
+        write(self.repo / "workspace" / "features.yml", yaml.safe_dump({"services-lock": {"path": []}}))
+        with self.assertRaises(SystemExit) as caught:
+            self.run_install()
+        self.assertIn("services-lock: unknown key path", str(caught.exception))
+
+    def test_a_workspace_without_vault_or_tracker_installs(self):
+        write(self.ws2 / CONFIG, yaml.safe_dump({
+            "version": 1, "features": [], "workspace": {"name": "two", "layout": "single"},
+            "user": {"handle": "tester", "name": "Tester"},
+        }))
+        code, plan = self.run_install("--apply")
+        self.assertEqual(code, 0, plan)
+        self.assertTrue((self.ws2 / ".claude" / "skills" / "always").is_symlink())
+        rule = (self.ws2 / RULE).read_text(encoding="utf-8")
+        self.assertNotIn("**Vault:**", rule)
+        self.assertNotIn("**Tracker:**", rule)
+
     def test_a_workspace_without_config_gets_nothing_and_keeps_what_it_had(self):
         self.run_install("--apply")
         (self.ws1 / CONFIG).unlink()

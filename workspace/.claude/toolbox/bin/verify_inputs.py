@@ -139,6 +139,9 @@ def requirement(cfg: config.Config, task: str) -> dict:
     record, work_id = Path(task).expanduser(), task
     if record.is_file():
         work_id = record.stem
+    elif cfg.tasks_dir is None:
+        raise Failed(f"no task record for {task}: {cfg.path} has no vault; pass the task in the verifier's prompt "
+                     "instead")
     else:
         key = task.split(".", 1)[0]
         found = (sorted(cfg.tasks_dir.glob(f"{key}/{task}-*.md")) + sorted(cfg.tasks_dir.glob(f"{task}-*.md"))
@@ -151,8 +154,8 @@ def requirement(cfg: config.Config, task: str) -> dict:
     source_doc = fields.get("source_doc")
     if isinstance(source_doc, str):
         plan = Path(source_doc).expanduser()
-        plan = plan if plan.is_absolute() else cfg.vault_dir / plan
-    elif isinstance(fields.get("source"), str):
+        plan = plan if plan.is_absolute() else cfg.vault_dir / plan if cfg.vault_dir else None
+    elif isinstance(fields.get("source"), str) and cfg.vault_dir:
         link = WIKILINK.search(fields["source"])
         if link:
             plan = cfg.vault_dir / f"{link.group(1).strip()}.md"

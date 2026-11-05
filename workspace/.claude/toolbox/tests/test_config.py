@@ -25,6 +25,7 @@ sys.path.insert(0, str(TOOLBOX / "lib"))
 
 import config  # noqa: E402
 import extensions  # noqa: E402
+import records  # noqa: E402
 
 
 class Workspace(unittest.TestCase):
@@ -156,8 +157,18 @@ class ValidateTest(Workspace):
     def test_missing_required_keys(self):
         raw = self.raw("single")
         del raw["user"]["handle"]
-        del raw["vault"]
+        raw["vault"] = {"tasks": "Tasks"}
         self.assertEqual(sorted(self.errors(raw)), ["user.handle: required", "vault.path: required"])
+        del raw["workspace"]
+        self.assertIn("workspace.name: required", self.errors(raw))
+
+    def test_vault_and_tracker_are_optional(self):
+        raw = {"version": 1, "workspace": {"name": "notes", "layout": "single"},
+               "user": {"handle": "jdoe", "name": "Jordan"}}
+        data, errors = config.validate(raw)
+        self.assertEqual(errors, [])
+        self.assertIsNone(data["vault"])
+        self.assertIsNone(data["tracker"])
 
     def test_tracker_needs(self):
         raw = self.raw("single")
@@ -168,6 +179,14 @@ class ValidateTest(Workspace):
         raw["tracker"] = {"kind": "jira", "jira": {"site": "example.atlassian.net"}}
         self.assertEqual(sorted(self.errors(raw)), [
             "tracker.jira.account: required", "tracker.jira.cloud_id: required", "tracker.jira.project: required"])
+
+    def test_a_vault_tracker_needs_a_vault(self):
+        raw = self.raw("single")
+        del raw["vault"]
+        self.assertEqual(self.errors(raw), ["vault: required when tracker.kind is vault (the task record is the "
+                                            "ticket, and it lives in the vault)"])
+        raw["tracker"] = {"kind": "none"}
+        self.assertEqual(self.errors(raw), [])
 
     def test_branch_placeholders(self):
         raw = self.raw("single")
@@ -230,7 +249,19 @@ class ValidateTest(Workspace):
         self.assertEqual(self.errors(raw), ["shared_libraries.update: required when shared_libraries.names lists any "
                                             "(how consumers pick up a release)"])
         raw["shared_libraries"]["update"] = {"command": "make bump", "skill": "bump-deps"}
-        self.assertEqual(self.errors(raw), ["shared_libraries.update: give command or skill, not both"])
+        self.assertEqual(self.errors(raw), ["shared_libraries.update: give exactly one of command, skill or path"])
+        raw["shared_libraries"]["update"] = {"skill": "bump-deps", "path": "~/team/skills/bump-deps/SKILL.md"}
+        self.assertEqual(self.errors(raw), ["shared_libraries.update: give exactly one of command, skill or path"])
+        raw["shared_libraries"]["update"] = {}
+        self.assertEqual(self.errors(raw), ["shared_libraries.update: give exactly one of command, skill or path"])
+        for bad in ("team/skills/bump-deps/SKILL.md", "~/team/skills/bump-deps/README.md"):
+            raw["shared_libraries"]["update"] = {"path": bad}
+            self.assertEqual(self.errors(raw), [
+                f"shared_libraries.update.path: must be a SKILL.md by absolute or ~ path, like "
+                f"~/team/skills/bump-deps/SKILL.md; got {bad!r}"])
+        for good in ("~/team/skills/bump-deps/SKILL.md", "/opt/team/bump-deps/SKILL.md"):
+            raw["shared_libraries"]["update"] = {"path": good}
+            self.assertEqual(self.errors(raw), [])
         raw["shared_libraries"] = {"names": ["common", "common"], "update": {"command": "bump {libraries} {version}"}}
         self.assertEqual(sorted(self.errors(raw)), [
             "shared_libraries.names: lists a name twice",
@@ -288,6 +319,25 @@ class AccessorTest(Workspace):
         with self.assertRaises(KeyError) as caught:
             loaded.get("pr.annouce.channel")
         self.assertEqual(caught.exception.args[0], "pr.annouce")
+
+    def test_without_vault_or_tracker(self):
+        root = self.write({"version": 1, "features": ["git", "tests"],
+                           "workspace": {"name": "notes", "layout": "single"},
+                           "user": {"handle": "jdoe", "name": "Jordan"}})
+        loaded = config.load(root)
+        for name in ("vault", "vault_dir", "tasks_dir", "discussions_dir", "tracker", "key_prefix", "jira"):
+            self.assertIsNone(getattr(loaded, name), name)
+        self.assertIsNone(loaded.get("tracker"))
+        with self.assertRaises(KeyError):
+            loaded.get("tracker.kind")
+        store = records.Store(loaded)
+        with self.assertRaises(records.TaskError) as caught:
+            store.tasks_dir
+        self.assertIn("has no vault section", str(caught.exception))
+        import trackers
+        with self.assertRaises(records.TaskError) as caught:
+            trackers.get(store)
+        self.assertIn("has no tracker section, and the tasks feature needs one", str(caught.exception))
 
     def test_nested(self):
         root = self.make("nested")
@@ -416,10 +466,75 @@ class RenderTest(Workspace):
         loaded = config.load(root / ".." / "other")
         self.assertEqual((loaded.shared_libraries, loaded.library_update), (["common"], {"skill": "bump-deps"}))
 
+    def test_no_vault_or_tracker_lines_without_them(self):
+        root = self.write({"version": 1, "features": ["git"], "workspace": {"name": "notes", "layout": "single"},
+                           "user": {"handle": "jdoe", "name": "Jordan"}})
+        rule = config.render_rule(config.load(root))
+        self.assertNotIn("**Vault:**", rule)
+        self.assertNotIn("**Tracker:**", rule)
+        self.assertNotIn("Jira", rule)
+        self.assertIn("- **Features:** `git`.", rule)
+        self.assertIn(f"`notes` at `{root}`, one repo", rule)
+
+    def test_update_path_line(self):
+        raw = self.raw("nested")
+        raw["shared_libraries"] = {"names": ["common"], "update": {"path": "~/team/skills/bump-deps/SKILL.md"}}
+        loaded = config.load(self.write(raw))
+        skill = f"{Path.home()}/team/skills/bump-deps/SKILL.md"
+        self.assertEqual(loaded.library_update, {"path": skill})
+        self.assertIn(f"consumers pick up a release with the skill at `{skill}` (read it and follow it) on each "
+                      "consumer checkout.", config.render_rule(loaded))
+
     def test_workspace_argument_moves_the_paths(self):
         loaded = config.load(self.make("single"))
         elsewhere = self.tmp / "elsewhere"
         self.assertIn(f"**Scripts:** `{elsewhere}/.claude/toolbox/bin`", config.render_rule(loaded, elsewhere))
+
+
+class FeaturesTest(Workspace):
+    def test_read_features_takes_both_forms(self):
+        paths, needs = config.read_features({
+            "pr": [".claude/skills/gh-create-pull-request/"],
+            "tasks": {"paths": [".claude/skills/work-task"], "needs": ["tracker", "vault"]},
+            "bare": {"needs": ["workspace.areas"]},
+        })
+        self.assertEqual(paths, {"pr": [".claude/skills/gh-create-pull-request"], "tasks": [".claude/skills/work-task"],
+                                 "bare": []})
+        self.assertEqual(needs, {"pr": [], "tasks": ["tracker", "vault"], "bare": ["workspace.areas"]})
+        self.assertEqual(config.read_features(None), ({}, {}))
+
+    def test_read_features_refuses_a_malformed_map(self):
+        for raw, message in (
+            ([".claude/skills/x"], "must map each feature"),
+            ({"x": ".claude/skills/x"}, "x: paths and needs must be lists"),
+            ({"x": {"paths": [], "need": ["vault"]}}, "x: unknown key need; use paths and needs"),
+            ({"x": {"paths": [], "needs": "vault"}}, "x: paths and needs must be lists"),
+            ({"x": {"needs": [3]}}, "x: each need must be a dotted config key"),
+        ):
+            with self.subTest(raw=raw), self.assertRaises(ValueError) as caught:
+                config.read_features(raw)
+            self.assertIn(message, str(caught.exception))
+
+    def test_schema_has(self):
+        for key in ("vault", "tracker.jira", "tracker.jira.board", "workspace.areas", "workspace.areas.api.unit"):
+            self.assertTrue(config.schema_has(key), key)
+        for key in ("vaults", "tracker.jira.boards", "workspace.areas.api.nothing"):
+            self.assertFalse(config.schema_has(key), key)
+
+    def test_unmet_needs(self):
+        needs = {"tasks": ["tracker", "vault"], "obsidian": ["vault", "tracker"], "jira": ["tracker.jira"],
+                 "tests": ["workspace.areas"], "git": []}
+        raw = {"version": 1, "features": ["git", "tests", "tasks", "jira"],
+               "workspace": {"name": "notes", "layout": "single"}, "user": {"handle": "jdoe", "name": "Jordan"}}
+        loaded = config.load(self.write(raw))
+        self.assertEqual(loaded.unmet_needs(needs), {"tests": ["workspace.areas"], "tasks": ["tracker", "vault"],
+                                                     "jira": ["tracker.jira"]})
+        raw["workspace"]["areas"] = {"*": {"unit": "make test"}}
+        raw["vault"] = {"path": "vault"}
+        raw["tracker"] = {"kind": "none"}
+        loaded = config.load(self.write(raw, "other"))
+        self.assertEqual(loaded.unmet_needs(needs), {"jira": ["tracker.jira"]})
+        self.assertEqual(config.load(self.make("nested", "fleet")).unmet_needs(needs), {})
 
 
 class ExampleTest(unittest.TestCase):

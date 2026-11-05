@@ -90,7 +90,7 @@ class DoctorTest(unittest.TestCase):
         self.assertEqual({name: check["status"] for name, check in checks.items()}, {
             "config": "ok", "install": "ok", "rule": "ok", "rendered": "ok", "gh": "ok", "vault": "ok",
             "extensions": "ok"})
-        self.assertEqual(checks["rendered"]["detail"], "1 file(s) current")  # git-conventions.md, a copied rule
+        self.assertEqual(checks["rendered"]["detail"], "none rendered")  # no features: no copied rules either
         lines = text.splitlines()
         self.assertTrue(all(line.startswith('{"check": ') for line in lines[1:8]))  # one line per check
         self.assertFalse((self.toolbox / "install-plan.txt").exists())  # --json writes no plan file
@@ -167,7 +167,7 @@ class DoctorTest(unittest.TestCase):
         self.assertEqual(checks["extensions"]["detail"], "2 doc(s), 1 disabled, 1 section(s), every hook allowed")
 
     def test_every_extension_failure(self):
-        self.config["features"] = ["tasks"]  # work-task installed; start-local-services (services-lock) isn't
+        self.config["features"] = ["tasks", "git"]  # work-task and git-commit installed; start-local-services isn't
         self.config["extensions"] = {"disabled": ["ghost.md", "disabled-broken"]}
         self.write_config()
         self.install()
@@ -230,7 +230,7 @@ class DoctorTest(unittest.TestCase):
             self.assertIn("project `ABC` on `example.atlassian.net`", text)
             code, checks, out = self.doctor()
             self.assertEqual(code, 0, out)
-            self.assertEqual(checks["rendered"]["detail"], "2 file(s) current")  # jira-filer.md and a copied rule
+            self.assertEqual(checks["rendered"]["detail"], "1 file(s) current")  # jira-filer.md
 
     def test_rendered_file_missing_or_out_of_date(self):
         agent = self.ws / ".claude" / "agents" / "jira-filer.md"
@@ -255,12 +255,27 @@ class DoctorTest(unittest.TestCase):
         self.assertEqual(checks["rendered"]["detail"],
                          [f"{agent} is no longer wanted (its feature is off); sync the toolbox"])
 
-    def test_rendered_file_whose_config_key_is_missing(self):
+    def test_a_feature_whose_needs_are_missing(self):
         self.config["features"] = ["jira"]
         self.write_config()
         _, checks, _ = self.doctor()
-        self.assertEqual(checks["rendered"]["status"], "fail")
-        self.assertIn("unknown config key 'tracker.jira.", checks["rendered"]["detail"][0])
+        self.assertEqual(checks["install"]["status"], "fail")
+        problems = checks["install"]["detail"]["pending"]["Problems"]
+        self.assertTrue(any("jira needs tracker.jira" in line for line in problems), problems)
+
+    def test_no_vault_or_tracker(self):
+        del self.config["vault"], self.config["tracker"]
+        self.config["features"] = ["git", "verify"]
+        self.write_config()
+        self.install()
+        code, checks, text = self.doctor()
+        self.assertEqual(code, 0, text)
+        self.assertEqual(checks["vault"], {"check": "vault", "status": "ok", "detail": "no vault in the config"})
+        self.config["features"] = ["git", "tasks"]
+        self.write_config()
+        _, checks, _ = self.doctor()
+        problems = checks["install"]["detail"]["pending"]["Problems"]
+        self.assertTrue(any("tasks needs tracker, vault" in line for line in problems), problems)
 
     def test_gh_signed_in_as_someone_else(self):
         _, checks, _ = self.doctor(GH_FAKE_LOGIN="someone")

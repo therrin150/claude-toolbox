@@ -489,7 +489,7 @@ class SkillTextTest(unittest.TestCase):
 
     def test_installed_under_the_tasks_feature(self):
         features = yaml.safe_load((WORKSPACE_FOLDER / "features.yml").read_text())
-        self.assertIn(".claude/skills/work-task", features["tasks"])
+        self.assertIn(".claude/skills/work-task", features["tasks"]["paths"])
 
     def test_the_release_wait_is_dispatched_and_described(self):
         self.assertIn("`cycle: shared-library` and no `worktrees` | `references/merge.md` | \"Wait for the Release\"",

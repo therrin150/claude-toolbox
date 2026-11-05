@@ -163,15 +163,21 @@ class Store:
 
     @property
     def vault_dir(self) -> Path:
-        return self.cfg.vault_dir
+        return self._in_vault(self.cfg.vault_dir)
 
     @property
     def tasks_dir(self) -> Path:
-        return self.cfg.tasks_dir
+        return self._in_vault(self.cfg.tasks_dir)
 
     @property
     def discussions_dir(self) -> Path:
-        return self.cfg.discussions_dir
+        return self._in_vault(self.cfg.discussions_dir)
+
+    def _in_vault(self, path: Path | None) -> Path:
+        if path is None:
+            raise TaskError(f"{self.cfg.path} has no vault section, and task records and discussions live in the "
+                            "vault: add one (vault.path), or run /setup-workspace again")
+        return path
 
     def rel(self, path: Path) -> str:
         """A path relative to the vault, as frontmatter and wikilinks give it."""

@@ -282,15 +282,44 @@ def load_parts(toolboxes: list, problems: list) -> tuple[dict, set]:
     return parts, held
 
 
-def load_features(part: Part) -> dict:
-    """A per-workspace part's features.yml: {feature: [paths relative to its source]}."""
+def read_features(part: Part) -> tuple[dict, dict]:
+    """A per-workspace part's features.yml: ({feature: [paths relative to its source]}, {feature: [config needed]})."""
     file = part.source / FEATURES_FILE
     if not file.exists():
-        return {}
-    raw = load_yaml(file)
-    if not isinstance(raw, dict) or not all(isinstance(paths, list) for paths in raw.values()):
-        sys.exit(f"{show(file)}: must map each feature to a list of paths")
-    return {str(feature): [str(path).strip("/") for path in paths] for feature, paths in raw.items()}
+        return {}, {}
+    try:
+        return import_config().read_features(load_yaml(file))
+    except ValueError as error:
+        sys.exit(f"{show(file)}: {error}")
+
+
+def load_features(part: Part) -> dict:
+    """A per-workspace part's features.yml paths: {feature: [paths relative to its source]}."""
+    return read_features(part)[0]
+
+
+def hold_unmet_needs(parts: dict, names: list, workspaces: list, held: set, problems: list) -> list:
+    """The workspaces whose picked features have the config they need. Each of the others gets a problem line and
+    joins `held`: nothing is installed or removed there until its config gains the sections or drops the features."""
+    config = import_config()
+    needs = {}
+    for name in names:
+        if parts[name].per_workspace:
+            for feature, keys in read_features(parts[name])[1].items():
+                needs.setdefault(feature, []).extend(key for key in keys if key not in needs.get(feature, []))
+    active = []
+    for ws in workspaces:
+        unmet = ws.config.unmet_needs(needs)
+        if not unmet:
+            active.append(ws)
+            continue
+        lacking = "; ".join(f"{feature} needs {', '.join(keys)}" for feature, keys in unmet.items())
+        problems.append(
+            f"workspace {show(ws.path)}: its features need config its {config.CONFIG_PATH} doesn't set ({lacking}), "
+            "so nothing installed or removed there. Add it (/setup-workspace), or drop the feature."
+        )
+        held.add(ws.key)
+    return active
 
 
 def import_config():
@@ -485,6 +514,9 @@ def vault_files(part: str, src_root: Path, ws: Workspace, ignore: list, skip, di
 
     visit(source, VAULT_DIR)
     vault = ws.config.vault_dir
+    if found and vault is None:
+        problems.append(f"workspace {show(ws.path)}: no vault in its config, so the vault files aren't written")
+        return
     if found and not vault.is_dir():
         problems.append(f"workspace {show(ws.path)}: vault {show(vault)} doesn't exist, so nothing is written there")
         return
@@ -518,12 +550,19 @@ def desired(parts: dict, names: list, workspaces: list, problems: list, warnings
             problems.append(f"{name}: source folder {show(src_root)} doesn't exist")
             continue
         if part.per_workspace:
-            features = load_features(part)
+            features, needs = read_features(part)
             for feature, paths in features.items():
                 warnings.extend(
                     f"{name}/{FEATURES_FILE}: {feature}: {path} doesn't exist"
                     for path in paths
                     if not (src_root / path).exists()
+                )
+            schema_has = import_config().schema_has
+            for feature, keys in needs.items():
+                warnings.extend(
+                    f"{name}/{FEATURES_FILE}: {feature}: needs {key}, which isn't a config key"
+                    for key in keys
+                    if not schema_has(key)
                 )
             roots = [(ws.key, ws.path, ws.config.features) for ws in workspaces]
         else:
@@ -558,7 +597,7 @@ def desired(parts: dict, names: list, workspaces: list, problems: list, warnings
             path = ws.path / config.RULE_PATH
             dirs.extend((RULE_PART, ws.key, folder) for folder in parents_within(path, ws.path))
             generated.append(Generated(RULE_PART, ws.key, path, config.render_rule(ws.config)))
-            if TASKS_FEATURE in ws.config.features:
+            if TASKS_FEATURE in ws.config.features and ws.config.vault_dir is not None:
                 vault = ws.config.vault_dir
                 if not vault.is_dir():
                     problem = (f"workspace {show(ws.path)}: vault {show(vault)} doesn't exist, so nothing is written "
@@ -1087,6 +1126,7 @@ def main(argv: list | None = None) -> int:
     workspaces, held = [], set()
     if any(name in per_workspace for name in names):
         workspaces, held = load_workspaces(paths, problems)
+        workspaces = hold_unmet_needs(parts, names, workspaces, held, problems)
     listed = {norm(path) for path in machine["workspaces"]}
     warnings = [
         f"workspace {show(path)}: not in {MACHINE.name}, so the next full sync removes what this run installs there"

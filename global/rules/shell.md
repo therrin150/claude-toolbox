@@ -6,3 +6,7 @@ runs.
 
 zsh doesn't word-split an unquoted variable, so a command held in one (`cmd="python3 x.py"; $cmd`) runs as a single
 word and fails. Write the command out, or use a function or an array.
+
+The same goes for a list held in a variable: `f=$(find …); for x in $f` runs the loop once over the whole
+newline-joined string, so `cat "$x"` fails. Never iterate an unquoted variable or substitution. Pipe instead
+(`find … | while IFS= read -r x`), split explicitly (`for x in ${(f)f}`), or skip the loop (`find … -exec cat {} +`).

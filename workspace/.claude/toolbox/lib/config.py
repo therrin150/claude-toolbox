@@ -9,6 +9,9 @@ Every toolbox script and the installer read the config through this module.
 - validate() checks a parsed config against SCHEMA (`version: 1`) and applies defaults. Unknown keys, wrong types and
   missing required keys fail with the key's dotted path, all at once.
 - render_rule() writes `.claude/rules/toolbox-config.md`: the few values a session needs to act, loaded every session.
+- read_features() parses claude-toolbox's `workspace/features.yml`, and Config.unmet_needs() names the config a
+  workspace's picked features need and lack: `vault` and `tracker` are optional sections, required only by the
+  features that use them.
 
 Scripts import it by path from their own resolved location:
 
@@ -40,6 +43,8 @@ KEY_PREFIX = re.compile(r"^[A-Z][A-Z0-9]*$")
 JIRA_TYPES = ("story", "epic", "defect")
 JIRA_STATUSES = ("todo", "in-progress", "review", "done", "stopped")
 LIBRARY_FIELDS = ("libraries",)  # placeholders shared_libraries.update.command may hold
+LIBRARY_UPDATES = ("command", "skill", "path")  # the ways shared_libraries.update says, exactly one
+SKILL_FILE = "SKILL.md"
 # The task-record fields tasks.py owns (records.py's FIELDS, plus `cycle`); an extra field can't take one's name.
 RECORD_FIELDS = ("type", "key", "slice", "summary", "epic", "status", "owner", "stage", "cycle", "depends_on",
                  "created", "found_in", "legacy_id", "source", "source_doc", "worktrees", "sessions", "prs", "work_note", "usage",
@@ -110,11 +115,13 @@ SCHEMA = Section({
         "name": Value(str, required=True),
         "github": Value(str),
     }),
+    # Optional: a feature that needs one says so in features.yml (`needs:`), and the installer holds a workspace whose
+    # picked features need a section its config leaves out.
     "vault": Section({
         "path": Value(str, required=True),
         "tasks": Value(str, "Tasks"),
         "discussions": Value(str, "Discussions"),
-    }),
+    }, optional=True),
     "tracker": Section({
         "kind": Value(str, required=True, choices=("vault", "jira", "none")),
         "key_prefix": Value(str),
@@ -132,7 +139,7 @@ SCHEMA = Section({
             "estimates": Value(bool, False),   # file a draft's `estimate` as the issue's original estimate
             "board": Value(int),               # the board whose sprints jira-find-current-sprint reads
         }, optional=True),
-    }),
+    }, optional=True),
     "git": Section({
         "branch": Value(str, "{handle}/{key}-{slug}"),
         "org": Value(str),
@@ -169,6 +176,7 @@ SCHEMA = Section({
         "update": Section({  # how a consumer picks up a release, run in each consumer checkout: one of
             "command": Value(str),
             "skill": Value(str),
+            "path": Value(str),  # a SKILL.md outside the workspace, absolute or ~, read and followed on the checkout
         }, optional=True),
     }),
     "verify": Section({
@@ -243,20 +251,8 @@ def _check(spec, value, path: str, errors: list[str]):
 
 def _check_values(data: dict, errors: list[str]) -> None:
     """Rules that span keys, or that a type alone can't state. Fills the per-owner WIP defaults."""
-    tracker = data["tracker"]
-    if tracker["kind"] == "jira" and tracker["jira"] is None:
-        errors.append("tracker.jira: required when tracker.kind is jira")
-    if tracker["kind"] == "vault" and not tracker["key_prefix"]:
-        errors.append("tracker.key_prefix: required when tracker.kind is vault")
-    if isinstance(tracker["key_prefix"], str) and not KEY_PREFIX.match(tracker["key_prefix"]):
-        errors.append(f"tracker.key_prefix: must be capital letters and digits, like MB; got {tracker['key_prefix']!r}")
-    jira = tracker["jira"]
-    if jira and isinstance(jira["project"], str) and not KEY_PREFIX.match(jira["project"]):
-        errors.append(f"tracker.jira.project: must be a Jira project key, like ABC; got {jira['project']!r}")
-    if jira:
-        for name, allowed in (("issue_types", JIRA_TYPES), ("statuses", JIRA_STATUSES)):
-            for key in sorted(set(jira[name]) - set(allowed)):
-                errors.append(f"tracker.jira.{name}.{key}: unknown; use {', '.join(allowed)}")
+    if data["tracker"] is not None:
+        _check_tracker(data["tracker"], data["vault"], errors)
 
     branch = data["git"]["branch"]
     if isinstance(branch, str):
@@ -332,8 +328,13 @@ def _check_values(data: dict, errors: list[str]) -> None:
     if names and update is None:
         errors.append("shared_libraries.update: required when shared_libraries.names lists any (how consumers "
                       "pick up a release)")
-    if update is not None and (update["command"] is None) == (update["skill"] is None):
-        errors.append("shared_libraries.update: give command or skill, not both")
+    if update is not None and sum(update[kind] is not None for kind in LIBRARY_UPDATES) != 1:
+        errors.append("shared_libraries.update: give exactly one of command, skill or path")
+    if update is not None and isinstance(update["path"], str):
+        path = update["path"]
+        if not _absolute(path) or PurePosixPath(path).name != SKILL_FILE:
+            errors.append(f"shared_libraries.update.path: must be a {SKILL_FILE} by absolute or ~ path, like "
+                          f"~/team/skills/bump-deps/{SKILL_FILE}; got {path!r}")
     if update is not None and isinstance(update["command"], str):
         try:
             fields = {name for _, name, _, _ in string.Formatter().parse(update["command"]) if name is not None}
@@ -342,6 +343,25 @@ def _check_values(data: dict, errors: list[str]) -> None:
         else:
             for name in sorted(fields - set(LIBRARY_FIELDS)):
                 errors.append(f"shared_libraries.update.command: unknown placeholder {{{name}}}; use {{libraries}}")
+
+
+def _check_tracker(tracker: dict, vault: dict | None, errors: list[str]) -> None:
+    if tracker["kind"] == "jira" and tracker["jira"] is None:
+        errors.append("tracker.jira: required when tracker.kind is jira")
+    if tracker["kind"] == "vault" and not tracker["key_prefix"]:
+        errors.append("tracker.key_prefix: required when tracker.kind is vault")
+    if tracker["kind"] == "vault" and vault is None:
+        errors.append("vault: required when tracker.kind is vault (the task record is the ticket, and it lives in "
+                      "the vault)")
+    if isinstance(tracker["key_prefix"], str) and not KEY_PREFIX.match(tracker["key_prefix"]):
+        errors.append(f"tracker.key_prefix: must be capital letters and digits, like MB; got {tracker['key_prefix']!r}")
+    jira = tracker["jira"]
+    if jira and isinstance(jira["project"], str) and not KEY_PREFIX.match(jira["project"]):
+        errors.append(f"tracker.jira.project: must be a Jira project key, like ABC; got {jira['project']!r}")
+    if jira:
+        for name, allowed in (("issue_types", JIRA_TYPES), ("statuses", JIRA_STATUSES)):
+            for key in sorted(set(jira[name]) - set(allowed)):
+                errors.append(f"tracker.jira.{name}.{key}: unknown; use {', '.join(allowed)}")
 
 
 def _check_area_dirs(workspace: dict, errors: list[str]) -> None:
@@ -392,6 +412,50 @@ def validate(raw) -> tuple[dict, list[str]]:
     if not errors:
         _check_values(data, errors)
     return data, errors
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Features
+
+
+def read_features(raw) -> tuple[dict, dict]:
+    """claude-toolbox's features.yml, parsed: ({feature: [paths]}, {feature: [needs]}). Each feature maps to a list of
+    paths, or to {paths: [...], needs: [...]}, where needs are dotted config keys or sections. ValueError says what's
+    wrong with it."""
+    if raw is None:
+        return {}, {}
+    if not isinstance(raw, dict):
+        raise ValueError("must map each feature to a list of paths, or to {paths: [...], needs: [...]}")
+    paths, needs = {}, {}
+    for feature, spec in raw.items():
+        name = str(feature)
+        if isinstance(spec, dict):
+            unknown = sorted(set(map(str, spec)) - {"paths", "needs"})
+            if unknown:
+                raise ValueError(f"{name}: unknown key {', '.join(unknown)}; use paths and needs")
+            listed, wanted = spec.get("paths") or [], spec.get("needs") or []
+        else:
+            listed, wanted = spec, []
+        if not isinstance(listed, list) or not isinstance(wanted, list):
+            raise ValueError(f"{name}: paths and needs must be lists")
+        if not all(isinstance(key, str) and key.strip() for key in wanted):
+            raise ValueError(f"{name}: each need must be a dotted config key, like tracker.jira")
+        paths[name] = [str(path).strip("/") for path in listed]
+        needs[name] = [key.strip() for key in wanted]
+    return paths, needs
+
+
+def schema_has(dotted: str) -> bool:
+    """Whether a dotted key names a key or section the schema allows (any name under a free-form map)."""
+    spec = SCHEMA
+    for part in dotted.split("."):
+        if isinstance(spec, MapOf):
+            spec = spec.value
+        elif isinstance(spec, Section) and part in spec.fields:
+            spec = spec.fields[part]
+        else:
+            return False
+    return True
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -453,6 +517,20 @@ class Config:
             value = value[part]
         return value
 
+    def is_set(self, dotted: str) -> bool:
+        """Whether a dotted key has a value: not left out, not an absent optional section, not empty."""
+        try:
+            value = self.get(dotted)
+        except KeyError:
+            return False
+        return value is not None and value != {} and value != [] and value != ""
+
+    def unmet_needs(self, needs: dict) -> dict[str, list[str]]:
+        """For each picked feature, the config it needs (features.yml's `needs:`, as read_features() gives them) and
+        doesn't set."""
+        unmet = {feature: [key for key in needs.get(feature, []) if not self.is_set(key)] for feature in self.features}
+        return {feature: keys for feature, keys in unmet.items() if keys}
+
     # Paths
 
     @property
@@ -476,16 +554,22 @@ class Config:
         return self.root / self.data["workspace"]["worktrees"]
 
     @property
-    def vault_dir(self) -> Path:
-        return self.root / Path(self.data["vault"]["path"]).expanduser()
+    def vault(self) -> dict | None:
+        """The vault section, or None when the config has none (no picked feature needs one)."""
+        return self.data["vault"]
 
     @property
-    def tasks_dir(self) -> Path:
-        return self.vault_dir / self.data["vault"]["tasks"]
+    def vault_dir(self) -> Path | None:
+        """The vault folder; None without a vault section."""
+        return self.root / Path(self.vault["path"]).expanduser() if self.vault else None
 
     @property
-    def discussions_dir(self) -> Path:
-        return self.vault_dir / self.data["vault"]["discussions"]
+    def tasks_dir(self) -> Path | None:
+        return self.vault_dir / self.vault["tasks"] if self.vault else None
+
+    @property
+    def discussions_dir(self) -> Path | None:
+        return self.vault_dir / self.vault["discussions"] if self.vault else None
 
     # Workspace
 
@@ -552,16 +636,18 @@ class Config:
         return self.data["user"]["name"].lower()
 
     @property
-    def tracker(self) -> str:
-        return self.data["tracker"]["kind"]
+    def tracker(self) -> str | None:
+        """The tracker's kind; None when the config has no tracker section (no picked feature needs one)."""
+        tracker = self.data["tracker"]
+        return tracker["kind"] if tracker else None
 
     @property
     def key_prefix(self) -> str | None:
-        """Ticket keys' prefix: the vault counter's, or the Jira project's. None under the `none` tracker."""
+        """Ticket keys' prefix: the vault counter's, or the Jira project's. None under the `none` tracker or none."""
         tracker = self.data["tracker"]
-        if tracker["kind"] == "jira":
+        if self.tracker == "jira":
             return tracker["key_prefix"] or tracker["jira"]["project"]
-        return tracker["key_prefix"] if tracker["kind"] == "vault" else None
+        return tracker["key_prefix"] if self.tracker == "vault" else None
 
     @property
     def jira(self) -> dict | None:
@@ -593,11 +679,15 @@ class Config:
 
     @property
     def library_update(self) -> dict | None:
-        """How a consumer picks up a release: {"command": ...} or {"skill": ...}; None with no shared libraries."""
+        """How a consumer picks up a release: {"command": ...}, {"skill": ...} or {"path": ...} (a SKILL.md to read and
+        follow, ~ expanded); None with no shared libraries."""
         update = self.data["shared_libraries"]["update"]
         if not self.shared_libraries or not update:
             return None
-        return {kind: value for kind, value in update.items() if value is not None}
+        found = {kind: value for kind, value in update.items() if value is not None}
+        if "path" in found:
+            found["path"] = str(Path(found["path"]).expanduser())
+        return found
 
     @property
     def extra_fields(self) -> dict:
@@ -641,8 +731,7 @@ def render_rule(config: Config, workspace: Path | None = None) -> str:
         f"- **Scripts:** `{config.scripts_dir}`. Call them by this absolute path, which works from a worktree too.",
         f"- **Other config:** `{config.scripts_dir / 'toolbox.py'} config show [dotted.key]` prints it as JSON.",
         f"- **Worktrees:** `{config.worktrees_dir}`.",
-        f"- **Vault:** `{config.vault_dir}`; task records in `{data['vault']['tasks']}/`, discussions in "
-        f"`{data['vault']['discussions']}/`.",
+        *_vault_lines(config),
         f"- **Task owners:** `claude` or `{config.owner}`.",
         *_tracker_lines(config),
         f"- **Branches:** `{data['git']['branch'].replace('{handle}', config.handle)}`, dropping the key and its "
@@ -662,7 +751,8 @@ def _task_lines(config: Config) -> list[str]:
     if config.shared_libraries:
         update = config.library_update
         how = (f"`{update['command']}` in each consumer checkout" if "command" in update
-               else f"the `{update['skill']}` skill on each consumer checkout")
+               else f"the `{update['skill']}` skill on each consumer checkout" if "skill" in update
+               else f"the skill at `{update['path']}` (read it and follow it) on each consumer checkout")
         names = ", ".join(f"`{name}`" for name in config.shared_libraries)
         lines.append(f"- **Shared libraries:** {names}. A task changing one runs `work-task`'s shared-library cycle, "
                      f"then its consumers cycle; consumers pick up a release with {how}.")
@@ -673,7 +763,16 @@ def _task_lines(config: Config) -> list[str]:
     return lines
 
 
+def _vault_lines(config: Config) -> list[str]:
+    if not config.vault:
+        return []
+    return [f"- **Vault:** `{config.vault_dir}`; task records in `{config.vault['tasks']}/`, discussions in "
+            f"`{config.vault['discussions']}/`."]
+
+
 def _tracker_lines(config: Config) -> list[str]:
+    if config.tracker is None:
+        return []
     if config.tracker == "vault":
         return [f"- **Tracker:** `vault`. The task record is the ticket; keys are `{config.key_prefix}-<n>` from a "
                 "local counter."]

@@ -116,6 +116,23 @@ def single(fx: Fixture) -> Path:
     return fx.clone(bare, fx.tmp / "pantry", "https://github.com/example-org/pantry.git")
 
 
+def stack(fx: Fixture) -> Path:
+    """`trailhead`: one repo with a Spring Boot app, Flyway migrations, an Angular app with Playwright and a Bruno
+    collection; no vault, no ticket keys, no Atlassian server."""
+    pom = ("<project xmlns='http://maven.apache.org/POM/4.0.0'><parent><groupId>org.springframework.boot</groupId>"
+           "<artifactId>spring-boot-starter-parent</artifactId></parent><artifactId>trailhead</artifactId></project>")
+    bare = fx.origin("trailhead", "main", ["Start"], {}, {
+        "pom.xml": pom,
+        "trailhead-app/pom.xml": "<project><artifactId>trailhead-app</artifactId></project>",
+        "trailhead-app/src/main/java/App.java": "class App {}\n",
+        "trailhead-app/src/main/resources/db/migration/V1__start.sql": "CREATE TABLE trail (id BIGINT);\n",
+        "trailhead-web/angular.json": "{}",
+        "trailhead-web/playwright.config.ts": "export default {};\n",
+        "bruno/collection.bru": "",
+    })
+    return fx.clone(bare, fx.tmp / "trailhead", "https://github.com/example-org/trailhead.git")
+
+
 def value(report: dict, key: str):
     return report["values"][key]["value"]
 
@@ -169,6 +186,32 @@ class DetectTest(unittest.TestCase):
             self.assertEqual(report["values"][key]["ask"], "gh isn't signed in")
         self.assertIn("services-lock", value(report, "features"))
 
+    def test_features_from_the_folder(self):
+        ws = stack(self.fx)
+        _, report = self.fx.run("detect.py", str(ws))
+        self.assertEqual(value(report, "features"), ["git", "verify", "tests", "worktrees", "pr", "java", "spring",
+                                                     "postgres", "angular", "playwright", "bruno"])
+        self.assertEqual(report["signals"]["spring"], "spring-boot in pom.xml")
+        self.assertEqual(report["signals"]["postgres"], "trailhead-app/src/main/resources/db/migration folder")
+        self.assertEqual(report["signals"]["playwright"], "trailhead-web/playwright.config.ts")
+        self.assertEqual(report["feature_needs"]["tasks"], ["tracker", "vault"])
+        self.assertIn("java", report["known_features"])
+
+    def test_other_signals_and_skipped_folders(self):
+        ws = self.fx.tmp / "loose"
+        for path, text in {"web/node_modules/lib/angular.json": "{}", "target/V1.sql": "",
+                           ".worktrees/x/playwright.config.js": "", "api/bruno.json": "{}",
+                           "compose.yaml": "services:\n  db:\n    image: postgres:17\n",
+                           "notes/.obsidian/app.json": "{}",
+                           "svc/pom.xml": "<project><dependencies><dependency><artifactId>spring-boot-starter-web"
+                                          "</artifactId></dependency></dependencies></project>"}.items():
+            (ws / path).parent.mkdir(parents=True, exist_ok=True)
+            (ws / path).write_text(text)
+        _, report = self.fx.run("detect.py", str(ws))
+        self.assertEqual(report["signals"], {"obsidian": "notes/.obsidian/", "java": "svc/pom.xml",
+                                             "spring": "spring-boot in svc/pom.xml",
+                                             "postgres": "postgres in compose.yaml", "bruno": "api/bruno.json"})
+
     def test_unprotected_branch_is_asked(self):
         ws = single(self.fx)
         _, report = self.fx.run("detect.py", str(ws), gh_login="jdoe")
@@ -220,7 +263,8 @@ class DetectTest(unittest.TestCase):
         _, report = self.fx.run("detect.py", str(ws))
         path = self.fx.tmp / "detect.json"
         path.write_text(json.dumps(report))
-        code, draft = self.fx.run("draft.py", "render", str(path), "--set", "shared_libraries.update={skill: bump-deps}")
+        code, draft = self.fx.run("draft.py", "render", str(path), "--set", "features=[tasks]",  # work-task reads it
+                                  "--set", "shared_libraries.update={skill: bump-deps}")
         self.assertEqual([e for e in draft["errors"] if e.startswith("shared_libraries")], [])
         self.assertFalse([key for key in draft["unanswered"] + draft["missing"] if key.startswith("shared_libraries")])
         self.assertIn("names: [common]  # detected", draft["yaml"])
@@ -291,6 +335,43 @@ class DraftTest(unittest.TestCase):
         self.assertFalse(cfg.pr["required"])
         self.assertNotIn("tracker.jira", json.dumps(draft["unanswered"] + draft["missing"]))
         self.assertNotIn("jira:", (ws / config.CONFIG_PATH).read_text())
+
+    def test_no_vault_or_tracker_unless_a_picked_feature_needs_them(self):
+        ws = stack(self.fx)
+        report = self.detect(ws)
+        answers = ["--set", "pr.required=false", "--set", "pr.review_required=false", "--set", "pr.wait_for_ci=true",
+                   "--set", "user.handle=jdoe", "--drop", "pr.announce"]
+        code, draft = self.fx.run("draft.py", "render", str(report), *answers, "--write")
+        self.assertEqual(code, 0, draft)
+        for key in ("vault", "tracker", "pr.announce", "shared_libraries", "work"):
+            self.assertFalse([k for k in draft["missing"] + draft["unanswered"] if k.startswith(key)], key)
+        cfg = config.load_workspace(ws)
+        self.assertIsNone(cfg.vault)
+        self.assertIsNone(cfg.tracker)
+        self.assertIsNone(cfg.announce)
+        self.assertIn("java", cfg.features)
+        text = (ws / config.CONFIG_PATH).read_text()
+        for absent in ("vault:", "tracker:", "announce:", "work:"):
+            self.assertNotIn(absent, text)
+
+        # Picking tasks brings the tracker, and its kind decides whether the vault comes too.
+        tasks = ["--set", "features=[git, tasks]", "--set", "tracker.kind=none"]
+        _, draft = self.fx.run("draft.py", "render", str(report), *answers, *tasks)
+        self.assertIn("tracker:", draft["yaml"])
+        self.assertIn("vault.path", draft["unanswered"])  # task records live in the vault
+        _, draft = self.fx.run("draft.py", "render", str(report), *answers, *tasks, "--set", "vault.path=notes")
+        self.assertEqual((draft["errors"], draft["missing"], draft["unanswered"], draft["unmet"]), ([], [], [], {}))
+        self.assertIn("work:", draft["yaml"])
+
+    def test_a_feature_need_nothing_gives_is_unmet(self):
+        ws = stack(self.fx)
+        report = self.detect(ws)
+        answers = ["--set", "pr.required=false", "--set", "pr.review_required=false", "--set", "pr.wait_for_ci=true",
+                   "--set", "user.handle=jdoe", "--set", "features=[git, tests]", "--set", "workspace.areas={}"]
+        code, draft = self.fx.run("draft.py", "render", str(report), *answers, "--write")
+        self.assertEqual(code, 1)
+        self.assertEqual(draft["unmet"], {"tests": ["workspace.areas"]})
+        self.assertIsNone(draft["written"])
 
     def test_add_workspace_keeps_the_file(self):
         machine = self.fx.tmp / "machine.yml"

@@ -14,7 +14,9 @@ carry:
   mcp      the MCP tools the skill reads it with; value is null until it does
 
 Beside `values`: `ask`, `confirm` and `mcp` list those keys; `known_features` the features features.yml gates on;
-`repos` has what was read per repo; `gh` whether gh is signed in and as whom; `existing_config` the config file when one
+`signals` what the folder showed for each suggested feature (`.git`, `pom.xml`, `angular.json`, ...);
+`feature_needs` the config each feature needs, so the skill asks only what the picked features use; `repos` has what
+was read per repo; `gh` whether gh is signed in and as whom; `existing_config` the config file when one
 is already there; `toolbox` the paths the skill uses (toolbox.py, install.py, machine.yml, draft.py) and whether
 machine.yml lists the workspace.
 
@@ -25,8 +27,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
+import sys
 import xml.etree.ElementTree as ElementTree
 from collections import Counter
 from pathlib import Path
@@ -36,6 +40,11 @@ import yaml
 REPO = Path(__file__).resolve().parents[4]
 CONFIG_FILE = Path(".claude/toolbox.local.yml")
 FEATURES = REPO / "workspace" / "features.yml"
+CONFIG_LIB = REPO / "workspace" / ".claude" / "toolbox" / "lib"  # the workspace config library, for features.yml
+if str(CONFIG_LIB) not in sys.path:
+    sys.path.insert(0, str(CONFIG_LIB))
+
+import config  # noqa: E402
 
 BUILD_FILES = ("pom.xml", "build.gradle", "build.gradle.kts", "package.json", "docker-compose.yml", "compose.yml")
 SKIP_DIRS = {"node_modules", "target", "build", "dist", "vendor"}
@@ -47,6 +56,13 @@ DEPENDENCY_FILES = ("pom.xml", "build.gradle", "build.gradle.kts", "package.json
 GRADLE_COORDINATE = re.compile(r"['\"][\w.-]+:([\w.-]+):[^'\"]*['\"]")
 GRADLE_ROOT_NAME = re.compile(r"rootProject\.name\s*=\s*['\"]([^'\"]+)['\"]")
 GITHUB_URL = re.compile(r"^(?:\w+://)?(?:[^@/]+@)?(?P<host>[^:/]+)[:/](?P<owner>[^/]+)/(?P<repo>[^/]+?)(?:\.git)?/?$")
+# The stack scan: folders it never enters, and how many entries it reads before it stops looking.
+SCAN_SKIP = {"node_modules", "target", ".git", ".worktrees"}
+SCAN_LIMIT = 50_000
+COMPOSE_FILES = {"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"}
+# Features in the order the skill offers them.
+FEATURE_ORDER = ("git", "verify", "tests", "worktrees", "pr", "tasks", "jira", "services-lock", "intellij", "obsidian",
+                 "java", "spring", "postgres", "angular", "playwright", "bruno")
 
 
 def run(*args, cwd: Path | None = None) -> subprocess.CompletedProcess:
@@ -192,7 +208,8 @@ def shared_libraries(units: dict[str, Path]) -> dict[str, dict]:
             "shared_libraries.names": entry(sorted(found), "detected", f"build files: {how}", confirm=True),
             "shared_libraries.update": entry(None, "default", "asked", ask=(
                 f"how a consumer checkout picks up a new release of {', '.join(sorted(found))}: a command run in it "
-                "({libraries} is the released names), or a skill, as {command: ...} or {skill: ...}")),
+                "({libraries} is the released names), a skill, or a skill file outside the workspace, as "
+                "{command: ...}, {skill: ...} or {path: ~/.../SKILL.md}")),
         }
     unread = sorted(name for name, part in parts.items() if part is None)
     if unread:
@@ -320,11 +337,99 @@ def mcp_servers(root: Path) -> dict:
     return {"atlassian": pick("atlassian", "jira"), "slack": pick("slack"), "all": sorted(servers)}
 
 
-def known_features() -> list[str]:
+def feature_needs() -> dict[str, list[str]]:
+    """features.yml's needs per feature: {feature: [dotted config keys]}, every feature listed."""
     try:
-        return sorted((yaml.safe_load(FEATURES.read_text(encoding="utf-8")) or {}).keys())
+        raw = yaml.safe_load(FEATURES.read_text(encoding="utf-8"))
     except OSError:
-        return []
+        return {}
+    return config.read_features(raw)[1]
+
+
+def known_features() -> list[str]:
+    return sorted(feature_needs())
+
+
+def spring_boot_pom(pom: Path) -> bool:
+    """Whether a pom.xml's parent or a dependency (managed ones included) is a Spring Boot artifact."""
+    try:
+        root = ElementTree.parse(pom).getroot()
+    except (OSError, ElementTree.ParseError):
+        return False
+    for element in root.iter():
+        element.tag = element.tag.rsplit("}", 1)[-1]  # drop the Maven namespace
+    for found in [root.find("parent"), *root.iter("dependency")]:
+        names = ("groupId", "artifactId")
+        if found is not None and any("spring-boot" in (found.findtext(name) or "") for name in names):
+            return True
+    return False
+
+
+def stack_signals(root: Path) -> dict[str, str]:
+    """{feature: what showed it} for the stack features, from one walk of the folder that skips dependencies, build
+    output, git internals and worktrees, and stops early once everything is found."""
+    found: dict[str, str] = {}
+    seen = 0
+
+    def note(feature: str, why: str) -> None:
+        found.setdefault(feature, why)
+
+    for folder, dirs, files in os.walk(root):
+        here = Path(folder)
+        rel = here.relative_to(root).as_posix()
+        where = "" if rel == "." else rel + "/"
+        dirs[:] = sorted(name for name in dirs if name not in SCAN_SKIP and not (here / name).is_symlink())
+        if "bruno" in dirs:
+            note("bruno", f"{where}bruno/")
+        if here.name == "migration" and here.parent.name == "db":
+            note("postgres", f"{where.rstrip('/')} folder")
+        for name in sorted(files):
+            if name == "pom.xml":
+                note("java", f"{where}pom.xml")
+                if "spring" not in found and spring_boot_pom(here / name):
+                    note("spring", f"spring-boot in {where}pom.xml")
+            elif name.endswith(".java"):
+                note("java", f"{where}{name}")
+            elif name.endswith(".sql"):
+                note("postgres", f"{where}{name}")
+            elif name in COMPOSE_FILES and "postgres" not in found:
+                try:
+                    if "postgres" in (here / name).read_text(encoding="utf-8", errors="replace").lower():
+                        note("postgres", f"postgres in {where}{name}")
+                except OSError:
+                    pass
+            elif name == "angular.json":
+                note("angular", f"{where}angular.json")
+            elif name.startswith("playwright.config."):
+                note("playwright", f"{where}{name}")
+            elif name == "bruno.json":
+                note("bruno", f"{where}bruno.json")
+        seen += len(files) + len(dirs)
+        if seen > SCAN_LIMIT or len(found) == 6:
+            break
+    return found
+
+
+def feature_signals(root: Path, repos: list[Path], has_github: bool, compose: bool, intellij: bool,
+                    vaults: list[str], atlassian: str | None) -> dict[str, str]:
+    """{feature: what showed it} for every feature the folder suggests."""
+    found: dict[str, str] = {}
+    if repos:
+        git_why = ".git" if repos == [root] else f".git in {len(repos)} repo(s)"
+        for feature in ("git", "verify", "tests", "worktrees"):
+            found[feature] = git_why
+        if has_github:
+            found["pr"] = f"{git_why}, with a GitHub origin"
+    if atlassian:
+        found["tasks"] = found["jira"] = f"Atlassian server {atlassian!r} in .mcp.json"
+    if compose:
+        found["services-lock"] = "a compose file"
+    if intellij:
+        found["intellij"] = ".idea/"
+    if vaults:
+        found["obsidian"] = ", ".join(f"{vault}/.obsidian/" if vault != "." else ".obsidian/" for vault in vaults)
+    found.update(stack_signals(root))
+    return {feature: found[feature] for feature in FEATURE_ORDER if feature in found}
 
 
 def machine_listed(root: Path) -> bool:
@@ -483,9 +588,9 @@ def detect(root: Path, max_repos: int) -> dict:
     intellij = (root / ".idea").is_dir() or any((Path(info["path"]) / ".idea").is_dir() for info in repo_info)
     compose = any("start" in value for value in areas.values()) or any(
         {"docker-compose.yml", "compose.yml"} & set(info["build_files"]) for info in repo_info)
-    features = ["tasks", "worktrees"] + (["pr"] if has_github else []) + (["services-lock"] if compose else []) \
-        + (["intellij"] if intellij else []) + (["jira"] if kind == "jira" else []) + (["obsidian"] if vaults else [])
-    values["features"] = entry(features, "default", "from the layout and tracker", confirm=True)
+    signals = feature_signals(root, repos, has_github, compose, intellij, vaults, servers["atlassian"])
+    values["features"] = entry(list(signals), "detected" if signals else "default",
+                               "from the folder (signals)" if signals else "nothing found", confirm=True)
     values["work.session_model"] = entry("sonnet", "default", "default", confirm=True)
     values["work.dispatch"] = entry("direct", "default", "default", confirm=True)
     owner_value = (values["user.name"]["value"] or "you").lower()
@@ -511,6 +616,8 @@ def detect(root: Path, max_repos: int) -> dict:
         "gh": gh,
         "mcp_json": servers["all"],
         "known_features": known_features(),
+        "signals": signals,
+        "feature_needs": feature_needs(),
         "existing_config": str(existing) if existing.is_file() else None,
         "toolbox": {
             "repo": str(REPO),

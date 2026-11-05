@@ -15,7 +15,8 @@ Rules, "Unreleased libraries"):
    the task also changes, and those whose build pins the library), in fresh worktrees from the latest
    `origin/<default>`. Step 2 of "Each Cycle" starts by picking up the release in each consumer checkout: with
    `update.command`, run it there (`{libraries}` is the released libraries' names, space-separated); with
-   `update.skill`, run that skill on the checkout. Then the usual checks, stops and publish.
+   `update.skill`, run that skill on the checkout; with `update.path`, read that `SKILL.md` and follow it on the
+   checkout (a skill this workspace doesn't install, such as a team's). Then the usual checks, stops and publish.
 
 Say which cycles the task runs, and set `<bin>/tasks.py set <work id> cycle=shared-library`; each later cycle's start
 sets `cycle` again (`merge.md` sets `cycle=consumers`). A task that needs another task's release, not its own, is
