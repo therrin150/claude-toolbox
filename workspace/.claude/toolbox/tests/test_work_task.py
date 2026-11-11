@@ -497,6 +497,26 @@ class SkillTextTest(unittest.TestCase):
         self.assertIn("## Wait for the Release", self.texts["merge.md"])
         self.assertIn("<bin>/watch_task.py pipeline <work id>", self.texts["merge.md"])
 
+    def test_the_integration_bracket_is_delegated_in_one_place_every_re_run_names(self):
+        # SKILL.md is the one file every session reads, so the delegation to `services-runner` lives there; a session
+        # resumed at a review stop reads code-review.md or publish-review.md but not work.md.
+        checks = self.skill.split("## Checks", 1)[1].split("\n## ", 1)[0]
+        self.assertIn("`services-runner`", checks)
+        self.assertIn("subagent_type: services-runner", checks)
+        self.assertIn("never runs `<bin>/services_lock.py`", " ".join(checks.split()))
+        for name, text in self.texts.items():
+            if name in ("SKILL.md", "extension-points.md"):
+                continue
+            flat = " ".join(text.split())
+            # No phase file carries the bracket's mechanics, or tells the session to run one itself.
+            self.assertNotIn("subagent_type: services-runner", flat, name)
+            self.assertNotIn("services_lock.py", flat, name)
+            # Every paragraph that runs the integration tests names the Checks, not the bare tests.
+            for block in re.split(r"\n\s*\n", text):
+                flat = " ".join(block.split())
+                if re.search(r"integration tests", flat) and re.search(r"re-run|run the|Integration tests\*\*", flat):
+                    self.assertIn('SKILL.md "## Checks"', flat, f"{name}: {flat[:120]!r}")
+
     def test_dispatch_covers_every_generic_stage(self):
         import records
         for stage in records.STAGES:

@@ -78,6 +78,6 @@ Check first that the task is still this session's (`hand-off.md`, step 2), then:
 
 A session that starts at `publish-review` runs `<bin>/worktrees.py changes <work id>` first: if a worktree's `diff`
 differs from the saved report's, someone changed it since, so say which and re-run the unit tests (and integration
-tests, if they apply) before presenting. Then it presents `publish-review.md` as saved. Without one, rebuild the
-report: re-run the checks that apply for its Testing list, and take the commit messages and the announcement from the
-publish folder. Then end with a new hand-off block, as above.
+tests, if they apply, as SKILL.md "## Checks" says) before presenting. Then it presents `publish-review.md` as saved.
+Without one, rebuild the report: re-run the checks that apply for its Testing list, the same way, and take the commit
+messages and the announcement from the publish folder. Then end with a new hand-off block, as above.

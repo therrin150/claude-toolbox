@@ -86,22 +86,7 @@ check at both stops.
    beyond what `start-local-services` checks itself. When a check an extension adds there fails (a network that must
    be up, say), STOP and ask the user to fix it, and spawn the runners when they say it's done.
 
-   Each attempt is one lock bracket (start the services, run the tests, stop the services), run by the
-   `services-runner` agent so the bracket's many mechanical steps stay out of this session's context. Spawn it with
-   `Agent` (`subagent_type: services-runner`, `run_in_background: true`), passing the worktree path, the work id, the
-   areas, and a test when only some need re-running; then end your turn. In a `nested` workspace, spawn one runner per
-   repo (each repo has its own lock), but locks don't see port overlaps: when two repos' services may share a port, run
-   them one at a time. Act on each runner's `result`:
-    - `pass`: done with that area.
-    - `fail`: an attempt. Fix the code, format, re-run its unit tests, then spawn a new runner. At most three attempts
-      per area, then STOP.
-    - `blocked`: hook `blocked-bracket`. By default: not an attempt. If its reason is a STOP condition or something
-      you can't clear yourself, STOP. If it took over the user's expired manual lock (`notes`), notify them and go on.
-    - `lock: NOT RELEASED`, in any result: STOP.
-    - A takeover in `notes`: notify the user that their manual lock was taken over.
-
-   Don't edit a worktree while its runner is running. If the runner itself misbehaves, the fix goes in its agent file
-   (`services-runner`), never a by-hand bracket.
+   Run the bracket as SKILL.md "## Checks" says: in a `services-runner` agent, never by hand.
 6. **Review:** `/code-review` on the cycle's change (hook `code-review`), then the `verify-change` skill with the Skill
    tool, args `<work id> <worktree>...` (hook `verify`), then the checks extensions add beside them (hook
    `review-checks`). Sort every finding from all of them into one of three groups before changing anything:
@@ -111,7 +96,7 @@ check at both stops.
     - **Ask:** anything else. If you hesitate at all (scope, judgment, a behavior change, a "probably"), it goes here.
 
    Apply the **Fix** group together, format the touched areas, and re-run their unit tests (step 4) and, when a fix
-   reaches integration-tested code, the integration tests (step 5), so the rebuild happens once. Don't stop for the
-   **Ask** group: it becomes stop 1's Decisions, next to the code it's about. Never decline a finding silently:
-   declined ones appear on stop 1's `Declined` line.
+   reaches integration-tested code, the integration tests (step 5, run as SKILL.md "## Checks" says), so the rebuild
+   happens once. Don't stop for the **Ask** group: it becomes stop 1's Decisions, next to the code it's about. Never
+   decline a finding silently: declined ones appear on stop 1's `Declined` line.
 7. **Stop 1:** read `code-review.md` and follow it. Nothing is drafted yet.

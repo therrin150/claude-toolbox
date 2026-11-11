@@ -78,8 +78,8 @@ The **Testing** list names every check that actually ran, in order, with its res
 what failed and how it was fixed. A step an extension added, at any hook, that reported something gets a line of its
 own, by its name (`✅ Sonar scan: no new issues`), and a step an extension skipped is listed as `⏭️ <step>: skipped
 by <doc>: <reason>`. Never list one as passing without having run it in this cycle against the code as it
-stands: after any fix, re-run the unit tests (and integration tests, if they apply) before presenting. Leave out
-`Decided alone`, `Declined`, `Overlaps` and `Pending` when there's nothing to say.
+stands: after any fix, re-run the unit tests (and integration tests, if they apply, per SKILL.md "## Checks") before
+presenting. Leave out `Decided alone`, `Declined`, `Overlaps` and `Pending` when there's nothing to say.
 
 The **Diff** line is `diff` from `<bin>/worktrees.py changes <work id>`: the worktree's whole change against its branch
 point, committed, uncommitted and untracked alike. Don't open the app's diff pane: it reads the session's working
@@ -112,9 +112,10 @@ Reached on "Done reviewing" or "looks good". Nothing here commits, pushes or pub
 
 1. **Format** the areas changed since the last run (`work.md` step 3). A no-op when nothing changed; if it changed a
    file, re-run that area's unit tests.
-2. **Integration tests** (`work.md` step 5) for each area that has them and whose code changed since its last pass,
-   once, for all the rounds together; skip when none did. A failure is an attempt (three, then STOP); fix, format,
-   re-run the unit tests, then the integration tests again.
+2. **Integration tests**, as SKILL.md "## Checks" says (a `services-runner` agent, never a bracket by hand), for each
+   area that has them and whose code changed since its last pass, once, for all the rounds together; skip when none
+   did. A failure is an attempt (three, then STOP); fix, format, re-run the unit tests, then the integration tests
+   again.
 3. **Draft:** run the `git-draft-commit-message` skill with the Skill tool, `<worktree>... --task <work id>`, plus
    `--announce` when the config has `pr.announce` and `pr.required`. Never draft the messages yourself instead: the
    skill loads `commit-style.md` and `voice.md` in full, and the announcement is held to `voice.md`'s "Slack" rules,
@@ -129,8 +130,9 @@ Reached on "Done reviewing" or "looks good". Nothing here commits, pushes or pub
 A session that starts at `code-review` (a pasted prompt, or the user back after the hand-off) re-presents the stop:
 
 1. Run `<bin>/worktrees.py changes <work id>`. If a worktree's `diff` differs from `code-review.md`'s, someone changed
-   it since: say which, and re-run the unit tests (and integration tests, if they apply) before presenting. Without a
-   `code-review.md`, rebuild the report: re-run the checks that apply for its Testing list.
+   it since: say which, and re-run the unit tests (and integration tests, if they apply) before presenting, the
+   integration tests as SKILL.md "## Checks" says. Without a `code-review.md`, rebuild the report: re-run the checks
+   that apply for its Testing list, the same way.
 2. Reopen the review: the `local-review-ui` skill with the Skill tool, args `<work id> --resume-hint "/work-task
    <work id>"`.
 3. Start the waiter with no `--until`: a new session's context is small, so a wake is cheap. A finished round it

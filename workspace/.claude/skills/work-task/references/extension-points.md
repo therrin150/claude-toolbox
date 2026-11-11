@@ -18,8 +18,8 @@ headings freely, never an id. A default in a phase file is the text at the hook.
 | `format` | `work.md` "Each Cycle", step 3 | `run_tests.py format` | add, skip |
 | `unit-tests` | `work.md` "Each Cycle", step 4 | `run-unit-tests` | add, skip |
 | `before-integration-tests` | `work.md` "Each Cycle", step 5, before the first runner | nothing beyond `start-local-services`' own checks | add |
-| `integration-tests` | `work.md` "Each Cycle", step 5 | `services-runner` brackets | add, skip |
-| `blocked-bracket` | `work.md` "Each Cycle", step 5: a runner's `blocked` result | that step's `blocked` text | add, replace |
+| `integration-tests` | `work.md` "Each Cycle", step 5 | `services-runner` brackets (SKILL.md "Checks") | add, skip |
+| `blocked-bracket` | SKILL.md "Checks", integration tests: a runner's `blocked` result | that bullet's `blocked` text | add, replace |
 | `code-review` | `work.md` "Each Cycle", step 6 | `/code-review` | add, skip |
 | `verify` | `work.md` "Each Cycle", step 6 | `verify-change` | add, skip |
 | `review-checks` | `work.md` "Each Cycle", step 6, beside `/code-review` and `verify-change`; findings join the triage | nothing | add |

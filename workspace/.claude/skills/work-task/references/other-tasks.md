@@ -21,5 +21,5 @@ Isolation can't supply it, so do and test everything that doesn't need it, and h
 `Pending:` line naming what's held back and what it waits on; the user can review and ask for changes, but approval
 doesn't publish. After presenting stop 2, STOP with `work_note` naming what it waits on. When the user says it's out,
 clear the note, set `status=in-progress stage=testing`, apply what was held back, format, re-run the checks that apply
-(`work.md`, steps 3–5), and return to stop 1 with only what changed; stop 2 follows with fresh drafts, and its approval
-publishes as usual.
+(`work.md`, steps 3–5; the integration tests as SKILL.md "## Checks" says), and return to stop 1 with only what
+changed; stop 2 follows with fresh drafts, and its approval publishes as usual.

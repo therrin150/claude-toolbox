@@ -58,7 +58,7 @@ and number linked, review decision, checks, merge state) and any comments or rev
     - `timeout`: start it again without a message.
 
 A change the user asks for after the PRs are open: make it in the worktree, format and re-run what it touches (unit
-tests; integration tests per `work.md` step 5, reading only that step), draft a follow-up message with
+tests; integration tests as SKILL.md "## Checks" says), draft a follow-up message with
 `git-draft-commit-message`, and on their approval commit and push it with `git-commit`. Then start the watcher again:
 the push re-runs CI.
 
