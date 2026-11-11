@@ -157,7 +157,7 @@ def named(store: records.Store, tracker, sources: list[str], summaries: dict, se
 
 def from_queue(store: records.Store, sessions: list[dict]) -> tuple[list[dict], dict]:
     queue = board.queue(store)
-    by_id = {r.work_id: r for r in store.records() if r.key}
+    by_id = {r.work_id: r for r in store.records()}
     entries = []
 
     def add(item: dict, group: str, reason: str = "", **extra) -> None:
@@ -173,9 +173,9 @@ def from_queue(store: records.Store, sessions: list[dict]) -> tuple[list[dict], 
         add(item, "resume")
     for item in queue["start"]:
         add(item, "start")
-    started = {item["key"] for item in queue["start"]}
+    started = {item["work_id"] for item in queue["start"]}
     for item in queue["ready"]:
-        if item["key"] not in started:
+        if item["work_id"] not in started:
             add(item, "held", queue["held"] or "")
     for item in queue["blocked"]:
         add(item, "blocked", "waiting for " + ", ".join(f"{b['key']} ({b['status'] or 'no record'})"

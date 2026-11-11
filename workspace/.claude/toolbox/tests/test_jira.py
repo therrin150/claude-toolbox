@@ -268,7 +268,7 @@ class FileTest(Jira):
     def test_vault_commands_say_why_not(self):
         self.assertIn("Jira assigns keys", self.run_tasks("next-key", ok=False)["error"])
         self.assertIn("create-tickets", self.run_tasks("create-defect", "--summary", "X", ok=False)["error"])
-        self.assertIn("Jira holds the queue", self.run_tasks("queue", ok=False)["error"])
+        self.assertIn("Jira holds epic status", self.run_tasks("epic-status", ok=False)["error"])
 
     def test_a_plan_makes_a_keyless_task(self):
         out = self.run_tasks("context", f"{DISCUSSION}/plan.md")

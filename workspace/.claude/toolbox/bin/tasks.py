@@ -22,6 +22,15 @@ Any tracker:
   set-list <ref> <field> [<value> ...]  Replace one of those lists; no values empties it
   log <ref> <text>                    Append a dated entry to the record's `## Log`
 
+  file <discussion> --keyless         Turn every approved draft into a keyless record, <tasks>/<slug>.md, for work
+                                      that never goes to the tracker: draft numbers in depends_on become slugs,
+                                      links are repaired, the plan's Proposed Stories rewritten. Epics are refused
+
+vault and jira trackers (queue and check name a task by key or slug; under jira they see only the keyless records,
+since Jira holds the keyed ones):
+  queue                               Waiting on the user, resumable, startable under work.wip, blocked
+  check                               Unknown ids, cycles, done depending on undone; exit 1 on any problem
+
 jira tracker:
   import <key> --issue <file>         Make a record from a saved getJiraIssue response
   file <discussion>                   The filing plan: the drafts to file in Jira, in order; writes nothing
@@ -33,9 +42,7 @@ vault tracker:
   file <discussion>                   Key every approved draft and move it into the tasks folder; repair links
   next-key [--count <n>]              Hand out keys from the counter, under the tasks lock
   create-defect --summary <text> ...  Write a defect record straight into the tasks folder
-  queue                               Waiting on the user, resumable, startable under work.wip, blocked
   epic-status [<key>]                 Each epic's status, from its stories
-  check                               Unknown keys, cycles, done depending on undone; exit 1 on any problem
 
 Exit codes: 0 ok, 1 failed (the reason prints as JSON), 2 bad arguments.
 """
@@ -127,6 +134,10 @@ def run(args, store: records.Store, tracker: trackers.Tracker):
     if command == "import":
         return tracker.import_issue(args.key, Path(args.issue).expanduser(), dry)
     if command == "file":
+        if args.keyless:
+            if args.keys or args.issues:
+                raise records.TaskError("file: --keyless makes records with no keys; it takes no --keys or --issues")
+            return tracker.file_keyless(args.discussion, dry)
         issues = Path(args.issues).expanduser() if args.issues else None
         return tracker.file(args.discussion, dry, args.keys, issues)
     if command == "next-key":
@@ -139,11 +150,11 @@ def run(args, store: records.Store, tracker: trackers.Tracker):
         values["depends_on"] = args.depends_on or []
         return tracker.create_defect(values, dry)
     if command == "queue":
-        return board.queue(store)
+        return board.queue(store, tracker)
     if command == "epic-status":
         return board.epic_status(store, args.key)
     if command == "check":
-        return board.check(store)
+        return board.check(store, tracker)
     raise records.TaskError(f"{command}: unknown command")
 
 
@@ -185,6 +196,8 @@ def parser() -> argparse.ArgumentParser:
     sub.add_argument("discussion", help="discussion folder: a path, relative to the vault, or its name")
     sub.add_argument("--keys", nargs="+", metavar="NN=KEY", help="jira: the key Jira gave each draft number")
     sub.add_argument("--issues", help="jira: the saved searchJiraIssuesUsingJql response for those keys")
+    sub.add_argument("--keyless", action="store_true",
+                     help="any tracker: make slug-named records with no keys, for work that never goes to the tracker")
     sub = add("next-key", "hand out keys from the counter (vault tracker)")
     sub.add_argument("--count", type=int, default=1)
     sub = add("create-defect", "write a defect record into the tasks folder (vault tracker)")
@@ -198,10 +211,10 @@ def parser() -> argparse.ArgumentParser:
     sub.add_argument("--owner", help="claude (default) or the user's owner value")
     sub.add_argument("--epic", help="the epic's key")
     sub.add_argument("--depends-on", dest="depends_on", nargs="*", metavar="KEY")
-    add("queue", "the dispatcher's queue (vault tracker)")
+    add("queue", "the dispatcher's queue")
     sub = add("epic-status", "each epic's status from its stories (vault tracker)")
     sub.add_argument("key", nargs="?")
-    add("check", "check every record's links and fields (vault tracker)")
+    add("check", "check every record's links and fields")
     return top
 
 
@@ -215,8 +228,11 @@ def main(argv: list[str] | None = None) -> int:
     store = records.Store(loaded)
     try:
         tracker = trackers.get(store)
-        tracker.require(args.command)
-        plan_only = args.command == "file" and tracker.name == "jira" and not args.keys  # the filing plan
+        keyless_file = args.command == "file" and args.keyless  # any tracker files keyless
+        if not keyless_file:
+            tracker.require(args.command)
+        plan_only = (args.command == "file" and tracker.name == "jira" and not args.keys
+                     and not keyless_file)  # the filing plan
         with store.lock(dry_run=args.command not in WRITES or args.dry_run or plan_only):
             out = run(args, store, tracker)
     except (records.TaskError, frontmatter.FrontmatterError) as error:

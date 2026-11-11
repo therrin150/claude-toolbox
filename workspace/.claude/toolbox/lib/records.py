@@ -471,8 +471,9 @@ class Store:
             return f"owner: {value!r} is not one of {', '.join(self.owners())}"
         if field_name == "stage" and value and value not in self.stages():
             return f"stage: {value!r} is not one of {', '.join(self.stages())} (config work.stages adds more)"
-        if field_name == "depends_on" and self.cfg.key_prefix and not KEY_RE.fullmatch(str(value)):
-            return f"depends_on: {value!r} is not a key"
+        if (field_name == "depends_on" and self.cfg.key_prefix
+                and not (KEY_RE.fullmatch(str(value)) or SLUG_RE.fullmatch(str(value)))):
+            return f"depends_on: {value!r} is neither a key nor a keyless record's slug"
         if field_name == "cycle" and value:
             if value not in CYCLES:
                 return f"cycle: {value!r} is not one of {', '.join(CYCLES)}"

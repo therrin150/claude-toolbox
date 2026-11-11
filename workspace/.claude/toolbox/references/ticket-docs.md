@@ -11,7 +11,7 @@ deletes task records they no longer want; never clean them up for them.
 ## Task records
 
 Every task has a task record, always, whatever the tracker: `<tasks>/<KEY>/<KEY>-<slug>.md` in its key's folder when
-it has a key, `<tasks>/<slug>.md` when it has none (the `none` tracker). A keyed record from before the key folders,
+it has a key, `<tasks>/<slug>.md` when it has none (the `none` tracker, or work filed keyless under any tracker). A keyed record from before the key folders,
 `<tasks>/<KEY>-<slug>.md`, is still read where it is. The slug is the summary in lowercase with every run of other
 characters turned into `-`. A task's **work id** is its key, else that slug; worktrees, branches, sessions and the
 publish folder are all named by it.
@@ -41,7 +41,7 @@ Frontmatter, in this order (an epic has only `type`, `key`, `summary`, `status`,
 | `status` | `todo`, `in-progress`, `review`, `done`, or `stopped` (parked; the reason in `work_note`). An epic's status comes from its stories (`epic-status`) |
 | `owner` | `claude`, or the user's owner value: whose move it is |
 | `stage` | the workflow's finer step while in progress: `implementing`, `testing`, `code-review`, `publish-review`, `awaiting-merge`, `awaiting-ci`, plus any the config's `work.stages` adds (an extension's `awaiting-release`) |
-| `depends_on` | keys of tasks that must be `done` before this one starts: hard blockers only |
+| `depends_on` | work ids (keys, or the slugs of keyless records) of tasks that must be `done` before this one starts: hard blockers only |
 | `created` | the date the record was made |
 | `found_in` | defects only: where it was found (a key, a version, a page), when known |
 | `legacy_id` | the key the task had before a renumbering, kept for good; never rewritten |
@@ -100,6 +100,13 @@ drafts in Jira and `tasks.py file <discussion> --keys NN=KEY ... --issues <file>
 checking them against a saved search for those issues, and then moves the drafts the same way; `context <KEY>` on an
 issue no discussion filed says to `import` it from a saved `getJiraIssue` response. With the `none` tracker, `context
 <draft>` copies the draft into a record and the draft stays where it is.
+
+**Keyless filing**, for work that never goes to the tracker, is `tasks.py file <discussion> --keyless`, under any
+tracker: each approved draft becomes `<tasks>/<slug>.md` with an empty `key`, its draft numbers in `depends_on` turned
+into slugs, links repaired and the plan's `## Proposed Stories` rewritten as for keyed filing. An epic draft is refused
+(an epic needs a key to group its stories; the discussion folder groups keyless ones). `context <slug>`, `queue` and
+`check` name such a record by its slug; under the `jira` tracker `queue` and `check` see only the keyless records, and
+a Jira key in their `depends_on` is Jira's to check.
 
 ## Titles
 

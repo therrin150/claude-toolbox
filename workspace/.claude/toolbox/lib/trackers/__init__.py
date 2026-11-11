@@ -60,6 +60,12 @@ class Tracker:
         jira tracker's: the keys Jira gave, and the issues to check them against."""
         raise Unsupported(f"file: tracker is {self.name}; {self.unsupported.get('file', '')}")
 
+    def file_keyless(self, discussion: str, dry_run: bool = False) -> dict:
+        """File a discussion's approved drafts as keyless, slug-named records. Allowed under any tracker; the vault
+        tracker's filing does the work."""
+        from trackers.vault import VaultTracker
+        return VaultTracker(self.store).file_keyless(discussion, dry_run)
+
     def import_issue(self, key: str, issue: Path, dry_run: bool = False) -> dict:
         raise Unsupported(f"import: tracker is {self.name}; {self.unsupported.get('import', '')}")
 

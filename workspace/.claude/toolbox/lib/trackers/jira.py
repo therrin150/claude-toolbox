@@ -48,9 +48,7 @@ class JiraTracker(VaultTracker):
     unsupported = {
         "next-key": "Jira assigns keys",
         "create-defect": "draft the defect in a discussion and file it with create-tickets",
-        "queue": "Jira holds the queue",
         "epic-status": "Jira holds epic status",
-        "check": "Jira holds the dependencies",
     }
 
     @property

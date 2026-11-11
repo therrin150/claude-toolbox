@@ -1,6 +1,6 @@
 ---
 name: create-tickets
-description: File a discussion's approved drafts as tasks, the "ready" step after propose-tickets. With the vault tracker it gives them keys and moves them into the tasks folder; with the jira tracker the jira-filer agent files them in Jira and the keys it returns are checked and recorded. Use when the user says "file these", "create these tickets", "these are ready", or names a discussion to file.
+description: File a discussion's approved drafts as tasks, the "ready" step after propose-tickets. With the vault tracker it gives them keys and moves them into the tasks folder; with the jira tracker the jira-filer agent files them in Jira and the keys it returns are checked and recorded; drafts that never go to a tracker are filed keyless, as slug-named records. Use when the user says "file these", "create these tickets", "these are ready", names a discussion to file, or says the drafts are vault-only.
 ---
 
 # Create Tickets
@@ -11,7 +11,12 @@ toolbox-config rule names the tracker; `tasks.py` (in the scripts folder it name
 edit draft or record frontmatter by hand. Every `tasks.py` command prints JSON.
 
 Under the `none` tracker there is nothing to file into: say so, and that `work-task` starts a task straight from its
-draft.
+draft, or that the drafts can be filed keyless (below).
+
+**Vault-only drafts.** When the user says the drafts are vault-only (work that never goes to the tracker, such as this
+toolbox's own), or the discussion's plan says so, file them keyless under any tracker: go to step 2a, whatever the
+toolbox-config rule's tracker. Offer it when the plan's `## Proposed Epic` says the work never goes to Jira. Don't
+choose it for the user otherwise.
 
 ## Go-ahead
 
@@ -39,6 +44,19 @@ be filed: a draft with no summary, or a draft `tasks.py` refuses (it says why).
 
 Show the dry run's keys, summaries, epic and dependencies (and what it skips, with the reason), then run it for real
 on the go-ahead. A run that stopped part way is safe to repeat: a draft already holding a key keeps it. Then report.
+
+## 2a. Keyless (vault-only drafts, any tracker)
+
+```bash
+.claude/toolbox/bin/tasks.py file <discussion> --keyless --dry-run
+.claude/toolbox/bin/tasks.py file <discussion> --keyless
+```
+
+Each approved draft becomes `<tasks>/<slug>.md` with an empty `key`; draft numbers in `depends_on` become slugs, links
+are repaired and the plan's `## Proposed Stories` is rewritten. It touches nothing in Jira. Show the dry run's
+work ids, summaries and dependencies (and what it skips, with the reason), then run it for real on the go-ahead. An
+epic draft is refused: the discussion folder groups keyless stories, so drop the epic draft or file it keyed. A run
+that stopped part way is safe to repeat. Then report; the work ids are slugs, and `work-task <slug>` starts one.
 
 ## 3. Jira tracker
 

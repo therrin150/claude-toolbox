@@ -184,8 +184,26 @@ class VaultTracker(Tracker):
         out["next_key"] = f"{self.prefix}-{counter['next']}"
         return out
 
-    def gather(self, folder: Path) -> tuple[list[Entry], list[dict]]:
-        """The drafts a `file` run takes (approved ones, and any an earlier run keyed), and the ones it skips."""
+    def file_keyless(self, discussion: str, dry_run: bool = False) -> dict:
+        """Turn every approved draft in a discussion's `tickets/` folder into a keyless record, `<tasks>/<slug>.md`,
+        for work that never goes to the tracker. Draft numbers in `depends_on` become slugs; links are repaired and
+        the plan's `## Proposed Stories` rewritten as for keyed filing. Epics need a key to group their stories, so
+        an epic draft is refused. Safe to repeat: a draft an earlier run wrote the record contract into and left
+        unmoved is finished."""
+        folder = self.store.resolve_discussion(discussion)
+        entries, skipped = self.gather(folder, keyless=True)
+        for entry in entries:
+            if entry.values["type"] == "epic":
+                raise TaskError(f"{entry.draft}: an epic needs a key to group its stories; the discussion folder "
+                                "groups keyless ones")
+        return self.place(folder, entries, skipped, [], dry_run, keyless=True)
+
+    def gather(self, folder: Path, keyless: bool = False) -> tuple[list[Entry], list[dict]]:
+        """The drafts a `file` run takes (approved ones, and any an earlier run keyed), and the ones it skips.
+
+        Keyless, a draft is taken when approved, or when an earlier run already wrote the record contract into it
+        (a record status in place of `draft` or `approved`) and stopped before moving it. A draft holding a key is
+        keyed work, never touched here."""
         drafts = self.store.drafts(folder)
         if not drafts:
             raise TaskError(f"{folder}: no drafts in its {TICKETS}/ folder")
@@ -197,6 +215,18 @@ class VaultTracker(Tracker):
                 skipped.append({"draft": str(draft), "reason": "no NN- number at the start of its name"})
                 continue
             values, body = self.store.draft_values(draft)
+            if keyless:
+                if values["key"]:
+                    skipped.append({"draft": str(draft), "reason": f"holds the key {values['key']}; it is filed "
+                                    "with a key, not keyless"})
+                elif fields.get("reserved_key"):
+                    raise TaskError(f"{draft}: reserved_key is for keyed filing; a keyless record has no key")
+                elif fields.get("status") in ("approved", *records.STATUSES):
+                    entries.append(Entry(draft, number, values, body, resumed=fields.get("status") != "approved"))
+                else:
+                    skipped.append({"draft": str(draft), "reason": f"status is {fields.get('status') or 'missing'}; "
+                                    "only approved drafts are filed"})
+                continue
             if values["key"]:
                 entries.append(Entry(draft, number, values, body, resumed=True))
             elif fields.get("status") == "approved":
@@ -217,23 +247,36 @@ class VaultTracker(Tracker):
         return epics
 
     def place(self, folder: Path, entries: list[Entry], skipped: list[dict], epics: list[Entry],
-              dry_run: bool) -> dict:
-        """Move keyed entries into the tasks folder: draft numbers in depends_on become keys, stories get the
-        discussion's epic, each draft gets the record contract before it moves, then links and the plan follow."""
+              dry_run: bool, keyless: bool = False) -> dict:
+        """Move entries into the tasks folder: draft numbers in depends_on become keys (slugs, keyless), stories get
+        the discussion's epic, each draft gets the record contract before it moves, then links and the plan follow."""
         store = self.store
         plan = folder / PLAN
         plan_epic = frontmatter.fields(plan).get("epic") if plan.is_file() else None
-        numbered = self.filed_numbers(folder)
-        numbered.update({e.number: e.values["key"] for e in entries})
         epic_key = epics[0].values["key"] if epics else plan_epic
 
         for entry in entries:
-            entry.values["depends_on"] = [self.dependency(entry.draft, d, numbered) for d in entry.values["depends_on"]]
-            if entry.values["type"] != "epic":
-                entry.values["epic"] = entry.values["epic"] or epic_key
             entry.target = store.record_path(entry.values["key"], entry.values["summary"])
             if entry.target.exists():
                 raise TaskError(f"{entry.draft}: {entry.target} already exists")
+        targets = [e.target for e in entries]
+        if len(set(targets)) != len(targets):
+            clash = next(t for t in targets if targets.count(t) > 1)
+            raise TaskError(f"{clash}: more than one draft would become this record; give them different summaries")
+        if keyless:
+            numbered = self.filed_work_ids(folder)
+            numbered.update({e.number: e.target.stem for e in entries})
+            known = {r.work_id for r in store.records()} | set(numbered.values())
+        else:
+            numbered = self.filed_numbers(folder)
+            numbered.update({e.number: e.values["key"] for e in entries})
+
+        for entry in entries:
+            entry.values["depends_on"] = [
+                self.keyless_dependency(entry.draft, d, numbered, known) if keyless
+                else self.dependency(entry.draft, d, numbered) for d in entry.values["depends_on"]]
+            if entry.values["type"] != "epic":
+                entry.values["epic"] = entry.values["epic"] or epic_key
 
         renames = {}
         for entry in entries:
@@ -249,7 +292,7 @@ class VaultTracker(Tracker):
         out = {
             "discussion": str(folder),
             "filed": [{"draft": str(e.draft), "record": str(e.target), "key": e.values["key"],
-                       "type": e.values["type"], "summary": e.values["summary"],
+                       "work_id": e.values["key"] or e.target.stem, "type": e.values["type"], "summary": e.values["summary"],
                        "epic": e.values.get("epic") if e.values["type"] != "epic" else None,
                        "depends_on": e.values["depends_on"], "resumed": e.resumed} for e in entries],
             "skipped": skipped,
@@ -271,6 +314,32 @@ class VaultTracker(Tracker):
                 if number:
                     numbered[number] = record.key
         return numbered
+
+    def filed_work_ids(self, folder: Path) -> dict[str, str]:
+        """Draft number -> work id (a key, or a keyless record's slug), for the drafts of this discussion an earlier
+        run filed."""
+        tickets = self.store.rel(folder / TICKETS)
+        numbered = {}
+        for record in self.store.records():
+            source = record.fields.get("source_doc") or ""
+            number = draft_number(Path(source))
+            if number and source.rsplit("/", 1)[0] == tickets and not record.slice:
+                numbered[number] = record.work_id
+        return numbered
+
+    def keyless_dependency(self, draft: Path, value, numbered: dict[str, str], known: set[str]) -> str:
+        """A `depends_on` entry of a keyless record: a draft number of this discussion becomes that draft's slug (or
+        key, when an earlier run keyed it); a key or a slug already naming a record stays."""
+        text = str(value).strip()
+        if text.isdigit():
+            number = f"{int(text):02d}"
+            if number in numbered:
+                return numbered[number]
+            raise TaskError(f"{draft}: depends on draft {number}, which isn't filed and isn't being filed")
+        if KEY_RE.fullmatch(text) or text in known:
+            return text
+        raise TaskError(f"{draft}: depends_on {value!r} is neither a draft number, a key nor the slug of a task "
+                        "record")
 
     def dependency(self, draft: Path, value, numbered: dict[str, str]) -> str:
         """A `depends_on` entry as a key: a draft number of this discussion becomes that draft's key."""
@@ -320,9 +389,9 @@ class VaultTracker(Tracker):
         for record in self.store.records():
             source = record.fields.get("source_doc") or ""
             number = draft_number(Path(source))
-            if record.key and number and source.rsplit("/", 1)[0] == tickets and number not in filed:
+            if number and source.rsplit("/", 1)[0] == tickets and number not in filed and not record.slice:
                 filed[number] = (record.key, record.summary, record.path, record.type)
-        lines = [f"- {self.store.link(path, key)} {summary}"
+        lines = [f"- {self.store.link(path, key)} {summary}" if key else f"- {self.store.link(path, summary)}"
                  for _, (key, summary, path, kind) in sorted(filed.items()) if kind != "epic"]
         waiting = [self.store.link(Path(s["draft"]), Path(s["draft"]).stem) for s in skipped]
         content = ["", "Filed as task records:", "", *lines] if lines else ["", "No stories filed yet."]

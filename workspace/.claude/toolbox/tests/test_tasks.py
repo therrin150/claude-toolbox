@@ -526,7 +526,8 @@ class RecordCommandsTest(Vault):
         self.assertEqual(self.fields(path)["worktrees"], ["/a", "/b"])
         self.run_tasks("set-list", "PT-1", "worktrees")
         self.assertEqual(self.fields(path)["worktrees"], [])
-        self.assertIn("not a key", self.run_tasks("append", "PT-1", "depends_on", "two", ok=False)["error"])
+        refused = self.run_tasks("append", "PT-1", "depends_on", "Two Words", ok=False)
+        self.assertIn("neither a key nor", refused["error"])
         self.assertIn("not a list field", self.run_tasks("append", "PT-1", "status", "x", ok=False)["error"])
 
     def test_get(self):
