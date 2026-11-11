@@ -1,7 +1,8 @@
 ---
 name: stop-local-services
-description: Stop the services a `start-local-services` run started and release its lock (by token), or kill processes by PID or port on the user's request.
+description: The user stops the services a `start-local-services` run started and releases its lock (by token), or kills processes by PID or port. Agents stop services through `check-runner`, never this skill.
 allowed-tools: Bash(*)
+disable-model-invocation: true
 ---
 
 # Stop Local Services
@@ -20,7 +21,8 @@ explicit target; never scan or guess.
 /stop-local-services --pid <pid>... | --port <port>...     # on the user's request
 ```
 
-A token selects the first mode; `--pid` and `--port` the second. **name** is as in `lock-local-services` ("Lock name").
+A token selects the first mode; `--pid` and `--port` the second. **name** is as in
+`.claude/toolbox/agents/check-runner/bracket.md` ("The Lock").
 
 ## Workflow
 

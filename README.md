@@ -42,14 +42,14 @@ dropping the feature and keeping a project-owned copy.
 |---|---|---|
 | `git` | `git-commit`, `git-draft-commit-message`, `git-delete-merged-branches`, the `git-conventions.md` rule | |
 | `verify` | `verify-change`, the `change-verifier` agent | |
-| `tests` | `run-unit-tests` | `workspace.areas` |
+| `tests` | `run-unit-tests`, the `check-runner` agent | `workspace.areas` |
 | `worktrees` | `git-worktrees` | |
 | `pr` | `gh-create-pull-request`, `gh-merge-pull-request` | |
 | `tasks` | `work-task`, `propose-tickets`, `create-tickets`, `create-defect`, the `ticket-docs.md` rule | `tracker`, `vault` |
 | `jira` | the `jira-filer` agent (a template) | `tracker.jira` |
 | `jira-sprints` | `jira-find-current-sprint` | `tracker.jira` |
 | `dispatcher` | `work-tasks`, `dispatch.py` | |
-| `services-lock` | `lock-`, `unlock-`, `start-`, `stop-local-services`, `run-integration-tests`, `services-runner` | `workspace.areas` |
+| `services-lock` | `start-`, `stop-local-services` (user-invoked), `services_lock.py` | `workspace.areas` |
 | `review-ui` | `local-review-ui` | |
 | `intellij` | `intellij-open-worktree` | |
 | `obsidian` | the vault's Templater templates (`.vault/`) | `vault`, `tracker` |

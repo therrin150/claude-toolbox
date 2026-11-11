@@ -498,18 +498,21 @@ class SkillTextTest(unittest.TestCase):
         self.assertIn("<bin>/watch_task.py pipeline <work id>", self.texts["merge.md"])
 
     def test_the_integration_bracket_is_delegated_in_one_place_every_re_run_names(self):
-        # SKILL.md is the one file every session reads, so the delegation to `services-runner` lives there; a session
+        # SKILL.md is the one file every session reads, so the delegation to `check-runner` lives there; a session
         # resumed at a review stop reads code-review.md or publish-review.md but not work.md.
         checks = self.skill.split("## Checks", 1)[1].split("\n## ", 1)[0]
-        self.assertIn("`services-runner`", checks)
-        self.assertIn("subagent_type: services-runner", checks)
-        self.assertIn("never runs `<bin>/services_lock.py`", " ".join(checks.split()))
+        self.assertIn("`check-runner`", checks)
+        self.assertIn("subagent_type: check-runner", checks)
+        self.assertIn("never runs `<bin>/run_checks.py`", " ".join(checks.split()))
+        self.assertNotIn("services-runner", self.skill)
         for name, text in self.texts.items():
             if name in ("SKILL.md", "extension-points.md"):
                 continue
             flat = " ".join(text.split())
             # No phase file carries the bracket's mechanics, or tells the session to run one itself.
-            self.assertNotIn("subagent_type: services-runner", flat, name)
+            self.assertNotIn("subagent_type: check-runner", flat, name)
+            self.assertNotIn("services-runner", flat, name)
+            self.assertNotIn("run_tests.py", flat, name)
             self.assertNotIn("services_lock.py", flat, name)
             # Every paragraph that runs the integration tests names the Checks, not the bare tests.
             for block in re.split(r"\n\s*\n", text):
@@ -546,9 +549,8 @@ class ExtensionPointsTest(unittest.TestCase):
                 if name != "work-task":  # work-task's hooks are named in its phase files (SkillTextTest)
                     for point in points:
                         self.assertRegex(text, rf"[Hh]ook `{point.id}`")
-        self.assertEqual(extensible, ["intellij-open-worktree", "lock-local-services", "run-integration-tests",
-                                      "run-unit-tests", "start-local-services", "stop-local-services",
-                                      "verify-change", "work-task"])
+        self.assertEqual(extensible, ["intellij-open-worktree", "run-unit-tests", "start-local-services",
+                                      "stop-local-services", "verify-change", "work-task"])
 
     def test_no_old_format_heading_is_left(self):
         old = re.compile(r"(Replaces|Adds to) [a-z0-9-]+'s \"")

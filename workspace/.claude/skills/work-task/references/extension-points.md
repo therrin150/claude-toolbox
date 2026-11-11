@@ -15,11 +15,11 @@ headings freely, never an id. A default in a phase file is the text at the hook.
 | `before-first-cycle` | `work.md` "Before the First Cycle", once on a fresh start: after the record and its context are loaded, before any worktree | nothing | add |
 | `plan-the-cycles` | `work.md` "Before the First Cycle", step 6 | that step, and `cycles.md` for a shared library | add, replace |
 | `after-implementing` | `work.md` "Each Cycle", after step 2, before format and tests | nothing | add |
-| `format` | `work.md` "Each Cycle", step 3 | `run_tests.py format` | add, skip |
-| `unit-tests` | `work.md` "Each Cycle", step 4 | `run-unit-tests` | add, skip |
+| `format` | `work.md` "Each Cycle", step 3 | a `format` runner (SKILL.md "Checks") | add, skip |
+| `unit-tests` | `work.md` "Each Cycle", step 4 | a `unit` runner (SKILL.md "Checks") | add, skip |
 | `before-integration-tests` | `work.md` "Each Cycle", step 5, before the first runner | nothing beyond `start-local-services`' own checks | add |
-| `integration-tests` | `work.md` "Each Cycle", step 5 | `services-runner` brackets (SKILL.md "Checks") | add, skip |
-| `blocked-bracket` | SKILL.md "Checks", integration tests: a runner's `blocked` result | that bullet's `blocked` text | add, replace |
+| `integration-tests` | `work.md` "Each Cycle", step 5 | `integration` runners (SKILL.md "Checks") | add, skip |
+| `blocked-bracket` | SKILL.md "Checks": a runner's `blocked` result | that bullet's `blocked` text | add, replace |
 | `code-review` | `work.md` "Each Cycle", step 6 | `/code-review` | add, skip |
 | `verify` | `work.md` "Each Cycle", step 6 | `verify-change` | add, skip |
 | `review-checks` | `work.md` "Each Cycle", step 6, beside `/code-review` and `verify-change`; findings join the triage | nothing | add |

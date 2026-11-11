@@ -160,28 +160,32 @@ Code can't prove read-only asks the user for write access there.
 Every place that runs the checks follows this, in whatever phase and session it is: a session resumed at a review
 stop reads this file but not `work.md`, so the delegation lives here.
 
-- **Format and unit tests:** `work.md` steps 3 and 4 (`run-unit-tests`, one background run for the applying areas).
-- **Integration tests:** one lock bracket per attempt (start the services, run the tests, stop the services), always
-  run by the `services-runner` agent so the bracket's many mechanical steps stay out of this session's context. This
-  session never runs `<bin>/services_lock.py`, an area's `integration` command, `start-local-services`,
-  `stop-local-services` or `run-integration-tests` itself, in any phase. Spawn the runner with `Agent`
-  (`subagent_type: services-runner`, `run_in_background: true`), passing the worktree path, the work id, the areas, and
-  a test when only some need re-running; then end your turn. In a `nested` workspace, spawn one runner per repo (each
-  repo has its own lock), but locks don't see port overlaps: when two repos' services may share a port, run them one
-  at a time. Act on each runner's `result`:
+- **Who runs them:** a `check-runner` agent, for every check (format, unit tests, integration tests, and a build when a
+  step needs one), so the output and the integration bracket's many mechanical steps stay out of this session's
+  context. This session never runs `<bin>/run_checks.py`, `<bin>/run_tests.py`, `<bin>/services_lock.py`, an area's
+  `format`, `unit`, `build` or `integration` command, `start-local-services`, `stop-local-services` or
+  `run-unit-tests` itself, in any phase, and never reads a build, test or service log.
+- **Spawn it** with `Agent` (`subagent_type: check-runner`, `run_in_background: true`), passing the mode (`format`,
+  `unit`, `build` or `integration`), the applying areas as `<area>=<dir>` (from `worktrees.py changes`), the absolute
+  path of `<bin>`, the work id, and a test when only some need re-running; then end your turn. One runner per mode runs
+  all its areas. For `integration` in a `nested` workspace, spawn one runner per repo (each repo has its own lock), but
+  locks don't see port overlaps: when two repos' services may share a port, run them one at a time.
+- **Its report** gives `pass`, `fail` or `blocked`, the counts, and each failure's test, assertion, expected/actual and
+  trimmed stack, with no log path. Act on each report's `result`:
     - `pass`: done with that area.
-    - `fail`: an attempt. Fix the code, format, re-run its unit tests, then spawn a new runner. At most three attempts
-      per area, then STOP.
+    - `fail`: an attempt. Fix the code, format, re-run its unit tests, then spawn a new runner for the check that
+      failed. At most three attempts per area, then STOP.
     - `blocked`: hook `blocked-bracket`. By default: not an attempt. If its reason is a STOP condition or something
       you can't clear yourself, STOP. If it took over the user's expired manual lock (`notes`), notify them and go on.
     - `lock: NOT RELEASED`, in any result: STOP.
     - A takeover in `notes`: notify the user that their manual lock was taken over.
 
   Don't edit a worktree while its runner is running. If the runner itself misbehaves, the fix goes in its agent file
-  (`services-runner`), never a by-hand bracket.
+  (`check-runner`) or its docs (`<bin>/../agents/check-runner/`), never a by-hand run.
 
-Which areas need the integration tests, and the hooks around them, are in `work.md` step 5; the places that re-run
-them later (the review stops, a change after the PRs are open, a release wait) say "the Checks" and mean this section.
+Which areas need which check, and the hooks around them, are in `work.md` "Which Checks Apply" and steps 3–5; the places
+that re-run them later (the review stops, a change after the PRs are open, a release wait) say "the Checks" and mean this
+section.
 
 ## Progress
 

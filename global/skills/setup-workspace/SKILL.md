@@ -51,14 +51,14 @@ Features come first, since they decide what else is asked. Present the suggested
 |---|---|---|---|
 | `git` | `git-commit`, `git-draft-commit-message`, `git-delete-merged-branches`, the git conventions rule | `.git` | |
 | `verify` | `verify-change` and its `change-verifier` agent | `.git` | |
-| `tests` | `run-unit-tests` | `.git` | `workspace.areas` |
+| `tests` | `run-unit-tests`, the `check-runner` agent | `.git` | `workspace.areas` |
 | `worktrees` | `git-worktrees` | `.git` | |
 | `pr` | `gh-create-pull-request`, `gh-merge-pull-request` | `.git` with a GitHub origin | |
 | `tasks` | `work-task`, `propose-tickets`, `create-tickets`, `create-defect`, the ticket-docs rule | an Atlassian server | `tracker`, `vault` |
 | `jira` | the `jira-filer` agent | an Atlassian server | `tracker.jira` |
 | `jira-sprints` | `jira-find-current-sprint` | | `tracker.jira` |
 | `dispatcher` | `work-tasks` | | |
-| `services-lock` | `start-`, `stop-`, `lock-`, `unlock-local-services`, `run-integration-tests` | a compose file | `workspace.areas` |
+| `services-lock` | `start-`, `stop-local-services` (user-invoked) | a compose file | `workspace.areas` |
 | `review-ui` | `local-review-ui` | | |
 | `intellij` | `intellij-open-worktree` | `.idea/` | |
 | `obsidian` | the vault's Templater templates | `.obsidian/` | `vault`, `tracker` |

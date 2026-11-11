@@ -4,7 +4,7 @@
 # toolbox-config rule are left unlisted.
 #
 # Format: {<feature>: [paths relative to workspace/]}, or {<feature>: {paths: [...], needs: [...]}}. A path names a
-# file, or a folder and everything under it (a skill folder, say: .claude/skills/lock-local-services). A path listed
+# file, or a folder and everything under it (a skill folder, say: .claude/skills/start-local-services). A path listed
 # under more than one feature needs all of them. Dropping a feature from a workspace's config and re-syncing removes
 # those links, like any stale link. A template (a .tmpl file, rendered rather than linked) is listed by its own name,
 # suffix included. Paths under .vault/ (files written into the workspace's vault, not linked into the workspace) are
@@ -18,7 +18,7 @@
 # Example:
 #   services-lock:
 #     paths:
-#       - .claude/skills/lock-local-services
+#       - .claude/skills/start-local-services
 #       - .claude/toolbox/bin/services_lock.py
 #     needs: [workspace.areas]
 
@@ -34,6 +34,7 @@ verify:
 
 tests:
   paths:
+    - .claude/agents/check-runner.md
     - .claude/skills/run-unit-tests
   needs: [workspace.areas]
 
@@ -42,12 +43,8 @@ intellij:
 
 services-lock:
   paths:
-    - .claude/agents/services-runner.md
-    - .claude/skills/lock-local-services
-    - .claude/skills/run-integration-tests
     - .claude/skills/start-local-services
     - .claude/skills/stop-local-services
-    - .claude/skills/unlock-local-services
     - .claude/toolbox/bin/services_lock.py
   needs: [workspace.areas]
 
