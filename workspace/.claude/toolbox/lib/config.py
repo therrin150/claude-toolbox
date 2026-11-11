@@ -36,7 +36,7 @@ RULE_PATH = Path(".claude/rules/toolbox-config.md")
 TOOLBOX_PATH = Path(".claude/toolbox")
 ENV_WORKSPACE = "TOOLBOX_WORKSPACE"
 
-AREA_COMMANDS = ("format", "unit", "integration", "start", "stop")
+AREA_COMMANDS = ("build", "format", "unit", "integration", "start", "stop")
 ANY_AREA = "*"
 BRANCH_FIELDS = ("handle", "key", "slug")
 KEY_PREFIX = re.compile(r"^[A-Z][A-Z0-9]*$")
@@ -181,6 +181,11 @@ SCHEMA = Section({
     }),
     "verify": Section({
         "ignore_bumps": ListOf(str),  # dependency names whose version bumps verify-change doesn't count as scope creep
+    }),
+    # run_checks.py: the package prefixes of this workspace's own code (`org.familysearch.`); a failure's stack trace
+    # keeps only frames that start with one, its first frame and its `Caused by` lines. With none, every frame stays.
+    "checks": Section({
+        "own_code_prefixes": ListOf(str),
     }),
     # Extension docs are found in .claude/extensions/ (lib/extensions.py); `disabled` names the ones to leave out
     "extensions": Section({

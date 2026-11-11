@@ -22,6 +22,8 @@ workspace:
   # command is optional. "*" is the fallback for any area without its own, such as every repo of a nested workspace.
   areas:
     <area>:
+      build: <command>             # builds the area; {skip_tests} takes run_checks.py's --skip-tests as -DskipTests
+                                   # (or whatever your tool calls it), else nothing
       format: <command>            # formats the area's changed files
       unit: <command>              # runs its unit tests; {test} takes --test's value, else nothing
       integration: <command>       # runs its integration tests against running services
@@ -112,6 +114,11 @@ shared_libraries:
     command: <command>             # run in the consumer checkout; {libraries} is the released libraries' names
     skill: <skill>                 # a skill the session runs on the consumer checkout
     path: <path>/SKILL.md          # a skill file outside the workspace (absolute or ~), read and followed there
+
+checks:
+  own_code_prefixes: []            # package prefixes of your own code, such as ["org.example."]; run_checks.py trims a
+                                   # failure's stack trace to frames starting with one, plus its first frame and its
+                                   # `Caused by` lines; default: none (every frame stays)
 
 verify:
   ignore_bumps: []                 # dependency names (or prefixes ending in *) whose version bumps the change-verifier
