@@ -5,6 +5,7 @@ Reads ~/.claude/projects/*/<session-id>.jsonl and <session-id>/subagents/*.jsonl
 
     session_usage.py [--session <id>]... [--weekly-percent P --weekly-resets-at ISO]
     session_usage.py --task <work id | record path> [--dry-run] [--weekly-percent P --weekly-resets-at ISO]
+    session_usage.py [--session <id>]... | --task <work id> --top-results [N]
 
 --session defaults to $CLAUDE_CODE_SESSION_ID, i.e. the calling session, and may be repeated. --task reads the ids
 from a task record's `sessions` instead (work-task's usage step) and writes the record's `usage` (one entry per
@@ -16,6 +17,14 @@ read from $CLAUDE_CONFIG_DIR/projects, else ~/.claude/projects. Prints JSON:
   total           every token and the cost summed across models
   weekly          the estimated share of a week's plan limit, when --weekly-percent and --weekly-resets-at are given
   markdown        the same totals as a table to show as is, with its caveats under it
+  top_results     with --top-results, the ranking below (rows of session, tool, tokens, requests, product)
+
+--top-results [N] (default 20) ranks the main sessions' largest tool results by tokens times the requests each stayed
+in context for, to show what to delegate. A result stays in context for every request after it until a compaction;
+cache reads are most of the tokens, so a big result costs once per request. Rows name the tool, and for Bash the
+command's first two words after any leading `cd <dir> &&`. Subagent transcripts are left out. Result tokens are
+estimated from text length (4 chars a token, 1,600 an image), since transcripts don't record them. With --task it
+writes nothing to the record.
 
 Cost is the API list price of the tokens (rates below, from the claude-api skill, 2026-10). A subscription doesn't bill
 per token, so it's a yardstick for comparing runs, not a charge.
@@ -59,6 +68,12 @@ PRICES = {
 }
 DATE_SUFFIX = re.compile(r"-\d{8}$")
 USAGE_ORDER = ("requests", "input", "cache_write_5m", "cache_write_1h", "cache_read", "output")
+# Transcripts don't record a tool result's size, so --top-results estimates it from the result's text.
+CHARS_PER_TOKEN = 4
+# What a Bash command starts with that says nothing about it: `cd <dir> &&` and `NAME=value` words.
+LEADING_SETUP = re.compile(
+    r"""^(?:(?:cd\s+(?:"[^"]*"|'[^']*'|\S+)\s*(?:&&|;)|[A-Za-z_]\w*=(?:"[^"]*"|'[^']*'|\S*)(?:\s*(?:&&|;)|\s+))\s*)+""")
+IMAGE_TOKENS = 1600
 
 PROJECTS = os.path.join(os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude"), "projects")
 
@@ -98,6 +113,85 @@ def final_agent_usage(transcript):
         if isinstance(result, dict) and result.get("agentId") and result.get("usage"):
             finals[result["agentId"]] = result["usage"]
     return finals
+
+
+def result_tokens(content):
+    """Estimated tokens of one tool result: its text at CHARS_PER_TOKEN, plus a flat IMAGE_TOKENS per image."""
+    if isinstance(content, str):
+        return round(len(content) / CHARS_PER_TOKEN)
+    chars = images = 0
+    for block in content if isinstance(content, list) else []:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") == "text":
+            chars += len(block.get("text", ""))
+        elif block.get("type") == "image":
+            images += 1
+    return round(chars / CHARS_PER_TOKEN) + images * IMAGE_TOKENS
+
+
+def tool_label(name, tool_input):
+    """The tool, and for Bash its command's first two words, e.g. `Bash git status`."""
+    if name == "Bash":
+        command = LEADING_SETUP.sub("", str((tool_input or {}).get("command", "")).strip())
+        return " ".join(["Bash", *command.split()[:2]])
+    return name
+
+
+def tool_results(transcript):
+    """The main session's tool results as dicts: label, tokens, and the later requests each stayed in context for.
+
+    A result stays in context for every API request after it until the conversation is compacted. Subagent
+    transcripts are not read, so a subagent's own results never appear; the Agent call's result does."""
+    uses, results, order = {}, [], []  # order: ("request", key) | ("result", index) | ("compact", None)
+    seen = set()
+    for rec in read_records(transcript):
+        if rec.get("isSidechain"):
+            continue
+        msg = rec.get("message")
+        kind = rec.get("type")
+        if kind == "system" and rec.get("subtype") == "compact_boundary":
+            order.append(("compact", None))
+        elif kind == "assistant" and isinstance(msg, dict) and msg.get("usage"):
+            key = rec.get("requestId") or msg.get("id")
+            if key not in seen:
+                seen.add(key)
+                order.append(("request", key))
+            for block in msg.get("content") if isinstance(msg.get("content"), list) else []:
+                if isinstance(block, dict) and block.get("type") == "tool_use":
+                    uses[block.get("id")] = (block.get("name", "unknown"), block.get("input"))
+        elif kind == "user" and isinstance(msg, dict) and isinstance(msg.get("content"), list):
+            for block in msg["content"]:
+                if isinstance(block, dict) and block.get("type") == "tool_result":
+                    name, tool_input = uses.get(block.get("tool_use_id"), ("unknown", None))
+                    results.append({"tool": tool_label(name, tool_input),
+                                    "tokens": result_tokens(block.get("content"))})
+                    order.append(("result", len(results) - 1))
+    # Walk backwards, counting requests since the next compaction; a result's count is the tally at its position.
+    later = 0
+    for kind, ref in reversed(order):
+        if kind == "request":
+            later += 1
+        elif kind == "compact":
+            later = 0
+        else:
+            results[ref]["requests"] = later
+    return results
+
+
+def top_results(per_session_results, limit):
+    """Rows ordered by tokens x requests, largest first; ties by tokens then the order found."""
+    rows = [{"session": sid, **r, "product": r["tokens"] * r["requests"]}
+            for sid, results in per_session_results.items() for r in results]
+    rows.sort(key=lambda r: (-r["product"], -r["tokens"]))
+    return rows[:limit]
+
+
+def top_results_markdown(rows):
+    out = ["| # | Tool | Result tokens | Later requests | Tokens x requests |", "|--:|---|---:|---:|---:|"]
+    for i, r in enumerate(rows, 1):
+        out.append(f"| {i} | {r['tool']} | {fmt(r['tokens'])} | {fmt(r['requests'])} | {fmt(r['product'])} |")
+    return "\n".join(out)
 
 
 def new_totals():
@@ -218,11 +312,19 @@ def write_record(store, record, per_session, total, weekly, dry_run):
         frontmatter.update(record.path, {"usage": usage, "usage_total": summary}, dry_run)
 
 
+def positive_int(text):
+    n = int(text)
+    if n < 1:
+        raise argparse.ArgumentTypeError(f"{text} is not a positive number")
+    return n
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--session", action="append")
     parser.add_argument("--task")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--top-results", nargs="?", type=positive_int, const=20, metavar="N")
     parser.add_argument("--weekly-percent", type=float)
     parser.add_argument("--weekly-resets-at")
     args = parser.parse_args()
@@ -241,12 +343,14 @@ def main():
     if not all(ids):
         sys.exit("no --session and no CLAUDE_CODE_SESSION_ID")
 
-    per_session, by_model, subagents = {}, new_totals(), 0
+    per_session, by_model, subagents, results = {}, new_totals(), 0, {}
     for sid in ids:
         hits = glob.glob(os.path.join(PROJECTS, "*", f"{sid}.jsonl"))
         if not hits:
             sys.exit(f"no transcript for session {sid}")
         per_session[sid] = session_totals(hits[0])
+        if args.top_results is not None:
+            results[sid] = tool_results(hits[0])
         subagents += len(subagent_transcripts(hits[0]))
         merge(by_model, per_session[sid])
 
@@ -266,17 +370,23 @@ def main():
             weekly = {"percent_used": args.weekly_percent, "window_start": since, "local_cost": round(local, 2),
                       "estimate_percent": round(args.weekly_percent / local * total["cost"], 2)}
 
-    if record:
+    if record and args.top_results is None:
         write_record(store, record, per_session, total, weekly, args.dry_run)
     table = markdown(by_model, total, weekly)
     notes = caveats(len(ids), subagents, unpriced, weekly)
+    ranking = None
+    if args.top_results is not None:
+        ranking = top_results(results, args.top_results)
+        table += "\n\nLargest main-session tool results (tokens estimated from text length):\n\n"
+        table += top_results_markdown(ranking)
     print(json.dumps({
         "sessions": per_session,
         "by_model": by_model,
         "total": total,
         "unpriced_models": unpriced,
         "weekly": weekly,
-        "record": str(record.path) if record else None,
+        "top_results": ranking,
+        "record": str(record.path) if record and args.top_results is None else None,
         "dry_run": args.dry_run,
         "markdown": table + "\n\n" + "\n".join(notes) if notes else table,
     }, indent=2))

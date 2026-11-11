@@ -8,6 +8,7 @@ Run from the repo root:
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import shutil
@@ -115,7 +116,73 @@ class UsageTest(unittest.TestCase):
                                places=1)
         self.assertIn("Weekly limit", out["markdown"])
 
+    def test_top_results_ranks_by_tokens_times_requests(self):
+        def call(request, tool_id, name, tool_input):
+            line = assistant(request, "claude-opus-5-5", 1)
+            line["message"]["content"] = [{"type": "tool_use", "id": tool_id, "name": name, "input": tool_input}]
+            return line
+
+        def result(tool_id, content):
+            return {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": tool_id,
+                                                              "content": content}]}}
+
+        lines = [
+            call("r1", "t1", "Bash", {"command": "git diff --stat HEAD"}), result("t1", "x" * 4000),  # 1,000 tokens
+            call("r2", "t2", "Read", {"file_path": "/a"}), result("t2", [{"type": "text", "text": "y" * 8000}]),
+            call("r3", "t3", "Bash", {"command": "git diff master"}), result("t3", "z" * 400),  # 100 tokens
+            {"type": "system", "subtype": "compact_boundary"},
+            call("r4", "t4", "Read", {"file_path": "/b"}), result("t4", "w" * 40000),  # 10,000 tokens, 1 later request
+            assistant("r5", "claude-opus-5-5", 1),
+        ]
+        # A sidechain record and a subagent's own results must not count.
+        side = call("rs", "ts", "Bash", {"command": "ls"})
+        side["isSidechain"] = True
+        self.transcript("s1", lines + [side],
+                        {"a1": [call("ra", "ta", "Grep", {}), result("ta", "q" * 400000)]})
+        out = self.run_usage("--session", "s1", "--top-results", "3")
+        rows = out["top_results"]
+        # t1 stayed in context for r2 and r3, t2 for r3; the compaction clears t3, so it has none.
+        self.assertEqual([(r["tool"], r["tokens"], r["requests"], r["product"]) for r in rows],
+                         [("Read", 10000, 1, 10000), ("Read", 2000, 1, 2000), ("Bash git diff", 1000, 2, 2000)])
+        self.assertIn("| 1 | Read | 10,000 | 1 | 10,000 |", out["markdown"])
+        self.assertIn("| 3 | Bash git diff | 1,000 | 2 | 2,000 |", out["markdown"])
+        self.assertEqual(len(self.run_usage("--session", "s1", "--top-results")["top_results"]), 4)
+        self.assertIsNone(self.run_usage("--session", "s1")["top_results"])
+
+    def test_top_results_label_skips_leading_cd_and_env(self):
+        spec = importlib.util.spec_from_file_location("session_usage_under_test", USAGE)
+        session_usage = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(session_usage)
+        label = session_usage.tool_label
+        self.assertEqual(label("Bash", {"command": "cd ~/x/y && git status -s"}), "Bash git status")
+        self.assertEqual(label("Bash", {"command": "cd /a; cd /b && grep -rn x ."}), "Bash grep -rn")
+        self.assertEqual(label("Bash", {"command": "FOO=1 BAR=2 mvn test"}), "Bash mvn test")
+        self.assertEqual(label("Bash", {"command": "git diff HEAD"}), "Bash git diff")
+        self.assertEqual(label("Bash", {"command": 'cd "dir with spaces" && ls -la'}), "Bash ls -la")
+        self.assertEqual(label("Bash", {"command": "B=.claude/bin && $B/tasks.py queue"}), "Bash $B/tasks.py queue")
+        self.assertEqual(label("Bash", {"command": "cd foo"}), "Bash cd foo")
+        self.assertEqual(label("Read", {"file_path": "/a"}), "Read")
+
+    def test_top_results_with_task_ranks_the_records_sessions_and_leaves_it_alone(self):
+        def session(request, tool_id, chars):
+            line = assistant(request, "claude-opus-5-5", 1)
+            line["message"]["content"] = [{"type": "tool_use", "id": tool_id, "name": "Grep", "input": {}}]
+            return [line, {"type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": tool_id, "content": "x" * chars}]}},
+                assistant(request + "b", "claude-opus-5-5", 1)]
+        self.transcript("s1", session("r1", "t1", 400))
+        self.transcript("s2", session("r2", "t2", 4000))
+        path = self.record(["s1", "s2"])
+        before = path.read_text()
+        out = self.run_usage("--task", "PT-1", "--top-results", "20")
+        self.assertEqual([(r["session"], r["tokens"], r["requests"]) for r in out["top_results"]],
+                         [("s2", 1000, 1), ("s1", 100, 1)])
+        self.assertIsNone(out["record"])
+        self.assertEqual(path.read_text(), before)
+
     def test_errors(self):
+        self.transcript("s1", [assistant("r1", "claude-opus-5-5", 1)])
+        self.assertIn("not a positive number", self.run_usage("--session", "s1", "--top-results", "0", ok=False))
         self.assertIn("no --session", self.run_usage(ok=False))
         self.assertIn("no transcript for session nope", self.run_usage("--session", "nope", ok=False))
         self.record([])
