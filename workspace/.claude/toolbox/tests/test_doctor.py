@@ -207,8 +207,8 @@ class DoctorTest(unittest.TestCase):
             "project": "ABC", "account": "jdoe@example.com"}}
         self.write_config()
 
-    def test_jira_filer_is_rendered_with_the_configured_server(self):
-        agent = self.ws / ".claude" / "agents" / "jira-filer.md"
+    def test_jira_creator_is_rendered_with_the_configured_server(self):
+        agent = self.ws / ".claude" / "agents" / "jira-creator.md"
         jira_tools = ["atlassianUserInfo", "getAccessibleAtlassianResources", "getJiraIssue",
                       "searchJiraIssuesUsingJql", "createJiraIssue", "editJiraIssue", "addOrEditJiraIssueComment",
                       "discover", "executeRead", "executeWrite", "addCommentToJiraIssue", "createIssueLink",
@@ -219,7 +219,7 @@ class DoctorTest(unittest.TestCase):
             proc = subprocess.run([sys.executable, str(self.toolbox / "install.py")], capture_output=True, text=True)
             plan = (self.toolbox / "install-plan.txt").read_text()
             status = "new" if server == "atlassian" else "changed"
-            self.assertIn(f"  {agent} ({status}, rendered from jira-filer.md.tmpl)\n", plan, proc.stdout)
+            self.assertIn(f"  {agent} ({status}, rendered from jira-creator.md.tmpl)\n", plan, proc.stdout)
             self.install()
             text = agent.read_text()
             self.assertFalse(agent.is_symlink())
@@ -227,14 +227,14 @@ class DoctorTest(unittest.TestCase):
             tools = next(line for line in text.splitlines() if line.startswith("tools: "))
             self.assertEqual(tools.removeprefix("tools: ").split(", "),
                              ["Read", "Bash"] + [f"mcp__{server}__{tool}" for tool in jira_tools])
-            self.assertIn("project `ABC` on `example.atlassian.net`", text)
+            self.assertIn("Project `ABC` on `example.atlassian.net`", " ".join(text.split()))
             code, checks, out = self.doctor()
             self.assertEqual(code, 0, out)
-            self.assertEqual(checks["rendered"]["detail"], "2 file(s) current")  # jira-filer.md, jira-reader.md
+            self.assertEqual(checks["rendered"]["detail"], "2 file(s) current")  # jira-creator.md, jira-reader.md
 
     def test_rendered_file_missing_or_out_of_date(self):
         agents = self.ws / ".claude" / "agents"
-        agent, reader = agents / "jira-filer.md", agents / "jira-reader.md"
+        agent, reader = agents / "jira-creator.md", agents / "jira-reader.md"
         self.use_jira("atlassian")
         self.install()
         self.use_jira("atlassian-work")

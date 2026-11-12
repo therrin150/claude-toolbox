@@ -47,7 +47,7 @@ dropping the feature and keeping a project-owned copy.
 | `worktrees` | `git-worktrees`, the main checkout gate (denies `Edit` and `Write` in a repo's main checkout while a task worktree of it exists) | |
 | `pr` | `gh-create-pull-request`, `gh-merge-pull-request` | |
 | `tasks` | `work-task`, `propose-tickets`, `create-tickets`, `create-defect`, the `ticket-docs.md` rule | `tracker`, `vault` |
-| `jira` | the `jira-filer` agent (a template), the `jira-reader` agent (a template; a read-only Haiku lookup of issues or a JQL that returns only the fields asked for) | `tracker.jira` |
+| `jira` | the `jira-creator` agent (a template; a Haiku agent that files drafts as Jira issues, after `draft_to_jira.py` converts their markdown), the `jira-reader` agent (a template; a read-only Haiku lookup of issues or a JQL that returns only the fields asked for) | `tracker.jira` |
 | `jira-sprints` | `jira-find-current-sprint` | `tracker.jira` |
 | `dispatcher` | `work-tasks`, `dispatch.py` | |
 | `services-lock` | `start-`, `stop-local-services` (user-invoked), `services_lock.py` | `workspace.areas` |
@@ -163,7 +163,7 @@ On Windows, turn on Developer Mode first so Python can create symlinks without a
   path without the suffix, instead of being linked: each `{{ dotted.config.key }}` becomes that key's value from the
   workspace's config. It is recorded as generated, like the rule, and `features.yml` gates it by its `.tmpl` name. A
   key the config doesn't have, or one that isn't a single value, is a problem, and the file there is left as it is.
-  This is for what a link can't do, such as an agent whose `tools:` names the workspace's MCP server (`jira-filer`,
+  This is for what a link can't do, such as an agent whose `tools:` names the workspace's MCP server (`jira-creator`,
   `jira-reader`).
 - **Vault files.** The workspace folder's `.vault/` folder mirrors each workspace's vault (its config's
   `vault.path`, inside the workspace or anywhere on disk) instead of the workspace root. Its files are written, never

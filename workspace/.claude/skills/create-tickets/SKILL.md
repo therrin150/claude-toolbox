@@ -1,6 +1,6 @@
 ---
 name: create-tickets
-description: File a discussion's approved drafts as tasks, the "ready" step after propose-tickets. With the vault tracker it gives them keys and moves them into the tasks folder; with the jira tracker the jira-filer agent files them in Jira and the keys it returns are checked and recorded; drafts that never go to a tracker are filed keyless, as slug-named records. Use when the user says "file these", "create these tickets", "these are ready", names a discussion to file, or says the drafts are vault-only.
+description: File a discussion's approved drafts as tasks, the "ready" step after propose-tickets. With the vault tracker it gives them keys and moves them into the tasks folder; with the jira tracker the jira-creator agent files them in Jira and the keys it returns are checked and recorded; drafts that never go to a tracker are filed keyless, as slug-named records. Use when the user says "file these", "create these tickets", "these are ready", names a discussion to file, or says the drafts are vault-only.
 ---
 
 # Create Tickets
@@ -76,11 +76,12 @@ key), `already_filed`, `skipped`, `no_epic` and the configured `fields`. Show it
   one. A flagged result needs the user's pick before anything is filed.
 - A `keyed_not_moved` draft was filed by an earlier run: never file it again. Include its key in step 3's `--keys`.
 
-### File with jira-filer
+### File with jira-creator
 
-Spawn the `jira-filer` agent (it runs the identity check before its first write) with the discussion, the plan's rows to
-file and the sprint ids. It owns the field mechanics (AC field or description, ADF, panels, labels, sprint, estimate)
-and returns `Filed: NN=KEY ...`.
+Spawn the `jira-creator` agent (a Haiku agent; it runs the identity check before its first write) with the workspace
+root, the discussion, the plan's rows to file and the sprint ids. Before it creates anything, it runs
+`draft_to_jira.py` over every draft in the plan, which converts each draft's markdown (scenarios, panels, code blocks,
+tables) to the issue format; the agent sends what the script produced and returns `Filed: NN=KEY ...`.
 
 1. **The epic first.** If `to_file` has an epic draft, ask the agent to file only the epic and return. Record it at
    once (the next step, with just `00=<KEY>`), so the plan holds the epic's key before any story exists. If the epic
@@ -88,7 +89,10 @@ and returns `Filed: NN=KEY ...`.
 2. **Then the stories,** in a second call, from a fresh `tasks.py file <discussion>` plan: their epic is now the
    plan's. The agent files them in number order, posts testing notes as comments and links dependencies.
 
-If the agent reports missing Jira tools or the identity check failing, say so; never file any other way.
+If the agent reports missing Jira tools or the identity check failing, say so; never file any other way. If it reports
+`Filed: none` with a conversion failure (the script names the unsupported construct and the draft's line), nothing was
+created: show the user the message, let them fix the draft, and run this skill again. Never convert the markdown
+yourself or file around it.
 
 ### Check and record
 

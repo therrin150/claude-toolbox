@@ -3,7 +3,7 @@
 | Tracker | Keys | Requirement | Writes back |
 |---|---|---|---|
 | `vault` | a local counter (`<PREFIX>-<n>`), under the tasks lock | the record: it is the ticket | n/a |
-| `jira` | Jira, filed by the jira-filer agent | Jira, imported into the record | per config |
+| `jira` | Jira, filed by the jira-creator agent | Jira, imported into the record | per config |
 | `none` | none: a slug of the summary or plan title | the draft or `plan.md`, copied into the record | nothing |
 
 Every tracker has the same interface (`Tracker`); `get(store)` returns the workspace's. A command a tracker doesn't

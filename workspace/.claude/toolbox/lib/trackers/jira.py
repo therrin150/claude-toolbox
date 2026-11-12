@@ -1,4 +1,4 @@
-"""The `jira` tracker: keys come from Jira, where the jira-filer agent files a discussion's drafts; a task's requirement
+"""The `jira` tracker: keys come from Jira, where the jira-creator agent files a discussion's drafts; a task's requirement
 is imported from Jira into its record; status writes back per `tracker.jira.write_back`.
 
 A script can't call an MCP tool, so the session does every Jira call and hands this module what came back, saved as

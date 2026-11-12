@@ -10,8 +10,8 @@ Everything else starts as a discussion draft (`propose-tickets`); a defect is th
 tasks folder.
 
 **Vault tracker only.** The toolbox-config rule names the tracker. Under `jira`, draft the defect in a discussion's
-`tickets/` folder (`type: defect`) and file it with `create-tickets`, or ask the `jira-filer` agent to file it directly;
-under `none` there is no tracker to file it in. Say which and stop.
+`tickets/` folder (`type: defect`) and file it with `create-tickets`, or ask the `jira-creator` agent to file it
+directly; under `none` there is no tracker to file it in. Say which and stop.
 
 ## 1. Gather
 

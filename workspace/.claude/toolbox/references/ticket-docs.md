@@ -96,7 +96,7 @@ With the `vault` tracker, `tasks.py file <discussion>` is the "ready" step: it g
 epic's `reserved_key`, else the next from the counter), turns draft numbers in `depends_on` into keys, writes the record
 frontmatter into the draft and then moves it into the tasks folder, repairs wikilinks to the moved drafts, sets the
 plan's `epic`, and rewrites the plan's `## Proposed Stories` as links to the filed tasks. A run that stops part way is
-safe to repeat: a draft that already holds a `key` keeps it. With the `jira` tracker, the `jira-filer` agent files the
+safe to repeat: a draft that already holds a `key` keeps it. With the `jira` tracker, the `jira-creator` agent files the
 drafts in Jira and `tasks.py file <discussion> --keys NN=KEY ... --issues <file>` records the keys it returned, after
 checking them against a saved search for those issues, and then moves the drafts the same way; `context <KEY>` on an
 issue no discussion filed says to `import` it from a saved `getJiraIssue` response. With the `none` tracker, `context
