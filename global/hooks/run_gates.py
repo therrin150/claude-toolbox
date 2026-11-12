@@ -1,31 +1,41 @@
 #!/usr/bin/env python3
-"""The hook gate dispatcher: one script, registered once per event, that runs every installed gate for that event.
+"""The hook gate dispatcher: one global script, registered once per event in ~/.claude/settings.json, that runs every
+installed gate for that event, global and workspace alike.
 
-Rules that say "never do X in the main session" are enforced by gates instead of prose. A gate is a module in
-`gates/<event>/<name>.py` beside this script (<event> is the hook event in snake case: PreToolUse is `pre_tool_use`).
-It declares:
+Rules that say "never do X in the main session" are enforced by gates instead of prose. A gate is a module named
+`<name>.py` in a `gates/<event>/` folder (<event> is the hook event in snake case: PreToolUse is `pre_tool_use`). Two
+folders are read, global gates first:
+
+  global     `gates/<event>/` beside this script, i.e. ~/.claude/hooks/gates/<event>/
+  workspace  the nearest `.claude/hooks/gates/<event>/` found walking up from the session's directory
+             ($CLAUDE_PROJECT_DIR, else the input's `cwd`), so a session started in a repo or a worktree under a
+             workspace still finds the workspace's gates
+
+A gate declares:
 
   TOOLS      the tool names it looks at (a set of strings, e.g. {"Bash"}, not a bare str); a gate whose TOOLS leave
              out the call's tool never runs
   MAIN_ONLY  True to skip the gate when the input has an `agent_type`, i.e. the call comes from a subagent
   check(event)  returns a denial message (a str, which should name the agent or skill to use instead) or None
 
-The dispatcher reads the hook input from stdin once and runs the matching gates in file-name order. The first denial
-ends the run: for PreToolUse it is printed as a `permissionDecision: deny`, for any other event as `decision: block`
-(the form PostToolUse, SubagentStop and the like honor). Exit code is always 0.
+The dispatcher reads the hook input from stdin once and runs the matching gates in file-name order within each folder.
+Two gates may share a file name across folders; both run. The first denial ends the run: for PreToolUse it is printed
+as a `permissionDecision: deny`, for any other event as `decision: block` (the form PostToolUse, SubagentStop and the
+like honor). Exit code is always 0.
 
 Fail open: a gate that fails to load, raises, or returns something other than a str or None is skipped with a line
 `gate <event>/<name>: <error>` on stderr, and bad input or a missing gates folder runs nothing. One broken gate never
 blocks the session.
 
-The gates folder is listed on every call, so adding or deleting a gate file takes effect on the next tool call with no
-settings change and no restart. Files starting with `_` are not gates. The folder is found from the path this script
-was run by, not its resolved target: the installer links files one at a time, so gates installed beside a linked
+The folders are listed on every call, so adding or deleting a gate file takes effect on the next tool call with no
+settings change and no restart. Files starting with `_` are not gates. The global folder is found from the path this
+script was run by, not its resolved target: the installer links files one at a time, so gates installed beside a linked
 dispatcher are found where they are linked.
 
-Registered (by the installer's core settings fragment) as:
+Registered (by the installer's settings fragment) as the one hook per event. The command skips a missing script, since
+a hook command that exits 2 blocks the call:
   {"matcher": "*", "hooks": [{"type": "command",
-   "command": "python3 \\"$CLAUDE_PROJECT_DIR/.claude/hooks/run_gates.py\\""}]}
+   "command": "f=\\"$HOME/.claude/hooks/run_gates.py\\"; [ ! -f \\"$f\\" ] || python3 \\"$f\\""}]}
 """
 
 from __future__ import annotations
@@ -40,6 +50,7 @@ from pathlib import Path
 sys.dont_write_bytecode = True
 
 GATES = Path(os.path.abspath(__file__)).parent / "gates"
+WORKSPACE_GATES = Path(".claude") / "hooks" / "gates"
 
 
 def event_dir(name: str) -> str:
@@ -58,19 +69,42 @@ def load(path: Path):
     return module
 
 
+def workspace_folder(event: dict, name: str) -> Path | None:
+    """The nearest `.claude/hooks/gates/<name>/` at or above the session's directory, other than the global one."""
+    start = os.environ.get("CLAUDE_PROJECT_DIR") or event.get("cwd")
+    if not start:
+        return None
+    try:
+        own = (GATES / name).resolve()
+        for parent in [Path(start), *Path(start).parents]:
+            folder = parent / WORKSPACE_GATES / name
+            if folder.is_dir() and folder.resolve() != own:
+                return folder
+    except OSError:
+        pass
+    return None
+
+
+def gate_files(event: dict, name: str) -> list:
+    """Every gate file to consider: the global folder's, then the nearest workspace folder's, each in name order."""
+    files = []
+    for folder in (GATES / name, workspace_folder(event, name)):
+        try:
+            if folder is not None and folder.is_dir():
+                files += sorted(p for p in folder.glob("*.py") if not p.name.startswith("_"))
+        except OSError:
+            continue
+    return files
+
+
 def run(event: dict) -> str | None:
     """The first gate's denial message for this call, or None."""
     name = event_dir(str(event.get("hook_event_name") or ""))
-    folder = GATES / name
-    if not name or not folder.is_dir():
+    if not name:
         return None
     tool = event.get("tool_name")
     from_agent = bool(event.get("agent_type"))
-    try:
-        files = sorted(p for p in folder.glob("*.py") if not p.name.startswith("_"))
-    except OSError:
-        return None
-    for path in files:
+    for path in gate_files(event, name):
         try:
             gate = load(path)
             if not isinstance(gate.TOOLS, (set, frozenset, list, tuple)):

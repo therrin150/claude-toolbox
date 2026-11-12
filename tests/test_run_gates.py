@@ -1,16 +1,17 @@
 """Tests for hooks/run_gates.py: denial, MAIN_ONLY, fail-open, name order, removal mid-session, linked install.
 
-Each test copies the dispatcher beside a temporary gates folder and runs it the way Claude Code does: hook input as
-JSON on stdin.
+Each test copies the dispatcher beside a temporary global gates folder, builds a temporary workspace with its own
+gates, and runs the dispatcher the way Claude Code does: hook input as JSON on stdin.
 
 Run from the repo root:
 
-    python3 -m unittest discover -s workspace/.claude/toolbox/tests
+    python3 -m unittest discover -s tests
 """
 
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -18,7 +19,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-HOOKS = Path(__file__).resolve().parents[2] / "hooks"
+HOOKS = Path(__file__).resolve().parents[1] / "global" / "hooks"
 SCRIPT = HOOKS / "run_gates.py"
 
 BLOCK_ECHO = '''
@@ -52,9 +53,23 @@ class RunGatesTest(unittest.TestCase):
         self.folder = self.hooks / "gates" / "pre_tool_use"
         self.folder.mkdir(parents=True)
         shutil.copy(SCRIPT, self.hooks / "run_gates.py")
+        # a workspace with a repo and a worktree under it, and gates of its own; sessions start in either
+        self.workspace = self.tmp / "workspace"
+        self.wfolder = self.workspace / ".claude" / "hooks" / "gates" / "pre_tool_use"
+        self.wfolder.mkdir(parents=True)
+        self.repo = self.workspace / "repo"
+        self.worktree = self.workspace / ".worktrees" / "task" / "repo"
+        for path in (self.repo, self.worktree):
+            (path / ".claude").mkdir(parents=True)
+        self.env = {k: v for k, v in os.environ.items() if k != "CLAUDE_PROJECT_DIR"}
 
     def gate(self, name: str, source: str) -> Path:
         path = self.folder / f"{name}.py"
+        path.write_text(source)
+        return path
+
+    def workspace_gate(self, name: str, source: str) -> Path:
+        path = self.wfolder / f"{name}.py"
         path.write_text(source)
         return path
 
@@ -62,7 +77,7 @@ class RunGatesTest(unittest.TestCase):
         return subprocess.run(
             [sys.executable, str(script or self.hooks / "run_gates.py")],
             input=raw if raw is not None else json.dumps(event),
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, timeout=30, env=self.env,
         )
 
     def denial(self, result) -> str | None:
@@ -169,14 +184,73 @@ class RunGatesTest(unittest.TestCase):
         self.assertIsNone(self.denial(result))
         self.assertIn("gate pre_tool_use/a_missing_file: FileNotFoundError", result.stderr)
 
-    def test_linked_dispatcher_finds_gates_beside_the_link(self) -> None:
-        """The installer links files one at a time: gates sit beside the link, not beside its target."""
-        workspace = self.tmp / "workspace" / ".claude" / "hooks"
-        (workspace / "gates" / "pre_tool_use").mkdir(parents=True)
-        link = workspace / "run_gates.py"
+    def test_linked_dispatcher_finds_global_gates_beside_the_link(self) -> None:
+        """The installer links files one at a time: global gates sit beside the link, not beside its target."""
+        linked = self.tmp / "home" / ".claude" / "hooks"
+        (linked / "gates" / "pre_tool_use").mkdir(parents=True)
+        link = linked / "run_gates.py"
         link.symlink_to(SCRIPT)
-        (workspace / "gates" / "pre_tool_use" / "block_echo.py").write_text(BLOCK_ECHO)
+        (linked / "gates" / "pre_tool_use" / "block_echo.py").write_text(BLOCK_ECHO)
         self.assertIsNotNone(self.denial(self.run_gates(bash("echo blocked"), script=link)))
+
+    def test_workspace_gate_runs_from_the_workspace_root_a_repo_and_a_worktree(self) -> None:
+        self.workspace_gate("block_echo", BLOCK_ECHO)
+        for start in (self.workspace, self.repo, self.worktree, self.repo / "src" / "deep"):
+            result = self.run_gates(bash("echo blocked", cwd=str(start)))
+            self.assertEqual(self.denial(result), "blocked by test gate; use the test agent", start)
+
+    def test_workspace_gate_does_not_run_outside_its_workspace(self) -> None:
+        self.workspace_gate("block_echo", BLOCK_ECHO)
+        elsewhere = self.tmp / "elsewhere"
+        elsewhere.mkdir()
+        self.assertIsNone(self.denial(self.run_gates(bash("echo blocked", cwd=str(elsewhere)))))
+        self.assertIsNone(self.denial(self.run_gates(bash("echo blocked"))))  # no cwd at all
+
+    def test_project_dir_wins_over_cwd(self) -> None:
+        self.workspace_gate("block_echo", BLOCK_ECHO)
+        self.env["CLAUDE_PROJECT_DIR"] = str(self.repo)
+        result = self.run_gates(bash("echo blocked", cwd=str(self.tmp)))
+        self.assertIsNotNone(self.denial(result))
+
+    def test_global_and_workspace_gates_both_apply(self) -> None:
+        self.gate("block_echo", BLOCK_ECHO)
+        self.workspace_gate("block_ls", BLOCK_ECHO.replace("echo blocked", "ls blocked").replace("test gate", "ws gate"))
+        for command, message in (("echo blocked", "test gate"), ("ls blocked", "ws gate")):
+            result = self.run_gates(bash(command, cwd=str(self.repo)))
+            self.assertIn(message, self.denial(result))
+
+    def test_global_gates_run_first_and_same_names_both_run(self) -> None:
+        deny = 'TOOLS = {{"Bash"}}\nMAIN_ONLY = False\ndef check(event):\n    return "{}"\n'
+        self.gate("a_same", deny.format("global"))
+        self.workspace_gate("a_same", deny.format("workspace"))
+        self.assertEqual(self.denial(self.run_gates(bash("x", cwd=str(self.repo)))), "global")
+        (self.folder / "a_same.py").unlink()
+        self.assertEqual(self.denial(self.run_gates(bash("x", cwd=str(self.repo)))), "workspace")
+
+    def test_workspace_gate_removed_mid_session_no_longer_runs(self) -> None:
+        path = self.workspace_gate("block_echo", BLOCK_ECHO)
+        self.assertIsNotNone(self.denial(self.run_gates(bash("echo blocked", cwd=str(self.repo)))))
+        path.unlink()
+        result = self.run_gates(bash("echo blocked", cwd=str(self.repo)))
+        self.assertEqual((self.denial(result), result.stderr), (None, ""))
+
+    def test_broken_workspace_gate_fails_open(self) -> None:
+        self.workspace_gate("a_broken", RAISES)
+        result = self.run_gates(bash("echo hi", cwd=str(self.repo)))
+        self.assertIsNone(self.denial(result))
+        self.assertIn("gate pre_tool_use/a_broken: RuntimeError: boom", result.stderr)
+
+    def test_the_global_folder_is_not_read_twice_when_the_session_is_under_its_parent(self) -> None:
+        """A session at or under the directory holding the global `.claude` finds the global folder while walking up."""
+        home = self.tmp / "home"
+        hooks = home / ".claude" / "hooks"
+        (hooks / "gates" / "pre_tool_use").mkdir(parents=True)
+        shutil.copy(SCRIPT, hooks / "run_gates.py")
+        (hooks / "gates" / "pre_tool_use" / "count.py").write_text(
+            'TOOLS = {"Bash"}\nMAIN_ONLY = False\ndef check(event):\n    print("ran", file=__import__("sys").stderr)\n')
+        (home / "project").mkdir()
+        result = self.run_gates(bash("x", cwd=str(home / "project")), script=hooks / "run_gates.py")
+        self.assertEqual(result.stderr.count("ran"), 1)
 
     def test_shipped_example_gate_is_a_no_op(self) -> None:
         shutil.copytree(HOOKS / "gates", self.hooks / "gates", dirs_exist_ok=True)
