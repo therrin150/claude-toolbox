@@ -17,6 +17,7 @@ prs: []
 work_note:
 usage: []
 usage_total:
+planning_time:
 ---
 
 # {{summary}}

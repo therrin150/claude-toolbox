@@ -64,12 +64,12 @@ LIST_FIELDS = ("worktrees", "sessions", "prs", "depends_on")
 # Each type's frontmatter, in order. The templates hold exactly these fields; tests check that they agree.
 WORKED = ("type", "key", "summary", "epic", "status", "owner", "stage", "depends_on", "created")
 PROGRESS = ("legacy_id", "source", "source_doc", "worktrees", "sessions", "prs", "work_note", "usage",
-            "usage_total")
+            "usage_total", "planning_time")
 FIELDS = {
     "story": WORKED + PROGRESS,
     "task": WORKED + PROGRESS,
     "defect": WORKED + ("found_in",) + PROGRESS,
-    "epic": ("type", "key", "summary", "status", "created", "legacy_id", "source", "source_doc"),
+    "epic": ("type", "key", "summary", "status", "created", "legacy_id", "source", "source_doc", "planning_time"),
 }
 
 KEY_RE = re.compile(r"[A-Z][A-Z0-9]*-\d+")

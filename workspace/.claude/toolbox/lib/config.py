@@ -48,7 +48,7 @@ SKILL_FILE = "SKILL.md"
 # The task-record fields tasks.py owns (records.py's FIELDS, plus `cycle`); an extra field can't take one's name.
 RECORD_FIELDS = ("type", "key", "slice", "summary", "epic", "status", "owner", "stage", "cycle", "depends_on",
                  "created", "found_in", "legacy_id", "source", "source_doc", "worktrees", "sessions", "prs", "work_note", "usage",
-                 "usage_total")
+                 "usage_total", "planning_time")
 FIELD_NAME = re.compile(r"[a-z][a-z0-9_]*")
 
 

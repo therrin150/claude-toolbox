@@ -5,6 +5,7 @@ Reads ~/.claude/projects/*/<session-id>.jsonl and <session-id>/subagents/*.jsonl
 
     session_usage.py [--session <id>]... [--weekly-percent P --weekly-resets-at ISO]
     session_usage.py --task <work id | record path> [--dry-run] [--weekly-percent P --weekly-resets-at ISO]
+    session_usage.py --discussion <folder> [--record <work id | record path>] [--session <id>]... [--dry-run]
     session_usage.py [--session <id>]... | --task <work id> --top-results [N]
 
 --session defaults to $CLAUDE_CODE_SESSION_ID, i.e. the calling session, and may be repeated. --task reads the ids
@@ -26,6 +27,16 @@ cache reads are most of the tokens, so a big result costs once per request. Rows
 command's first two words after any leading `cd <dir> &&`. Subagent transcripts are left out. Result tokens are
 estimated from text length (4 chars a token, 1,600 an image), since transcripts don't record them. With --task it
 writes nothing to the record.
+
+--discussion <folder> (a path, relative to the vault, or the folder's name) reports a discussion's planning time instead:
+its sessions are every session whose transcript wrote into the folder (Edit, Write), plus any named with --session or
+by the record's earlier roll-up, each split by turn as a task's are (below). Prints JSON with `time` (per session and in
+total), `missing_sessions` and `markdown`; no tokens or cost. --record writes the time to that record's `planning_time`
+({claude, user, total, sessions: [{session, claude, user}]}), under the tasks lock: create-tickets passes the epic, or
+the single story or defect. A story's `usage_total` is rewritten whole when it's done, so planning time has its own
+field. Claude Code deletes transcripts after 30 days, so a session that is named but has none is listed in
+`missing_sessions`; where the record's `planning_time` already held its time, that time is kept, else it's left out.
+A session no one names whose transcript is gone can't be known, so the total may run low.
 
 Time is worked out from the transcripts' event timestamps, with no stopwatch, so a session left idle for hours stops at
 its last event. A turn starts with your prompt, or with a notification (a finished background task, a subagent's
@@ -96,6 +107,9 @@ USER_TIME_CAP = 600
 SCRIPT_CALL = re.compile(r"\b(?:tasks|publish|worktrees|session_usage)\.py\b")
 WRITING_CALL = re.compile(
     r"\btasks\.py\s+(?:set|set-list|append|log)\b|\bpublish\.py\b|\bworktrees\.py\s+(?:create|remove)\b")
+# Claude Code writes the attachments that come with a prompt (a resume's tool list, skill mentions) a few milliseconds
+# before the prompt record; one this close ahead of a turn's start belongs to that turn, not to the idle time before it.
+ATTACHMENT_LEAD = 1.0
 # A record this much older than the file's latest so far is stale (an idle-compaction summary), not an event.
 STALE_SECONDS = 60
 WRITE_PATH_KEYS = {"Edit": "file_path", "MultiEdit": "file_path", "Write": "file_path", "NotebookEdit": "notebook_path"}
@@ -275,7 +289,8 @@ def build_turns(events, touches=None):
     turns = [{"start": when, "end": when, "kind": kind, "items": set()} for when, kind in marks]
     begins = [when for when, _ in marks]
     for when, rec in events:
-        i = bisect.bisect_right(begins, when) - 1
+        lead = ATTACHMENT_LEAD if rec.get("type") == "attachment" else 0.0
+        i = bisect.bisect_right(begins, when + lead) - 1
         if i >= 0:
             turns[i]["end"] = max(turns[i]["end"], when)
             if touches:
@@ -376,6 +391,46 @@ def related_sessions(record, items, known):
         if any(record.work_id in t["items"] for t in wrote):
             found[sid] = build_turns(events, items.touched)
     return dict(sorted(found.items(), key=lambda kv: kv[1][0]["start"]))
+
+
+def write_paths(rec):
+    """The file paths a record's Write, Edit and similar tool calls wrote to."""
+    msg = rec.get("message")
+    blocks = msg.get("content") if rec.get("type") == "assistant" and isinstance(msg, dict) else None
+    for block in blocks if isinstance(blocks, list) else []:
+        if isinstance(block, dict) and block.get("type") == "tool_use":
+            key = WRITE_PATH_KEYS.get(block.get("name"))
+            path = (block.get("input") or {}).get(key) if key else None
+            if isinstance(path, str):
+                yield path
+
+
+def discussion_turns(folder, items, floor, named):
+    """{session id: turns} for every session that wrote into the discussion folder, oldest first, then any `named`
+    session that has a transcript. A turn's items are the work ids it wrote to or named, plus the folder when it wrote
+    into it, so a session that also worked a task is split by turn like a task's sessions. Scans every transcript
+    changed since `floor`, skipping at once any that never mention the folder's name."""
+    marker, needle = str(folder), folder.name.encode()
+
+    def inside(path):  # the folder is resolved, so a path written through a symlink is too
+        return path == marker or path.startswith(marker + "/")
+
+    def touches(rec):
+        found = items.touched(rec)
+        if any(inside(os.path.realpath(path)) for path in write_paths(rec)):
+            found.add(marker)
+        return found
+
+    found = {}
+    for path in glob.glob(os.path.join(PROJECTS, "*", "*.jsonl")):
+        sid = os.path.basename(path)[: -len(".jsonl")]
+        if sid not in named and (os.path.getmtime(path) < floor
+                                 or not any(mentions(p, needle) for p in [path, *subagent_transcripts(path)])):
+            continue
+        turns = build_turns(session_events(path), touches)
+        if sid in named or any(marker in t["items"] for t in turns):
+            found[sid] = turns
+    return dict(sorted(found.items(), key=lambda kv: kv[1][0]["start"] if kv[1] else 0))
 
 
 def duration(seconds):
@@ -549,15 +604,88 @@ def positive_int(text):
     return n
 
 
+def planning_time(record):
+    """{session id: {claude, user}} a record's `planning_time` already holds."""
+    held = (record.fields.get("planning_time") or {}) if record else {}
+    sessions = held.get("sessions") if isinstance(held, dict) else None
+    return {e["session"]: {"claude": e.get("claude", 0), "user": e.get("user", 0)}
+            for e in sessions or [] if isinstance(e, dict) and e.get("session")}
+
+
+def write_planning_time(store, record, per_session, total, dry_run):
+    import frontmatter
+    value = {**total, "sessions": [{"session": sid, "claude": t["claude"], "user": t["user"]}
+                                   for sid, t in per_session.items()]}
+    with store.lock(dry_run):
+        frontmatter.update(record.path, {"planning_time": value}, dry_run)
+
+
+def discussion_report(args):
+    """A discussion's planning time: every session that wrote into its folder, plus the named ones."""
+    store = task_store()
+    import frontmatter
+    try:
+        folder = store.resolve_discussion(args.discussion)
+        record = store.find(args.record) if args.record else None
+        plan = folder / "plan.md"
+        created = frontmatter.fields(plan).get("created") if plan.is_file() else None
+        try:
+            floor = datetime.fromisoformat(str(created)).timestamp() - 86400
+        except ValueError:
+            floor = 0
+        held = planning_time(record)
+        named = dict.fromkeys([*held, *(args.session or [])])
+        turns = discussion_turns(folder, Items(store), floor, set(named))
+    except Exception as e:  # records.TaskError, config.ConfigError, frontmatter.FrontmatterError
+        sys.exit(str(e))
+    per_session = {sid: with_total(*session_time(t, str(folder))) for sid, t in turns.items()}
+    missing = [sid for sid in named if sid not in turns]
+    for sid in missing:  # the record's earlier roll-up still has what their transcripts no longer can
+        if sid in held:
+            per_session[sid] = with_total(held[sid]["claude"], held[sid]["user"])
+    total = with_total(sum(t["claude"] for t in per_session.values()), sum(t["user"] for t in per_session.values()))
+    written = bool(record and per_session)
+    if written:
+        write_planning_time(store, record, per_session, total, args.dry_run)
+    notes = []
+    if not per_session:
+        notes.append(f"No session wrote into {folder}, so there is no time to report.")
+    else:
+        notes += caveats(len(per_session), 0, [], None, True)
+    if missing:
+        kept = [sid for sid in missing if sid in held]
+        notes.append(f"{len(missing)} named session{'s' if len(missing) > 1 else ''} no longer "
+                     f"{'has' if len(missing) == 1 else 'have'} a transcript (Claude Code deletes them after 30 days): "
+                     f"{', '.join(missing)}. Their time is kept from the record's earlier roll-up where it has it "
+                     f"({len(kept)} of {len(missing)}); the total runs low by the rest.")
+    table = time_markdown(per_session, total) if per_session else ""
+    print(json.dumps({
+        "discussion": str(folder),
+        "time": {"sessions": per_session, "total": total},
+        "missing_sessions": missing,
+        "record": str(record.path) if written else None,
+        "dry_run": args.dry_run,
+        "markdown": "\n\n".join(part for part in (table, "\n".join(notes)) if part),
+    }, indent=2))
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--session", action="append")
     parser.add_argument("--task")
+    parser.add_argument("--discussion")
+    parser.add_argument("--record")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--top-results", nargs="?", type=positive_int, const=20, metavar="N")
     parser.add_argument("--weekly-percent", type=float)
     parser.add_argument("--weekly-resets-at")
     args = parser.parse_args()
+    if args.record and not args.discussion:
+        parser.error("--record goes with --discussion")
+    if args.discussion:
+        if args.task or args.top_results is not None or args.weekly_percent is not None or args.weekly_resets_at:
+            parser.error("--discussion takes only --record, --session and --dry-run")
+        return discussion_report(args)
     store = record = None
     if args.task:
         store = task_store()

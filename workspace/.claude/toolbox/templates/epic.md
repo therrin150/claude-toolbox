@@ -7,6 +7,7 @@ created: {{created}}
 legacy_id: {{legacy_id}}
 source: {{source}}
 source_doc: {{source_doc}}
+planning_time:
 ---
 
 # {{summary}}

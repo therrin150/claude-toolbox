@@ -29,8 +29,8 @@ the one the bare key names, and it covers whatever the slices haven't. The ticke
 | `defect` | an unrelated problem found along the way (one found while testing a task is fixed in that task) | `create-defect` (vault tracker) |
 | `task` | work started straight from a discussion's `plan.md` | `context <plan.md>` |
 
-Frontmatter, in this order (an epic has only `type`, `key`, `summary`, `status`, `created`, `legacy_id`, `source` and
-`source_doc`):
+Frontmatter, in this order (an epic has only `type`, `key`, `summary`, `status`, `created`, `legacy_id`, `source`,
+`source_doc` and `planning_time`):
 
 | Field | Holds |
 |---|---|
@@ -50,6 +50,7 @@ Frontmatter, in this order (an epic has only `type`, `key`, `summary`, `status`,
 | `worktrees`, `sessions`, `prs` | lists the workflow keeps: worktree paths, session ids, PR URLs |
 | `work_note` | one line: why a task is stopped, or what it waits on |
 | `usage`, `usage_total` | token usage and `time` (seconds: Claude's, yours, their sum) per session and in total, written whole at done |
+| `planning_time` | the discussion's planning time in seconds (`claude`, `user`, `total`, and `sessions`: each session's `claude` and `user`), on the epic, or the single story or defect when there is no epic; written by `create-tickets` once the drafts are filed, and kept apart from `usage_total`, which a task's done step rewrites whole |
 
 Two more kinds of field come after these, added when first set:
 

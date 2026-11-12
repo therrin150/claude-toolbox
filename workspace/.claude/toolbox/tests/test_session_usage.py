@@ -279,6 +279,14 @@ class UsageTest(unittest.TestCase):
         # The subagent's work runs to 75 s, so the first turn ends there and your gap shrinks to 25 s.
         self.assertEqual(self.seconds(self.run_usage("--session", "s1"), "s1"), (75 + 10, 25, 110))
 
+    def test_an_attachment_written_just_before_a_prompt_starts_no_idle_time(self):
+        # A resume's attachment lands a millisecond ahead of the prompt that triggered it: it isn't the old turn's.
+        late = {"type": "attachment", "timestamp": (BASE + timedelta(seconds=499.999)).isoformat(),
+                "attachment": {"type": "deferred_tools_delta"}}
+        self.transcript("s1", turns((0, 10, [])) + [late] + turns((500, 530, [])))
+        out = self.run_usage("--session", "s1")
+        self.assertEqual(out["time"]["sessions"]["s1"], {"claude": 10 + 30, "user": 490, "total": 530})
+
     def test_session_without_a_task_counts_whole_and_top_results_skip_time(self):
         self.transcript("s1", turns((0, 10, [])))
         self.assertEqual(self.run_usage("--session", "s1")["time"]["total"], {"claude": 10, "user": 0, "total": 10})
@@ -335,6 +343,112 @@ class UsageTest(unittest.TestCase):
         self.assertEqual(fields["usage"][0]["time"], {"claude": 20, "user": 0})
         self.assertEqual(fields["usage_total"]["time"], {"claude": 100, "user": 0, "total": 100})
         self.assertIn("Time also counts 2 sessions that wrote to the task", out["markdown"])
+
+    def discussion(self, name: str = "2026-10-20-pantry-shelves") -> Path:
+        folder = self.root / "vault" / "Discussions" / "2026" / "10" / name
+        (folder / "tickets").mkdir(parents=True)
+        (folder / "plan.md").write_text("---\ntype: plan\ncreated: 2026-10-20\n---\n\n# Pantry Shelves\n")
+        return folder
+
+    def epic(self) -> Path:
+        """A filed epic's record, as `tasks.py file` leaves it, from the template."""
+        path = self.root / "vault" / "Tasks" / "PT-1" / "PT-1-pantry-shelves.md"
+        path.parent.mkdir(parents=True)
+        text = (TOOLBOX / "templates" / "epic.md").read_text()
+        for name, value in {"key": "PT-1", "summary": "Pantry Shelves", "created": "2026-10-20", "legacy_id": "",
+                            "source": "", "source_doc": ""}.items():
+            text = text.replace("{{" + name + "}}", value)
+        path.write_text(text)
+        return path
+
+    def test_discussion_time_is_the_sessions_that_wrote_into_the_folder(self):
+        folder = self.discussion()
+        plan = ("Edit", {"file_path": str(folder / "plan.md")})
+        draft = ("Write", {"file_path": str(folder / "tickets" / "01-shelves.md")})
+        self.transcript("s1", turns((0, 30, [plan]), (50, 80, [])))
+        self.transcript("s2", turns((1000, 1100, [draft])))
+        self.transcript("s3", turns((2000, 2100, [("Read", {"file_path": str(folder / "plan.md")})])))
+        self.transcript("s4", turns((3000, 3100, [("Write", {"file_path": str(folder) + "-other/plan.md"})])))
+        out = self.run_usage("--discussion", str(folder))
+        # s1: the second turn follows a write with no other item, so it counts; gap 20s. s3 only read, s4 is a sibling.
+        self.assertEqual(list(out["time"]["sessions"]), ["s1", "s2"])
+        self.assertEqual(out["time"]["sessions"]["s1"], {"claude": 60, "user": 20, "total": 80})
+        self.assertEqual(out["time"]["total"], {"claude": 160, "user": 20, "total": 180})
+        self.assertEqual(out["missing_sessions"], [])
+        self.assertIsNone(out["record"])
+        self.assertIn("Across 2 sessions.", out["markdown"])
+        # Found by the folder's name too.
+        self.assertEqual(self.run_usage("--discussion", "2026-10-20-pantry-shelves")["time"]["total"],
+                         out["time"]["total"])
+
+    def test_a_session_that_also_worked_a_task_counts_only_its_discussion_turns(self):
+        folder = self.discussion()
+        self.record([])
+        wt = self.root / ".worktrees"
+        plan = ("Edit", {"file_path": str(folder / "plan.md")})
+        task = ("Edit", {"file_path": str(wt / "PT-1" / "a.py")})
+        self.transcript("s1", turns((0, 10, [plan]), (30, 50, []), (70, 100, [task]), (130, 170, [])))
+        out = self.run_usage("--discussion", str(folder))
+        # Turns 1 and 2 are the discussion's (2 follows a write with no other item); 3 and 4 are PT-1's.
+        self.assertEqual(out["time"]["sessions"]["s1"], {"claude": 10 + 20, "user": 20 + 20, "total": 70})
+
+    def test_discussion_time_is_recorded_on_the_record_and_survives_expired_transcripts(self):
+        folder = self.discussion()
+        path = self.epic()
+        plan = ("Edit", {"file_path": str(folder / "plan.md")})
+        self.transcript("s1", turns((0, 60, [plan]), (100, 120, [])))
+        self.transcript("s2", turns((600, 700, [plan])))
+        out = self.run_usage("--discussion", str(folder), "--record", "PT-1", "--dry-run")
+        self.assertIsNone(frontmatter.fields(path).get("planning_time"))
+        self.assertTrue(out["dry_run"])
+        out = self.run_usage("--discussion", str(folder), "--record", "PT-1")
+        self.assertEqual(out["record"], str(path))
+        held = frontmatter.fields(path)["planning_time"]
+        self.assertEqual(held, {"claude": 180, "user": 40, "total": 220, "sessions": [
+            {"session": "s1", "claude": 80, "user": 40}, {"session": "s2", "claude": 100, "user": 0}]})
+        # s1's transcript expires; the roll-up is run again, and by now s3 has written too.
+        (self.project / "s1.jsonl").unlink()
+        self.transcript("s3", turns((900, 930, [plan])))
+        out = self.run_usage("--discussion", str(folder), "--record", "PT-1")
+        self.assertEqual(out["missing_sessions"], ["s1"])
+        self.assertEqual(out["time"]["total"], {"claude": 80 + 100 + 30, "user": 40, "total": 250})
+        self.assertIn("1 named session no longer has a transcript", out["markdown"])
+        self.assertIn("(1 of 1)", out["markdown"])
+        self.assertEqual([e["session"] for e in frontmatter.fields(path)["planning_time"]["sessions"]],
+                         ["s2", "s3", "s1"])
+
+    def test_a_named_session_without_a_transcript_and_no_earlier_time_is_reported(self):
+        folder = self.discussion()
+        self.transcript("s1", turns((0, 60, [("Edit", {"file_path": str(folder / "plan.md")})])))
+        out = self.run_usage("--discussion", str(folder), "--session", "old")
+        self.assertEqual(out["missing_sessions"], ["old"])
+        self.assertEqual(list(out["time"]["sessions"]), ["s1"])
+        self.assertIn("(0 of 1)", out["markdown"])
+
+    def test_discussion_with_no_sessions_writes_nothing(self):
+        folder = self.discussion()
+        path = self.epic()
+        self.transcript("s1", turns((0, 60, [])))
+        out = self.run_usage("--discussion", str(folder), "--record", "PT-1")
+        self.assertEqual(out["time"]["total"], {"claude": 0, "user": 0, "total": 0})
+        self.assertIsNone(out["record"])
+        self.assertIsNone(frontmatter.fields(path).get("planning_time"))
+        self.assertIn("No session wrote into", out["markdown"])
+
+    def test_a_discussion_reached_through_a_symlink_is_found(self):
+        folder = self.discussion()
+        link = self.tmp / "link"
+        link.symlink_to(self.root / "vault")
+        via_link = link / "Discussions" / "2026" / "10" / folder.name / "plan.md"
+        self.transcript("s1", turns((0, 60, [("Edit", {"file_path": str(via_link)})])))
+        self.assertEqual(self.run_usage("--discussion", str(folder))["time"]["total"]["claude"], 60)
+
+    def test_discussion_errors(self):
+        self.assertIn("no such discussion", self.run_usage("--discussion", "nope", ok=False))
+        folder = self.discussion()
+        self.assertIn("PT-7", self.run_usage("--discussion", str(folder), "--record", "PT-7", ok=False))
+        self.assertIn("--record goes with --discussion", self.run_usage("--record", "PT-1", ok=False))
+        self.assertIn("takes only", self.run_usage("--discussion", str(folder), "--task", "PT-1", ok=False))
 
     def test_errors(self):
         self.transcript("s1", [assistant("r1", "claude-opus-5-5", 1)])

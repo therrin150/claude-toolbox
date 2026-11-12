@@ -43,7 +43,7 @@ be filed: a draft with no summary, or a draft `tasks.py` refuses (it says why).
 ```
 
 Show the dry run's keys, summaries, epic and dependencies (and what it skips, with the reason), then run it for real
-on the go-ahead. A run that stopped part way is safe to repeat: a draft already holding a key keeps it. Then report.
+on the go-ahead. A run that stopped part way is safe to repeat: a draft already holding a key keeps it. Then step 4.
 
 ## 2a. Keyless (vault-only drafts, any tracker)
 
@@ -56,7 +56,7 @@ Each approved draft becomes `<tasks>/<slug>.md` with an empty `key`; draft numbe
 are repaired and the plan's `## Proposed Stories` is rewritten. It touches nothing in Jira. Show the dry run's
 work ids, summaries and dependencies (and what it skips, with the reason), then run it for real on the go-ahead. An
 epic draft is refused: the discussion folder groups keyless stories, so drop the epic draft or file it keyed. A run
-that stopped part way is safe to repeat. Then report; the work ids are slugs, and `work-task <slug>` starts one.
+that stopped part way is safe to repeat. Then step 4; the work ids are slugs, and `work-task <slug>` starts one.
 
 ## 3. Jira tracker
 
@@ -111,11 +111,26 @@ ask the agent to fix them if the user wants.
 A filed issue whose key isn't recorded shows as unfiled and invites a duplicate, so if recording fails, say so loudly
 and list the keys.
 
-## 4. Report
+## 4. Planning time
 
-A table of number, key, summary and record (with each key's URL under `jira`), plus what was skipped and why, the
-testing-notes comments and dependency links (`jira`), and any warnings. If some filed and others didn't, say exactly
-which; never imply a clean sweep.
+Once filing is done (step 2, 2a or 3), total the discussion's planning time and record it. Record it on the epic's
+record; with no epic, on the one story or defect filed; with several stories and no epic, leave `--record` off, show the
+total and record nothing. Use the work id from the filing output.
+
+```bash
+.claude/toolbox/bin/session_usage.py --discussion <discussion> --record <work id>
+```
+
+Show its `markdown` as is: each session's Claude, your and total time, with its caveats. It writes `planning_time` on
+the record, never `usage` or `usage_total`, and a re-run recomputes the whole total. It names any session whose
+transcript is gone (Claude Code deletes them after 30 days) and keeps that session's earlier time when the record
+already held it. To count a session whose writes it can't find, pass `--session <id>`.
+
+## 5. Report
+
+The planning time from step 4 and the record it went on, then a table of number, key, summary and record (with each
+key's URL under `jira`), plus what was skipped and why, the testing-notes comments and dependency links (`jira`), and
+any warnings. If some filed and others didn't, say exactly which; never imply a clean sweep.
 
 ## Failure handling
 
