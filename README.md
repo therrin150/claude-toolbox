@@ -41,7 +41,7 @@ dropping the feature and keeping a project-owned copy.
 
 | Feature | Installs | Needs |
 |---|---|---|
-| `git` | `git-commit`, `git-draft-commit-message`, `git-delete-merged-branches`, the `git-conventions.md` rule | |
+| `git` | `git-commit`, `git-draft-commit-message`, `git-delete-merged-branches`, the `git-conventions.md` rule, the `diff-summarizer` agent (a read-only Haiku summary of a diff, grouped by change, with its out-of-place lines) and its `diff_summary.py` | |
 | `verify` | `verify-change`, the `change-verifier` agent | |
 | `tests` | `run-unit-tests`, the `check-runner` agent, the checks and raw output gates (deny builds, tests, `services_lock.py` and build or test logs in the main session) | `workspace.areas` |
 | `worktrees` | `git-worktrees`, the main checkout gate (denies `Edit` and `Write` in a repo's main checkout while a task worktree of it exists) | |

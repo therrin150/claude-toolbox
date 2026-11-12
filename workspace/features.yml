@@ -28,11 +28,13 @@
 # reason: they serve every agent whose report template (under .claude/toolbox/agents/, also unlisted) declares a
 # contract, whichever feature installs the agent, and do nothing for one that declares none.
 git:
+  - .claude/agents/diff-summarizer.md
   - .claude/hooks/gates/pre_tool_use/git_write_gate.py
   - .claude/rules/git-conventions.md
   - .claude/skills/git-commit
   - .claude/skills/git-delete-merged-branches
   - .claude/skills/git-draft-commit-message
+  - .claude/toolbox/bin/diff_summary.py
 
 verify:
   - .claude/agents/change-verifier.md

@@ -49,7 +49,7 @@ Features come first, since they decide what else is asked. Present the suggested
 
 | Feature | Installs | Suggested by | Needs |
 |---|---|---|---|
-| `git` | `git-commit`, `git-draft-commit-message`, `git-delete-merged-branches`, the git conventions rule | `.git` | |
+| `git` | `git-commit`, `git-draft-commit-message`, `git-delete-merged-branches`, the git conventions rule, the `diff-summarizer` agent | `.git` | |
 | `verify` | `verify-change` and its `change-verifier` agent | `.git` | |
 | `tests` | `run-unit-tests`, the `check-runner` agent | `.git` | `workspace.areas` |
 | `worktrees` | `git-worktrees` | `.git` | |

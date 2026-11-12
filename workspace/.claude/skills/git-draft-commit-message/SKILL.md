@@ -1,7 +1,7 @@
 ---
 name: git-draft-commit-message
-description: Draft commit messages for the user to approve, one per repo, from the diff and the task, in their commit style; optionally the one-sentence announcement for the PR batch. Drafts only; never commits.
-allowed-tools: Bash(*), Read, Grep, Glob
+description: Draft commit messages for the user to approve, one per repo, from a diff-summarizer summary of the diff, the task and their commit style; optionally the one-sentence announcement for the PR batch. Drafts only; never commits.
+allowed-tools: Bash(*), Read, Grep, Glob, Agent
 ---
 
 # Draft Commit Message
@@ -22,9 +22,18 @@ Drafts only. Committing is `git-commit`, with the message the user approves.
 
 ## Inputs
 
-- Per checkout: the diff against `origin/<default branch>` (committed and uncommitted) and its file list.
+Draft from the summary, the task record and the style files, never from the raw diff.
+
+- **The summary:** spawn `diff-summarizer` (the Agent tool, `subagent_type: diff-summarizer`) once for all the
+  checkouts, with their paths and **bin**, the scripts folder the toolbox-config rule names. It reads the diff against
+  `origin/<default branch>` (committed and uncommitted) and reports, per checkout, the changes one line each with the
+  files they touch, what looks out of place, and the lines added and removed. Never run `git diff` (or `git show`,
+  `git log -p`) yourself, and never read the diff file the script writes: the full diff would stay in this session
+  through publish, PR and merge. The summary says what the diff does and never why; the reason is the record's.
+  When a line is too vague to describe a change, spawn it again with **focus** set to that file (its path), which
+  makes it report that file's changes one by one, rather than reading the diff here.
 - The task record, for what the change is for (`.claude/toolbox/bin/tasks.py get <work id>`, when the workspace has the
-  `tasks` feature). The diff decides what the message may claim.
+  `tasks` feature). The summary decides what the message may claim: say nothing it doesn't show.
 - The style: `~/.claude/personal/commit-style.md` (which pulls in `voice.md`), plus the "Slack" section of
   `~/.claude/personal/voice.md` for `--announce`. Read both from disk, whole (never a `head` or a partial read), on
   every run; when a file is missing, write plain, short, lowercase-after-the-key messages and say the style file wasn't
@@ -55,7 +64,7 @@ tacked-on aside, and a clause list of what the diff does in place of what the ch
 ## Output
 
 Per repo, the subject and body in a code block so the user can copy them, then the announcement if asked. Flag anything
-in a diff the message doesn't cover (an unrelated file, a stray debug line) instead of quietly leaving it out. When the
-task has a publish folder (`<tasks>/.publish/<work id>/`, the tasks folder the toolbox-config rule names), offer to save
-the approved texts there as `<repo>.txt` (or `commit.txt` in a single-repo workspace) and `announce.txt`, which is where
-`publish.py` reads them.
+the summary lists as out of place (an unrelated file, a stray debug line, a leftover TODO) and anything else in it the
+message doesn't cover, instead of quietly leaving it out. When the task has a publish folder (`<tasks>/.publish/<work
+id>/`, the tasks folder the toolbox-config rule names), offer to save the approved texts there as `<repo>.txt` (or
+`commit.txt` in a single-repo workspace) and `announce.txt`, which is where `publish.py` reads them.
