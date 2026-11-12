@@ -1,4 +1,4 @@
-"""Tests for the checks gate and the raw output gate (workspace/.claude/hooks/gates/pre_tool_use/).
+"""Tests for the checks, raw output and git write gates (workspace/.claude/hooks/gates/pre_tool_use/).
 
 Most tests run the real dispatcher on hook input, the way Claude Code does, against a temporary workspace whose
 `.claude/hooks/gates/pre_tool_use/` links the gates one file at a time (as the installer does) and whose
@@ -150,7 +150,7 @@ class ChecksGateTest(GateTest):
         self.assertIsNone(self.bash("python3 ~/tools/other.py ."))
 
     def test_unrelated_commands_and_mentions_pass(self) -> None:
-        for command in ("git status", "ls target", 'git commit -m "fix mvn test; npm test"', "echo mvn test",
+        for command in ("git status", "ls target", 'git log --grep="fix mvn test; npm test"', "echo mvn test",
                         "grep -rn mvn README.md", "cat pom.xml", "python3 -m unittest", "npm install",
                         "npm run build", "mvnx test", "cat build.gradle"):
             self.assertIsNone(self.bash(command), command)
@@ -214,6 +214,74 @@ class RawOutputGateTest(GateTest):
         self.assertIsNone(self.run_gate("Read", {"file_path": "api/target/surefire-reports/FooTest.txt"},
                                         agent_id="a1", agent_type="check-runner"))
         self.assertIsNone(self.bash("cat api/target/surefire-reports/FooTest.txt", agent_type="check-runner"))
+
+
+class GitWriteGateTest(GateTest):
+    def assertDeniedGit(self, message: str | None, what: str, skill: str = "git-commit") -> None:
+        self.assertIsNotNone(message, what)
+        self.assertIn(f"`{what}`", message)
+        self.assertIn("publish", message)
+        self.assertIn(skill, message)
+
+    def test_direct_commit_is_denied_naming_the_publish_step(self) -> None:
+        self.assertDeniedGit(self.bash('git commit -m "x"'), "git commit")
+        self.assertDeniedGit(self.bash("git commit --amend --no-edit"), "git commit")
+
+    def test_each_write_is_denied(self) -> None:
+        self.assertDeniedGit(self.bash("git push origin HEAD"), "git push")
+        self.assertDeniedGit(self.bash("git push --force-with-lease"), "git push")
+        self.assertDeniedGit(self.bash("git rebase origin/master"), "git rebase")
+        self.assertDeniedGit(self.bash("git reset --hard HEAD~1"), "git reset --hard")
+        self.assertDeniedGit(self.bash("git merge feature"), "git merge", "gh-merge-pull-request")
+        self.assertDeniedGit(self.bash("gh pr merge 12 --squash"), "gh pr merge", "gh-merge-pull-request")
+
+    def test_options_before_the_subcommand_dont_hide_it(self) -> None:
+        self.assertDeniedGit(self.bash("git -C api commit -m x"), "git commit")
+        self.assertDeniedGit(self.bash("git -c user.name=x -c core.editor=true push"), "git push")
+        self.assertDeniedGit(self.bash("git --no-pager --git-dir=/r/.git merge x"), "git merge", "gh-merge-pull-request")
+        self.assertDeniedGit(self.bash("gh -R fs-eng/api pr merge 3"), "gh pr merge", "gh-merge-pull-request")
+        self.assertDeniedGit(self.bash("/usr/bin/git commit -m x"), "git commit")
+
+    def test_found_inside_a_pipeline_a_chain_a_shell_and_an_env_prefix(self) -> None:
+        self.assertDeniedGit(self.bash("git add -A && git commit -m x"), "git commit")
+        self.assertDeniedGit(self.bash("cd api; git push"), "git push")
+        self.assertDeniedGit(self.bash('bash -lc "cd api && git commit -m x"'), "git commit")
+        self.assertDeniedGit(self.bash("GIT_AUTHOR_NAME=x git commit -m x"), "git commit")
+        self.assertDeniedGit(self.bash("echo $(git commit -m x)"), "git commit")
+        self.assertDeniedGit(self.bash("git status\ngit push"), "git push")
+
+    def test_publish_and_ship_scripts_run(self) -> None:
+        for command in ("/ws/.claude/toolbox/bin/publish.py commit T --message-file m.txt",
+                        "python3 /ws/.claude/toolbox/bin/publish.py push T",
+                        "/ws/.claude/toolbox/bin/publish.py merge T --confirm-squash",
+                        "python3 ~/.claude/skills/ship-toolbox-change/scripts/ship.py run --message-file m.txt",
+                        "cd /ws && .claude/toolbox/bin/publish.py run T"):
+            self.assertIsNone(self.bash(command), command)
+
+    def test_read_only_and_other_git_commands_run(self) -> None:
+        for command in ("git status", "git diff --stat", "git log --oneline -5", "git show HEAD", "git add -A",
+                        "git branch --show-current", "git fetch origin", "git stash list", "git reset HEAD file",
+                        "git reset --soft HEAD~1", "git checkout -b x", "git -C api status", "git rev-parse HEAD",
+                        "gh pr view 3", "gh pr list", "gh pr checks 3", "gh -R fs-eng/api pr status",
+                        "git worktree list", "git config --get user.name", "git"):
+            self.assertIsNone(self.bash(command), command)
+
+    def test_the_words_inside_a_quoted_argument_dont_count(self) -> None:
+        for command in ('echo "git commit"', "grep -rn 'git push' docs", 'printf "%s" "gh pr merge"',
+                        'git log --grep="git commit"', "cat git-commit/SKILL.md", "ls git_commit"):
+            self.assertIsNone(self.bash(command), command)
+
+    def test_a_conflicted_rebase_can_be_finished_or_abandoned(self) -> None:
+        for flag in ("--continue", "--abort", "--skip", "--quit"):
+            self.assertIsNone(self.bash(f"git rebase {flag}"), flag)
+        for flag in ("--abort", "--quit"):
+            self.assertIsNone(self.bash(f"git merge {flag}"), flag)
+        self.assertDeniedGit(self.bash("git merge --continue"), "git merge", "gh-merge-pull-request")
+        self.assertDeniedGit(self.bash("git rebase --continue && git push"), "git push")
+
+    def test_a_subagent_runs_them(self) -> None:
+        self.assertIsNone(self.bash("git commit -m x", agent_type="general-purpose"))
+        self.assertIsNone(self.bash("gh pr merge 1", agent_type="general-purpose"))
 
 
 if __name__ == "__main__":

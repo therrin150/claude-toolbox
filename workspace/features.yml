@@ -22,7 +22,10 @@
 #       - .claude/toolbox/bin/services_lock.py
 #     needs: [workspace.areas]
 
+# `_commands.py` (the helper checks_gate.py and git_write_gate.py share) is unlisted on purpose: it must install wherever
+# either gate does, and a path listed under two features needs both.
 git:
+  - .claude/hooks/gates/pre_tool_use/git_write_gate.py
   - .claude/rules/git-conventions.md
   - .claude/skills/git-commit
   - .claude/skills/git-delete-merged-branches
@@ -35,7 +38,6 @@ verify:
 tests:
   paths:
     - .claude/agents/check-runner.md
-    - .claude/hooks/gates/pre_tool_use/_commands.py
     - .claude/hooks/gates/pre_tool_use/checks_gate.py
     - .claude/hooks/gates/pre_tool_use/raw_output_gate.py
     - .claude/skills/run-unit-tests
