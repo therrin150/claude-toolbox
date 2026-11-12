@@ -1,6 +1,6 @@
 ---
 name: discussion
-description: Start or extend a design discussion in an Obsidian vault - one problem per dated folder, a plan.md design record, optional questions.md and topic docs. Use when the user says "start a discussion", "create a discussion plan", "capture this in the vault" or "write this up".
+description: Start or extend a design discussion in an Obsidian vault - one problem per dated folder, a plan.md design record, optional questions.md and topic docs. Use when the user opens a design, planning or workflow-optimization session ("let's design X", "how should we handle X", "plan X", "think through X", a change to the toolbox itself) or says "start a discussion", "create a discussion plan", "capture this in the vault" or "write this up".
 ---
 
 # Discussion
@@ -8,6 +8,10 @@ description: Start or extend a design discussion in an Obsidian vault - one prob
 A discussion is the user's unit of design work: one problem, one folder, kept as the record of what was found and
 decided. Most discussions never produce tickets; tickets are an optional last step (`propose-tickets`), not the
 purpose.
+
+It starts from the user's own words, with no slash command: their description of the problem names the folder's slug,
+and the first step is to look for an existing discussion on it. Ask only when the problem itself is unclear, never to
+confirm a title.
 
 The vault comes from the global obsidian rule: the one the session's own rules name, else the Personal vault. The
 discussions folder is the one the toolbox-config rule names, in a workspace that has one; else `Discussions/` at the

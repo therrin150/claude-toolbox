@@ -1,6 +1,6 @@
 ---
 name: work-task
-description: Work one task end to end in its own worktrees, from implementation through review, publish and merge, resumable in any session. Use for "/work-task ABC-12", "work ABC-12", "work this plan", "pick up ABC-12 again".
+description: Work one task end to end in its own worktrees, from implementation through review, publish and merge, resumable in any session. Use when the user opens with a ticket key or a plan to build - "work ABC-12", "implement ABC-12", "do ABC-12", "work this plan", "pick up ABC-12 again" - or types /work-task.
 allowed-tools: Bash(*), Read, Edit, Write, Grep, Glob, Agent, Skill
 ---
 
@@ -32,6 +32,9 @@ from the record in a small session instead of rebuilding a large one.
 /work-task <KEY> --limited-scope <instructions>
 /work-task <work id>          # a resume
 ```
+
+A user who opens a session with "work ABC-12" or "implement ABC-12" (the `session-types` rule) has given the same
+arguments in words: take the key, draft or plan path from their message and start, without asking for a slash command.
 
 - **A ticket key:** its record. Under the `jira` tracker, an issue with no record yet is imported (Setup, step 2).
 - **A draft** in a discussion's `tickets/` folder: under the `none` tracker it is copied into a record; under `vault`
