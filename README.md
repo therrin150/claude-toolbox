@@ -53,7 +53,7 @@ dropping the feature and keeping a project-owned copy.
 | `services-lock` | `start-`, `stop-local-services` (user-invoked), `services_lock.py` | `workspace.areas` |
 | `review-ui` | `local-review-ui` | |
 | `intellij` | `intellij-open-worktree` | |
-| `obsidian` | the vault's Templater templates (`.vault/`) | `vault`, `tracker` |
+| `obsidian` | the vault's Templater templates (`.vault/`), the `vault-researcher` agent (a read-only Haiku search of the vault's discussions and tasks, reported per item as its wikilink, status, and the decisions and open questions that bear on a topic) | `vault`, `tracker` |
 | `java` | `java-conventions`, `java-testing-conventions` (knowledge) | |
 | `spring` | `spring-boot-conventions` (knowledge) | |
 | `postgres` | `database-conventions` (knowledge) | |

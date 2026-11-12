@@ -94,6 +94,7 @@ dispatcher:
 # The discussion-plan template reads tracker.kind as well as the vault (`kind: none` for a vault with no tickets).
 obsidian:
   paths:
+    - .claude/agents/vault-researcher.md
     - .vault
   needs: [vault, tracker]
 

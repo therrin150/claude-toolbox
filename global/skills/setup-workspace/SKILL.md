@@ -61,7 +61,7 @@ Features come first, since they decide what else is asked. Present the suggested
 | `services-lock` | `start-`, `stop-local-services` (user-invoked) | a compose file | `workspace.areas` |
 | `review-ui` | `local-review-ui` | | |
 | `intellij` | `intellij-open-worktree` | `.idea/` | |
-| `obsidian` | the vault's Templater templates | `.obsidian/` | `vault`, `tracker` |
+| `obsidian` | the vault's Templater templates, the `vault-researcher` agent | `.obsidian/` | `vault`, `tracker` |
 | `java` | `java-conventions`, `java-testing-conventions` (knowledge) | `pom.xml` or `*.java` | |
 | `spring` | `spring-boot-conventions` (knowledge) | `spring-boot` in a `pom.xml` | |
 | `postgres` | `database-conventions` (knowledge) | `db/migration/`, `*.sql`, or `postgres` in a compose file | |
