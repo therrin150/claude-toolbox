@@ -1,7 +1,7 @@
 # Which parts of the workspace folder need a feature, and which config a feature needs. install.py installs a listed
 # path into a workspace only when that workspace's .claude/toolbox.local.yml lists the feature under `features`;
-# anything unlisted always installs, so only the runtime (.claude/toolbox/), toolbox-doctor and the generated
-# toolbox-config rule are left unlisted.
+# anything unlisted always installs, so only the runtime (.claude/toolbox/), toolbox-doctor, the generated
+# toolbox-config rule and the workspace-searcher agent are left unlisted.
 #
 # Format: {<feature>: [paths relative to workspace/]}, or {<feature>: {paths: [...], needs: [...]}}. A path names a
 # file, or a folder and everything under it (a skill folder, say: .claude/skills/start-local-services). A path listed

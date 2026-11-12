@@ -61,6 +61,9 @@ dropping the feature and keeping a project-owned copy.
 | `playwright` | `playwright-conventions` (knowledge) | |
 | `bruno` | `bruno-api-collections` (knowledge) | |
 
+The `workspace-searcher` agent (a read-only Haiku sweep of the workspace's repos that reports each location with a
+one-line role, never file contents) belongs to no feature: every workspace gets it.
+
 `/setup-workspace` suggests features from the folder (`.git`, `pom.xml`, `angular.json`, `bruno/`, `.obsidian/`, ...)
 and asks only for the config the picked ones need: the `vault` and `tracker` sections are optional, and a workspace
 with neither asks no vault or tracker questions.
