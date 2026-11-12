@@ -549,7 +549,7 @@ class ExtensionPointsTest(unittest.TestCase):
                 if name != "work-task":  # work-task's hooks are named in its phase files (SkillTextTest)
                     for point in points:
                         self.assertRegex(text, rf"[Hh]ook `{point.id}`")
-        self.assertEqual(extensible, ["intellij-open-worktree", "run-unit-tests", "start-local-services",
+        self.assertEqual(extensible, ["intellij-open-worktree", "investigate", "run-unit-tests", "start-local-services",
                                       "stop-local-services", "verify-change", "work-task"])
 
     def test_no_old_format_heading_is_left(self):

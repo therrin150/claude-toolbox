@@ -24,9 +24,9 @@ import frontmatter  # noqa: E402
 RULE = CLAUDE / "rules" / "session-types.md"
 SKILL_ROOTS = [CLAUDE / "skills", REPO / "global" / "skills"]
 
-# Entry skills the rule names before they exist. `investigate` comes with the Agent-Oriented Toolbox story "Generalize
-# Investigate Skill"; delete it from this set there, and the test then checks that the skill exists.
-NOT_YET = {"investigate"}
+# Entry skills the rule names before they exist; the test then checks each one is still absent, so add the name back
+# only while a story that creates the skill is in flight.
+NOT_YET: set[str] = set()
 
 
 def skill_path(name: str) -> Path | None:

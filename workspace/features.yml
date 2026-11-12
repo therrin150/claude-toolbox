@@ -78,6 +78,7 @@ tasks:
     - .claude/rules/ticket-docs.md
     - .claude/skills/create-defect
     - .claude/skills/create-tickets
+    - .claude/skills/investigate
     - .claude/skills/propose-tickets
     - .claude/skills/work-task
   needs: [tracker, vault]

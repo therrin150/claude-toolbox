@@ -6,7 +6,7 @@ needed: invoke it with the Skill tool first, passing their words as the argument
 | The user opens with | Start |
 |---|---|
 | "let's design X", "how should we handle X", "plan X", "think through X", a change to the toolbox itself | `discussion` |
-| "this alert fired", "why is X restricted", "look into this production problem" | `investigate` |
+| "this alert fired", "why is X restricted", "look into this production problem", "investigate ABC-12" | `investigate` |
 | "work ABC-12", "implement ABC-12", "do this story", a plan or draft path to build, or an ad-hoc change worth its own branch and review | `work-task` |
 
 - Design, planning and workflow optimization are all `discussion`: one problem, one discussion folder. It ends in a
