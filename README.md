@@ -45,7 +45,7 @@ dropping the feature and keeping a project-owned copy.
 | `verify` | `verify-change`, the `change-verifier` agent | |
 | `tests` | `run-unit-tests`, the `check-runner` agent, the checks and raw output gates (deny builds, tests, `services_lock.py` and build or test logs in the main session) | `workspace.areas` |
 | `worktrees` | `git-worktrees`, the main checkout gate (denies `Edit` and `Write` in a repo's main checkout while a task worktree of it exists) | |
-| `pr` | `gh-create-pull-request`, `gh-merge-pull-request` | |
+| `pr` | `gh-create-pull-request`, `gh-merge-pull-request`, the `pr-reporter` agent (a read-only Haiku report of a PR's review comments, sorted, and its failed checks' error lines) and its `pr_report.py` | |
 | `tasks` | `work-task`, `propose-tickets`, `create-tickets`, `create-defect`, the `ticket-docs.md` rule | `tracker`, `vault` |
 | `jira` | the `jira-creator` agent (a template; a Haiku agent that files drafts as Jira issues, after `draft_to_jira.py` converts their markdown), the `jira-reader` agent (a template; a read-only Haiku lookup of issues or a JQL that returns only the fields asked for), the Jira write gate (denies the Jira MCP server's create, edit, comment, link, worklog and transition tools in the main session, so a write goes through `jira-creator`) | `tracker.jira` |
 | `jira-sprints` | `jira-find-current-sprint` | `tracker.jira` |

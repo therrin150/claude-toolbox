@@ -64,8 +64,10 @@ worktrees:
   - .claude/skills/git-worktrees
 
 pr:
+  - .claude/agents/pr-reporter.md
   - .claude/skills/gh-create-pull-request
   - .claude/skills/gh-merge-pull-request
+  - .claude/toolbox/bin/pr_report.py
 
 # Task records live in the vault's tasks folder whatever the tracker.
 tasks:

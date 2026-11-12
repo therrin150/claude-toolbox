@@ -53,7 +53,7 @@ Features come first, since they decide what else is asked. Present the suggested
 | `verify` | `verify-change` and its `change-verifier` agent | `.git` | |
 | `tests` | `run-unit-tests`, the `check-runner` agent | `.git` | `workspace.areas` |
 | `worktrees` | `git-worktrees` | `.git` | |
-| `pr` | `gh-create-pull-request`, `gh-merge-pull-request` | `.git` with a GitHub origin | |
+| `pr` | `gh-create-pull-request`, `gh-merge-pull-request`, the `pr-reporter` agent | `.git` with a GitHub origin | |
 | `tasks` | `work-task`, `propose-tickets`, `create-tickets`, `create-defect`, the ticket-docs rule | an Atlassian server | `tracker`, `vault` |
 | `jira` | the `jira-creator` and `jira-reader` agents | an Atlassian server | `tracker.jira` |
 | `jira-sprints` | `jira-find-current-sprint` | | `tracker.jira` |
