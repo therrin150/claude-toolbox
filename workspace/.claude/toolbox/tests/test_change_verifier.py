@@ -1,4 +1,4 @@
-"""The change-verifier agent: its model during the Sonnet trial, and that it stays read-only.
+"""The change-verifier agent: that it runs on Sonnet, and that it stays read-only.
 
 Run from the repo root:
 
@@ -30,9 +30,9 @@ class ChangeVerifierAgentTest(unittest.TestCase):
         self.path = CLAUDE / "agents" / "change-verifier.md"
         self.fields = agent_fields(self.path)
 
-    def test_runs_on_sonnet_during_the_trial(self):
-        # Agent-Oriented Toolbox story "Trial change-verifier on Sonnet": Sonnet stays unless the trial finds it
-        # misses real problems, in which case this goes back to opus.
+    def test_runs_on_sonnet(self):
+        # Agent-Oriented Toolbox story "Trial change-verifier on Sonnet": the trial kept Sonnet (its log is the
+        # discussion's change-verifier-trial.md). Its independence comes from its fresh context, not its model.
         self.assertEqual(self.fields["name"], "change-verifier")
         self.assertEqual(self.fields["model"], "sonnet")
 
