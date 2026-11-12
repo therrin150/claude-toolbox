@@ -15,4 +15,5 @@ task is done in one line.
 Last thing, once the task is done: read the `Weekly · all models` window from `get_usage` (leave the weekly flags off
 unless `plan.status` is `ok`), run
 `<bin>/session_usage.py --task <work id> --weekly-percent <percentUsed> --weekly-resets-at <resetsAt>`,
-and show its `markdown` as is. It writes `usage` and `usage_total` to the record and carries its own caveats.
+and show its `markdown` as is: the tokens table, then each session's Claude, you and total time. It writes `usage` and
+`usage_total` (tokens, cost and time) to the record and carries its own caveats.

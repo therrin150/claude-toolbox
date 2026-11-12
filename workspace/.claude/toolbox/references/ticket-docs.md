@@ -49,7 +49,7 @@ Frontmatter, in this order (an epic has only `type`, `key`, `summary`, `status`,
 | `source_doc` | the vault-relative path of the draft or plan the record was made from |
 | `worktrees`, `sessions`, `prs` | lists the workflow keeps: worktree paths, session ids, PR URLs |
 | `work_note` | one line: why a task is stopped, or what it waits on |
-| `usage`, `usage_total` | token usage per session and in total, written whole at done |
+| `usage`, `usage_total` | token usage and `time` (seconds: Claude's, yours, their sum) per session and in total, written whole at done |
 
 Two more kinds of field come after these, added when first set:
 

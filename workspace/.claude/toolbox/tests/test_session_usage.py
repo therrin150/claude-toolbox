@@ -16,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import yaml
@@ -34,6 +35,36 @@ def assistant(request: str, model: str, output: int, cache_read: int = 0, when: 
                         "usage": {"input_tokens": 10, "cache_read_input_tokens": cache_read, "output_tokens": output,
                                   "cache_creation_input_tokens": 100,
                                   "cache_creation": {"ephemeral_1h_input_tokens": 100}}}}
+
+
+BASE = datetime(2026, 10, 27, 10, 0, 0, tzinfo=timezone.utc)
+
+
+def at(seconds: float) -> str:
+    return (BASE + timedelta(seconds=seconds)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def prompt(seconds: float) -> dict:
+    return {"type": "user", "origin": {"kind": "human"}, "timestamp": at(seconds),
+            "message": {"role": "user", "content": "go on"}}
+
+
+def notification(seconds: float) -> dict:
+    return {"type": "user", "origin": {"kind": "task-notification"}, "timestamp": at(seconds),
+            "message": {"role": "user", "content": "<task-notification>CI finished</task-notification>"}}
+
+
+def event(seconds: float, *calls: tuple[str, dict]) -> dict:
+    """An assistant record at `seconds`, calling the given (tool, input) pairs."""
+    line = assistant(f"r{seconds}", "claude-opus-5-5", 1, when=at(seconds))
+    line["message"]["content"] = [{"type": "tool_use", "id": f"t{seconds}-{i}", "name": name, "input": tool_input}
+                                  for i, (name, tool_input) in enumerate(calls)]
+    return line
+
+
+def turns(*spec: tuple[float, float, list]) -> list[dict]:
+    """One turn per (start, end, tool calls): your prompt at start, an assistant event at end."""
+    return [line for start, end, calls in spec for line in (prompt(start), event(end, *calls))]
 
 
 class UsageTest(unittest.TestCase):
@@ -102,7 +133,9 @@ class UsageTest(unittest.TestCase):
         self.assertEqual([u["session"] for u in fields["usage"]], ["s1", "s2"])
         self.assertEqual(fields["usage"][0]["claude-opus-5-5"]["output"], 1000)
         self.assertEqual(fields["usage_total"], {"tokens": out["total"]["tokens"],
-                                                 "cost": round(out["total"]["cost"], 2)})
+                                                 "cost": round(out["total"]["cost"], 2),
+                                                 "time": {"claude": 0, "user": 0, "total": 0}})
+        self.assertEqual(fields["usage"][0]["time"], {"claude": 0, "user": 0})
         self.assertIn("Across 2 sessions.", out["markdown"])
         self.assertIn("Not priced, so left out of the cost: mystery-model.", out["markdown"])
 
@@ -179,6 +212,129 @@ class UsageTest(unittest.TestCase):
                          [("s2", 1000, 1), ("s1", 100, 1)])
         self.assertIsNone(out["record"])
         self.assertEqual(path.read_text(), before)
+
+    def seconds(self, out: dict, session: str) -> tuple[int, int, int]:
+        t = out["time"]["sessions"][session]
+        return t["claude"], t["user"], t["total"]
+
+    def test_time_of_a_task_worked_in_two_sessions(self):
+        # s1 is left idle past the hour before its last turn; s2 is a later session.
+        self.transcript("s1", turns((0, 60, []), (4060, 4090, [])))
+        self.transcript("s2", turns((10000, 10300, [])))
+        path = self.record(["s1", "s2"])
+        out = self.run_usage("--task", "PT-1")
+        # s1: Claude 60 + 30; your gap of 4,000 s is capped at 10 minutes; nothing after its last event.
+        self.assertEqual(self.seconds(out, "s1"), (90, 600, 690))
+        self.assertEqual(self.seconds(out, "s2"), (300, 0, 300))
+        self.assertEqual(out["time"]["total"], {"claude": 390, "user": 600, "total": 990})
+        self.assertIn("| s1 | 1m 30s | 10m 00s | 11m 30s |", out["markdown"])
+        self.assertIn("| s2 | 5m 00s | 0s | 5m 00s |", out["markdown"])
+        self.assertIn("| **Total** | **6m 30s** | **10m 00s** | **16m 30s** |", out["markdown"])
+        fields = frontmatter.fields(path)
+        self.assertEqual([u["time"] for u in fields["usage"]],
+                         [{"claude": 90, "user": 600}, {"claude": 300, "user": 0}])
+        self.assertEqual(fields["usage_total"]["time"], {"claude": 390, "user": 600, "total": 990})
+
+    def test_long_gap_before_a_prompt_adds_ten_minutes(self):
+        self.transcript("s1", turns((0, 10, []), (10 + 25 * 60, 10 + 25 * 60 + 10, [])))
+        self.record(["s1"])
+        self.assertEqual(self.seconds(self.run_usage("--task", "PT-1"), "s1"), (20, 600, 620))
+
+    def test_waiting_on_ci_adds_nothing(self):
+        # The turn ends waiting on CI; the notification starts the next one an hour later.
+        lines = [prompt(0), event(100), notification(3700), event(3750), prompt(3780), event(3790)]
+        self.transcript("s1", lines)
+        self.record(["s1"])
+        # Claude: 100 + 50 + 10. Yours: only the 30 s between the notification turn and your next prompt.
+        self.assertEqual(self.seconds(self.run_usage("--task", "PT-1"), "s1"), (160, 30, 190))
+
+    def test_only_prompts_and_notifications_start_turns(self):
+        tool_result = {"type": "user", "timestamp": at(5), "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "t", "content": "ok"}]}}
+        skill_text = {"type": "user", "isMeta": True, "timestamp": at(6),
+                      "message": {"content": [{"type": "text", "text": "Base directory for this skill: x"}]}}
+        interrupt = {"type": "user", "timestamp": at(20),
+                     "message": {"content": [{"type": "text", "text": "[Request interrupted by user for tool use]"}]}}
+        hand_back = {"type": "user", "isMeta": True, "origin": {"kind": "peer"}, "timestamp": at(500),
+                     "message": {"content": "Another Claude session sent a message:"}}
+        # Records with no timestamp or an unrelated type (diagnostics) never count either.
+        noise = [{"type": "last-prompt"}, {"type": "api-request", "timestamp": at(900)}]
+        self.transcript("s1", [prompt(0), tool_result, skill_text, event(10), interrupt, prompt(30), event(40),
+                               hand_back, event(520), *noise])
+        self.assertEqual(self.seconds(self.run_usage("--session", "s1"), "s1"), (20 + 10 + 20, 10, 60))
+
+    def test_a_compaction_summary_with_a_stale_timestamp_adds_no_time(self):
+        # Written at idle-compaction time with an old timestamp, though it sits in the file after the prompt that
+        # triggered the compaction.
+        summary = {"type": "user", "isMeta": True, "isCompactSummary": True, "timestamp": at(500),
+                   "message": {"content": "This session is being continued from a previous conversation"}}
+        stale = {"type": "user", "isMeta": True, "timestamp": at(510),
+                 "message": {"content": [{"type": "text", "text": "This session is being continued"}]}}
+        self.transcript("s1", [prompt(0), event(10), prompt(4000), event(4010), stale, summary, event(4020)])
+        self.assertEqual(self.seconds(self.run_usage("--session", "s1"), "s1"), (10 + 20, 600, 630))
+
+    def test_subagent_events_extend_the_turn(self):
+        self.transcript("s1", turns((0, 10, []), (100, 110, [])),
+                        {"a1": [event(40), event(75)]})
+        # The subagent's work runs to 75 s, so the first turn ends there and your gap shrinks to 25 s.
+        self.assertEqual(self.seconds(self.run_usage("--session", "s1"), "s1"), (75 + 10, 25, 110))
+
+    def test_session_without_a_task_counts_whole_and_top_results_skip_time(self):
+        self.transcript("s1", turns((0, 10, [])))
+        self.assertEqual(self.run_usage("--session", "s1")["time"]["total"], {"claude": 10, "user": 0, "total": 10})
+        self.assertIsNone(self.run_usage("--session", "s1", "--top-results")["time"])
+
+    def second_record(self) -> None:
+        subprocess.run([sys.executable, str(TASKS), "create-defect", "--summary", "Jar Label Smudged"],
+                       capture_output=True, text=True, env=self.env, cwd=self.root, check=True)
+
+    def test_a_session_spanning_two_tasks_is_split_by_turn(self):
+        wt = self.root / ".worktrees"
+        edit_1 = ("Edit", {"file_path": str(wt / "PT-1" / "a.py")})
+        edit_2 = ("Edit", {"file_path": str(wt / "PT-2" / "b.py")})
+        named_1 = ("Bash", {"command": "/x/.claude/toolbox/bin/tasks.py context PT-1 --session s1"})
+        named_2 = ("Bash", {"command": "/x/.claude/toolbox/bin/tasks.py set PT-2 status=in-progress"})
+        self.transcript("s1", turns(
+            (0, 5, []),                   # before any item: goes to the first one touched, PT-1
+            (15, 25, [named_1]),          # PT-1
+            (45, 65, []),                 # touches nothing: the previous turn's item, PT-1
+            (85, 115, [edit_2]),          # PT-2
+            (145, 155, [edit_1, named_2]),  # both: split evenly
+        ))
+        self.record(["s1"])
+        self.second_record()
+        out = self.run_usage("--task", "PT-1", "--dry-run")
+        # Gaps after each turn: 10, 20, 20, 30. PT-1: turns 1-3 whole, half of 5.
+        self.assertEqual(self.seconds(out, "s1"), (40, 50, 90))
+        subprocess.run([sys.executable, str(TASKS), "append", "PT-2", "sessions", "s1"], env=self.env, cwd=self.root,
+                       check=True, capture_output=True)
+        out = self.run_usage("--task", "PT-2", "--dry-run")
+        self.assertEqual(self.seconds(out, "s1"), (30 + 5, 30, 65))
+
+    def test_sessions_that_wrote_to_the_task_add_time_only(self):
+        wt = self.root / ".worktrees"
+        write = ("Write", {"file_path": str(wt / "PT-1" / "a.py")})
+        self.transcript("s1", [assistant("r1", "claude-opus-5-5", 10, when=at(0))] + turns((0, 20, [])))
+        # s2 isn't in the record's sessions but wrote into the task's worktree; s3 only read it; s4 is somewhere else.
+        self.transcript("s2", [assistant("r2", "claude-opus-5-5", 999, when=at(0))] + turns((100, 160, [write])))
+        self.transcript("s3", turns((200, 260, [("Read", {"file_path": str(wt / "PT-1" / "a.py")}),
+                                                ("Bash", {"command": "cat PT-1.md"})])))
+        self.transcript("s4", turns((300, 360, [("Write", {"file_path": str(wt / "PT-9" / "a.py")})])))
+        # s5 only named the task in a read-only call; s6 recorded progress with tasks.py set.
+        self.transcript("s5", turns((400, 460, [("Bash", {"command": "tasks.py context PT-1"})])))
+        self.transcript("s6", turns((500, 520, [("Bash", {"command": "tasks.py set PT-1 owner=claude"})])))
+        path = self.record(["s1"])
+        out = self.run_usage("--task", "PT-1")
+        self.assertEqual(list(out["time"]["sessions"]), ["s1", "s2", "s6"])
+        self.assertEqual(self.seconds(out, "s2"), (60, 0, 60))
+        self.assertEqual(out["time"]["total"], {"claude": 100, "user": 0, "total": 100})
+        # Tokens and cost stay with the record's own sessions.
+        self.assertEqual(out["by_model"]["claude-opus-5-5"]["output"], 10 + 1)
+        fields = frontmatter.fields(path)
+        self.assertEqual(fields["usage"][1], {"session": "s2", "time": {"claude": 60, "user": 0}})
+        self.assertEqual(fields["usage"][0]["time"], {"claude": 20, "user": 0})
+        self.assertEqual(fields["usage_total"]["time"], {"claude": 100, "user": 0, "total": 100})
+        self.assertIn("Time also counts 2 sessions that wrote to the task", out["markdown"])
 
     def test_errors(self):
         self.transcript("s1", [assistant("r1", "claude-opus-5-5", 1)])
