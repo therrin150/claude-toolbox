@@ -29,3 +29,18 @@ notes: <one line per judgment call: a lock wait (how long, whose lock), a retry,
   most the last three `tail` lines when the cause isn't in them. More than 20 failures: list the first 20 and say how
   many more.
 - A `takeover` the script reports goes in `notes`, so the session can tell the user their manual lock was taken over.
+
+## Contract
+
+The report contract gate checks the report against this block when you hand it back, and denies one that breaks it,
+naming what is wrong; fix the report and hand it back again. Its lines are `require <field>: <regex>` (some line
+matches), `forbid <what>: <regex>` (no line matches) and `limit <n> <what>: <regex>` (at most n lines match);
+`lib/report_contract.py` has the format.
+
+```contract
+require result: ^result: (pass|fail|blocked)\s*$
+require mode: ^mode: (build|unit|format|integration)\s*$
+forbid log path: (?:^|[\s("'`=:])(?:[\w.~/-]*/)?target/[\w./-]+
+forbid log file: [\w/~-]+\.log(?=$|[\s:,;)'"`])
+limit 25 stack frame lines: ^\s*at [\w$.<>/]+\(
+```

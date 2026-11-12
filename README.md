@@ -15,8 +15,9 @@ Every session in a workspace (any folder sessions start in that the toolbox inst
 2. **Feature-gated workspace items** (`workspace/` → each workspace's `.claude/`): what's shared but chosen per
    project. Every skill, rule and agent here sits behind a feature in `workspace/features.yml`, and installs only into
    a workspace whose config picks it: workflow skills (`git`, `tasks`, `pr`, `verify`, ...) and knowledge skills
-   (Allen's conventions for one technology, `java` to `bruno`). Only the runtime (`.claude/toolbox/`), `toolbox-doctor`
-   and the generated `toolbox-config.md` rule install everywhere.
+   (Allen's conventions for one technology, `java` to `bruno`). Only the runtime (`.claude/toolbox/`), `toolbox-doctor`,
+   the report contract gates (an agent's report template declares what its report must carry and must not; the gates
+   deny a report that breaks it) and the generated `toolbox-config.md` rule install everywhere.
 3. **The project's own files**: its `.claude/toolbox.local.yml` (features and values, untracked), and, checked in, its
    prefixed rules (`.claude/rules/<prefix>-*.md`, only what it does differently) and extension docs
    (`.claude/extensions/<prefix>-<skill>.md`, its own steps inside a shared skill).

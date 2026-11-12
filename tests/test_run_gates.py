@@ -171,6 +171,21 @@ class RunGatesTest(unittest.TestCase):
         out = json.loads(self.run_gates(event).stdout)
         self.assertEqual(out, {"decision": "block", "reason": "post"})
 
+    def test_star_matches_a_tool_less_event_and_any_tool_but_a_named_tool_does_not(self) -> None:
+        stop = self.hooks / "gates" / "subagent_stop"
+        stop.mkdir()
+        (stop / "star.py").write_text(
+            'TOOLS = {"*"}\nMAIN_ONLY = False\ndef check(event):\n    return "stop " + event["agent_type"]\n')
+        (stop / "named.py").write_text('TOOLS = {"Bash"}\nMAIN_ONLY = False\ndef check(event):\n    return "named"\n')
+        event = {"hook_event_name": "SubagentStop", "agent_type": "check-runner", "last_assistant_message": "x"}
+        out = json.loads(self.run_gates(event).stdout)
+        self.assertEqual(out, {"decision": "block", "reason": "stop check-runner"})
+        (stop / "star.py").unlink()
+        self.assertEqual(self.run_gates(event).stdout, "")  # a gate naming a tool never sees a tool-less event
+        self.gate("star", 'TOOLS = {"*"}\nMAIN_ONLY = True\ndef check(event):\n    return "any tool"\n')
+        self.assertEqual(self.denial(self.run_gates(bash("ls"))), "any tool")
+        self.assertIsNone(self.denial(self.run_gates(bash("ls", agent_type="x"))))  # MAIN_ONLY still applies
+
     def test_bare_string_tools_is_a_broken_gate(self) -> None:
         self.gate("a_str", BLOCK_ECHO.replace('{"Bash"}', '"Bash Read"'))
         result = self.run_gates(bash("echo blocked"))

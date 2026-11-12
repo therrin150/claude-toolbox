@@ -14,7 +14,8 @@ folders are read, global gates first:
 A gate declares:
 
   TOOLS      the tool names it looks at (a set of strings, e.g. {"Bash"}, not a bare str); a gate whose TOOLS leave
-             out the call's tool never runs
+             out the call's tool never runs. `"*"` matches every tool, and is the only value that matches an event with
+             no tool (SubagentStop, Stop, ...), so a gate for such an event declares {"*"}
   MAIN_ONLY  True to skip the gate when the input has an `agent_type`, i.e. the call comes from a subagent
   check(event)  returns a denial message (a str, which should name the agent or skill to use instead) or None
 
@@ -109,7 +110,7 @@ def run(event: dict) -> str | None:
             gate = load(path)
             if not isinstance(gate.TOOLS, (set, frozenset, list, tuple)):
                 raise TypeError(f"TOOLS is a {type(gate.TOOLS).__name__}, not a set of tool names")
-            if tool not in gate.TOOLS or (gate.MAIN_ONLY and from_agent):
+            if not ("*" in gate.TOOLS or tool in gate.TOOLS) or (gate.MAIN_ONLY and from_agent):
                 continue
             message = gate.check(event)
             if message is not None and not isinstance(message, str):

@@ -24,6 +24,9 @@
 
 # `_commands.py` (the helper the gates share) is unlisted on purpose: it must install wherever any gate does, and a path
 # listed under two features needs both.
+# The report contract gates (`pre_tool_use/` and `subagent_stop/report_contract_gate.py`) are unlisted for the same
+# reason: they serve every agent whose report template (under .claude/toolbox/agents/, also unlisted) declares a
+# contract, whichever feature installs the agent, and do nothing for one that declares none.
 git:
   - .claude/hooks/gates/pre_tool_use/git_write_gate.py
   - .claude/rules/git-conventions.md
