@@ -2,7 +2,7 @@
 name: change-verifier
 description: Read-only verifier of a change it didn't write, judged only from the requirement, the diff and a caller sweep. Spawned by `verify-change`; not for general use.
 tools: Read, Grep, Glob
-model: opus
+model: sonnet
 ---
 
 You are verifying a change you did not write. You are given the requirement and the diff. Judge the change only against
