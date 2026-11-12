@@ -1,4 +1,4 @@
-"""Tests for the checks, raw output and git write gates (workspace/.claude/hooks/gates/pre_tool_use/).
+"""Tests for the checks, raw output, git write and main checkout gates (workspace/.claude/hooks/gates/pre_tool_use/).
 
 Most tests run the real dispatcher on hook input, the way Claude Code does, against a temporary workspace whose
 `.claude/hooks/gates/pre_tool_use/` links the gates one file at a time (as the installer does) and whose
@@ -282,6 +282,113 @@ class GitWriteGateTest(GateTest):
     def test_a_subagent_runs_them(self) -> None:
         self.assertIsNone(self.bash("git commit -m x", agent_type="general-purpose"))
         self.assertIsNone(self.bash("gh pr merge 1", agent_type="general-purpose"))
+
+
+class MainCheckoutGateTest(GateTest):
+    """The main checkout gate, against a nested workspace of real repos: `api` has a task worktree, `web` has none."""
+
+    def git(self, cwd: Path, *args: str) -> None:
+        subprocess.run(["git", "-C", str(cwd), "-c", "user.name=t", "-c", "user.email=t@t", *args], check=True,
+                       capture_output=True)
+
+    def setUp(self) -> None:
+        super().setUp()
+        config = {**CONFIG, "features": ["worktrees"], "workspace": {**CONFIG["workspace"], "layout": "nested",
+                                                                      "worktrees": ".worktrees"}}
+        (self.ws / ".claude" / "toolbox.local.yml").write_text(yaml.safe_dump(config), encoding="utf-8")
+        (self.ws / "api").rmdir()
+        for repo in ("api", "web"):
+            (self.ws / repo / "src").mkdir(parents=True)
+            self.git(self.ws, "init", "-q", repo)
+            (self.ws / repo / "src" / "a.txt").write_text("x", encoding="utf-8")
+            self.git(self.ws / repo, "add", "-A")
+            self.git(self.ws / repo, "commit", "-q", "-m", "init")
+        self.worktree = self.ws / ".worktrees" / "T-1" / "api"
+        self.worktree.parent.mkdir(parents=True)
+        self.git(self.ws / "api", "worktree", "add", "-q", "-b", "t-1", str(self.worktree))
+        (self.ws / "vault").mkdir()
+
+    def edit(self, path: Path | str, tool: str = "Edit", **extra) -> str | None:
+        return self.run_gate(tool, {"file_path": str(path)}, **extra)
+
+    def test_a_main_checkout_edit_with_a_worktree_is_denied_naming_the_worktree_path(self) -> None:
+        for tool in ("Edit", "Write"):
+            message = self.edit(self.ws / "api" / "src" / "a.txt", tool)
+            self.assertIsNotNone(message, tool)
+            self.assertIn(str(self.worktree.resolve() / "src" / "a.txt"), message)
+
+    def test_a_new_file_in_the_main_checkout_is_denied_too(self) -> None:
+        self.assertIsNotNone(self.edit(self.ws / "api" / "src" / "new" / "B.java", "Write"))
+
+    def test_a_relative_path_resolves_against_the_sessions_directory(self) -> None:
+        self.assertIsNotNone(self.run_gate("Edit", {"file_path": "src/a.txt"}, cwd=str(self.ws / "api")))
+
+    def test_a_repo_with_no_worktree_goes_ahead(self) -> None:
+        self.assertIsNone(self.edit(self.ws / "web" / "src" / "a.txt"))
+
+    def test_the_worktree_itself_goes_ahead(self) -> None:
+        self.assertIsNone(self.edit(self.worktree / "src" / "a.txt"))
+
+    def test_the_vault_and_files_outside_every_repo_go_ahead(self) -> None:
+        self.assertIsNone(self.edit(self.ws / "vault" / "Tasks" / "T-1.md", "Write"))
+        self.assertIsNone(self.edit(self.ws / ".claude" / "notes.md", "Write"))
+        self.assertIsNone(self.edit(self.ws / "README.md", "Write"))
+        self.assertIsNone(self.edit(self.tmp / "elsewhere.txt", "Write"))
+
+    def test_a_vault_inside_a_repo_is_written_in_the_main_checkout(self) -> None:
+        config = yaml.safe_load((self.ws / ".claude" / "toolbox.local.yml").read_text(encoding="utf-8"))
+        config["vault"]["path"] = "api/vault"
+        (self.ws / ".claude" / "toolbox.local.yml").write_text(yaml.safe_dump(config), encoding="utf-8")
+        self.assertIsNone(self.edit(self.ws / "api" / "vault" / "Tasks" / "T-1.md", "Write"))
+        self.assertIsNotNone(self.edit(self.ws / "api" / "src" / "a.txt"))
+
+    def test_a_removed_worktree_lifts_the_gate(self) -> None:
+        self.git(self.ws / "api", "worktree", "remove", str(self.worktree))
+        self.assertIsNone(self.edit(self.ws / "api" / "src" / "a.txt"))
+
+    def test_a_worktree_outside_the_worktrees_folder_is_not_a_task_worktree(self) -> None:
+        self.git(self.ws / "web", "worktree", "add", "-q", "-b", "scratch", str(self.tmp / "scratch"))
+        self.assertIsNone(self.edit(self.ws / "web" / "src" / "a.txt"))
+
+    def test_every_worktree_is_named(self) -> None:
+        other = self.ws / ".worktrees" / "T-2" / "api"
+        other.parent.mkdir(parents=True)
+        self.git(self.ws / "api", "worktree", "add", "-q", "-b", "t-2", str(other))
+        message = self.edit(self.ws / "api" / "src" / "a.txt")
+        self.assertIn(str(self.worktree.resolve()), message)
+        self.assertIn(str(other.resolve()), message)
+
+    def test_a_single_repo_workspace_gates_its_root(self) -> None:
+        config = yaml.safe_load((self.ws / ".claude" / "toolbox.local.yml").read_text(encoding="utf-8"))
+        config["workspace"]["layout"] = "single"
+        (self.ws / ".claude" / "toolbox.local.yml").write_text(yaml.safe_dump(config), encoding="utf-8")
+        self.git(self.ws, "init", "-q", ".")
+        (self.ws / "src").mkdir()
+        (self.ws / "src" / "a.txt").write_text("x", encoding="utf-8")
+        self.git(self.ws, "add", "src")
+        self.git(self.ws, "commit", "-q", "-m", "init")
+        self.assertIsNone(self.edit(self.ws / "src" / "a.txt"))
+        wt = self.ws / ".worktrees" / "T-9"
+        self.git(self.ws, "worktree", "add", "-q", "-b", "t-9", str(wt))
+        message = self.edit(self.ws / "src" / "a.txt")
+        self.assertIn(str(wt.resolve() / "src" / "a.txt"), message)
+        self.assertIsNone(self.edit(wt / "src" / "a.txt"))
+        self.assertIsNone(self.edit(self.tmp / "elsewhere.txt", "Write"))  # outside the root: no crash, no denial
+
+    def test_a_subagent_edits_it(self) -> None:
+        self.assertIsNone(self.edit(self.ws / "api" / "src" / "a.txt", agent_id="a1", agent_type="general-purpose"))
+
+    def test_without_a_config_or_with_a_broken_one_the_edit_goes_ahead(self) -> None:
+        (self.ws / ".claude" / "toolbox.local.yml").write_text("version: [unclosed", encoding="utf-8")
+        self.assertIsNone(self.edit(self.ws / "api" / "src" / "a.txt"))
+        (self.ws / ".claude" / "toolbox.local.yml").unlink()
+        self.assertIsNone(self.edit(self.ws / "api" / "src" / "a.txt"))
+
+    def test_other_tools_and_empty_inputs_pass(self) -> None:
+        self.assertIsNone(self.run_gate("Read", {"file_path": str(self.ws / "api" / "src" / "a.txt")}))
+        self.assertIsNone(self.run_gate("Edit", {}))
+        self.assertIsNone(self.run_gate("Write", {"file_path": ""}))
+        self.assertIsNone(self.bash("git status"))
 
 
 if __name__ == "__main__":

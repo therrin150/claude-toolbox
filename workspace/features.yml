@@ -22,8 +22,8 @@
 #       - .claude/toolbox/bin/services_lock.py
 #     needs: [workspace.areas]
 
-# `_commands.py` (the helper checks_gate.py and git_write_gate.py share) is unlisted on purpose: it must install wherever
-# either gate does, and a path listed under two features needs both.
+# `_commands.py` (the helper the gates share) is unlisted on purpose: it must install wherever any gate does, and a path
+# listed under two features needs both.
 git:
   - .claude/hooks/gates/pre_tool_use/git_write_gate.py
   - .claude/rules/git-conventions.md
@@ -57,6 +57,7 @@ review-ui:
   - .claude/skills/local-review-ui
 
 worktrees:
+  - .claude/hooks/gates/pre_tool_use/main_checkout_gate.py
   - .claude/skills/git-worktrees
 
 pr:

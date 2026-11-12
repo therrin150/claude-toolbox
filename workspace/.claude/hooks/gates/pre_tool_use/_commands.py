@@ -6,6 +6,7 @@ A gate loads this by path (importlib, beside itself), since the dispatcher loads
 - simple_commands(command) splits a Bash command line into its simple commands, each a list of words with leading
   `VAR=value` assignments and wrappers (`env`, `time`, `sudo`, ...) dropped, and `bash -c "..."` payloads split too. A
   quoted string stays one word, so `git commit -m "fix; mvn test"` is one `git` command, never an `mvn` one.
+- workspace_config(event) is the workspace config found above the event's directory, or None.
 - area_commands(event) is the workspace config's `build`, `unit`, `format` and `integration` commands as
   [(kind, command)], from the config found above the event's directory; empty when there is none or it can't be read.
 - script_args(words) is a command's script basename and the arguments after it, looking through `python3 script.py`.
@@ -107,18 +108,30 @@ def expand(word: str) -> str:
     return os.path.expanduser(word)
 
 
-def area_commands(event: dict) -> list[tuple[str, str]]:
-    """Every distinct (kind, command) the config sets for an area, kinds in KINDS; [] when no config can be read."""
+def workspace_config(event: dict):
+    """The workspace config found above the event's directory (loaded with the toolbox's own config library), or None
+    when there is none or it can't be read."""
     start = event.get("cwd") or os.environ.get("CLAUDE_PROJECT_DIR")
     lib = Path(os.path.abspath(__file__)).parents[3] / "toolbox" / "lib" / "config.py"
     if not start or not lib.is_file():
-        return []
+        return None
     try:
         spec = importlib.util.spec_from_file_location("_gate_toolbox_config", lib)
         config = importlib.util.module_from_spec(spec)
         sys.modules[spec.name] = config  # its dataclasses look their module up here
         spec.loader.exec_module(config)
-        loaded = config.load(Path(start))
+        return config.load(Path(start))
+    except Exception:
+        return None
+
+
+def area_commands(event: dict) -> list[tuple[str, str]]:
+    """Every distinct (kind, command) the config sets for an area, kinds in KINDS; [] when no config can be read."""
+    loaded = workspace_config(event)
+    if loaded is None:
+        return []
+    try:
+        config = sys.modules["_gate_toolbox_config"]
         found = []
         for area in [*loaded.areas(), config.ANY_AREA]:
             for kind in KINDS:
