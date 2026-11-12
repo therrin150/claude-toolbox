@@ -80,6 +80,7 @@ tasks:
 jira:
   paths:
     - .claude/agents/jira-filer.md.tmpl
+    - .claude/agents/jira-reader.md.tmpl
   needs: [tracker.jira]
 
 jira-sprints:

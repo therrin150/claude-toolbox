@@ -230,21 +230,25 @@ class DoctorTest(unittest.TestCase):
             self.assertIn("project `ABC` on `example.atlassian.net`", text)
             code, checks, out = self.doctor()
             self.assertEqual(code, 0, out)
-            self.assertEqual(checks["rendered"]["detail"], "1 file(s) current")  # jira-filer.md
+            self.assertEqual(checks["rendered"]["detail"], "2 file(s) current")  # jira-filer.md, jira-reader.md
 
     def test_rendered_file_missing_or_out_of_date(self):
-        agent = self.ws / ".claude" / "agents" / "jira-filer.md"
+        agents = self.ws / ".claude" / "agents"
+        agent, reader = agents / "jira-filer.md", agents / "jira-reader.md"
         self.use_jira("atlassian")
         self.install()
         self.use_jira("atlassian-work")
         code, checks, _ = self.doctor()
         self.assertEqual(code, 1)
         self.assertEqual(checks["rendered"]["status"], "fail")
-        self.assertEqual(checks["rendered"]["detail"],
-                         [f"{agent} is out of date with the config; sync the toolbox"])
+        self.assertEqual(sorted(checks["rendered"]["detail"]), [
+            f"{agent} is out of date with the config; sync the toolbox",
+            f"{reader} is out of date with the config; sync the toolbox"])
         agent.unlink()
+        reader.unlink()
         _, checks, _ = self.doctor()
-        self.assertEqual(checks["rendered"]["detail"], [f"{agent} doesn't exist; sync the toolbox"])
+        self.assertEqual(sorted(checks["rendered"]["detail"]), [
+            f"{agent} doesn't exist; sync the toolbox", f"{reader} doesn't exist; sync the toolbox"])
         self.install()
         _, checks, _ = self.doctor()
         self.assertEqual(checks["rendered"]["status"], "ok")
@@ -252,8 +256,9 @@ class DoctorTest(unittest.TestCase):
         self.config["features"] = []
         self.write_config()
         _, checks, _ = self.doctor()
-        self.assertEqual(checks["rendered"]["detail"],
-                         [f"{agent} is no longer wanted (its feature is off); sync the toolbox"])
+        self.assertEqual(sorted(checks["rendered"]["detail"]), [
+            f"{agent} is no longer wanted (its feature is off); sync the toolbox",
+            f"{reader} is no longer wanted (its feature is off); sync the toolbox"])
 
     def test_a_feature_whose_needs_are_missing(self):
         self.config["features"] = ["jira"]

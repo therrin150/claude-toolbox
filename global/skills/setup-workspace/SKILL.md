@@ -55,7 +55,7 @@ Features come first, since they decide what else is asked. Present the suggested
 | `worktrees` | `git-worktrees` | `.git` | |
 | `pr` | `gh-create-pull-request`, `gh-merge-pull-request` | `.git` with a GitHub origin | |
 | `tasks` | `work-task`, `propose-tickets`, `create-tickets`, `create-defect`, the ticket-docs rule | an Atlassian server | `tracker`, `vault` |
-| `jira` | the `jira-filer` agent | an Atlassian server | `tracker.jira` |
+| `jira` | the `jira-filer` and `jira-reader` agents | an Atlassian server | `tracker.jira` |
 | `jira-sprints` | `jira-find-current-sprint` | | `tracker.jira` |
 | `dispatcher` | `work-tasks` | | |
 | `services-lock` | `start-`, `stop-local-services` (user-invoked) | a compose file | `workspace.areas` |
