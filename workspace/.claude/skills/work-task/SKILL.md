@@ -66,8 +66,7 @@ worktree (the workspace's skills and rules load only from there). `work-tasks` l
   exit: test runs, the review waiter (`code-review.md`), `<bin>/watch_task.py prs` once the PRs are open, and
   `<bin>/watch_task.py pipeline` for a shared library's release (`merge.md`). Nothing else watches GitHub or CI.
 - **The tracker.** A `tasks.py set` that prints a non-null `write_back` moves the Jira issue too: follow
-  `.claude/toolbox/references/jira-write-back.md`. Identity check before the first Jira write:
-  `.claude/toolbox/references/identity-check.md`.
+  `.claude/toolbox/references/jira-write-back.md` (a `jira-creator` spawn; the main session never writes to Jira).
 - **Unreleased libraries.** In a workspace with shared libraries, consumers build and test against a released
   version, which is why the shared-library cycle exists (`references/cycles.md`). Never test an unreleased build of one
   (a branch's, or another checkout's) against local services without the user's go-ahead, and that includes installing

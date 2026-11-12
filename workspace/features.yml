@@ -81,6 +81,7 @@ jira:
   paths:
     - .claude/agents/jira-creator.md.tmpl
     - .claude/agents/jira-reader.md.tmpl
+    - .claude/hooks/gates/pre_tool_use/jira_write_gate.py
   needs: [tracker.jira]
 
 jira-sprints:

@@ -212,7 +212,8 @@ class DoctorTest(unittest.TestCase):
         jira_tools = ["atlassianUserInfo", "getAccessibleAtlassianResources", "getJiraIssue",
                       "searchJiraIssuesUsingJql", "createJiraIssue", "editJiraIssue", "addOrEditJiraIssueComment",
                       "discover", "executeRead", "executeWrite", "addCommentToJiraIssue", "createIssueLink",
-                      "getIssueLinkTypes", "getJiraIssueTypeMetaWithFields"]
+                      "getIssueLinkTypes", "getJiraIssueTypeMetaWithFields", "getTransitionsForJiraIssue",
+                      "transitionJiraIssue"]
         self.assertFalse(agent.exists())  # no jira feature yet
         for server in ("atlassian", "atlassian-work"):
             self.use_jira(server)

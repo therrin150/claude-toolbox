@@ -95,3 +95,13 @@ replace or leave it.
 Not yet. When time goes to Jira, a script will compute each item's total and start timestamp and this agent will write
 the worklog with `addWorklogToJiraIssue`, so the Jira write gate holds. Until then, a request to log work is reported
 under `Problems` as not supported yet, and nothing is written.
+
+## 7. Transitions
+
+For a move to another status (the caller gives the issue key and the Jira status name, `to`), after the identity
+check: list the issue's transitions (`getTransitionsForJiraIssue`, or `listJiraIssueTransitions` through `executeRead`;
+`discover` names the operation when neither exists) and pick the one whose target status is `to`, ignoring case. If the
+issue is already in `to`, change nothing (the report's `Problems` is `none`). If no transition leads there, never guess
+another: change nothing and report the issue's current status and `to` under `Problems`. Otherwise call
+`transitionJiraIssue` with the cloud id and that transition's id, and nothing else (no fields, no comment unless the
+caller asked). A failed call goes under `Problems`.

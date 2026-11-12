@@ -1,4 +1,5 @@
-"""Tests for the checks, raw output, git write and main checkout gates (workspace/.claude/hooks/gates/pre_tool_use/).
+"""Tests for the checks, raw output, git write, main checkout and Jira write gates
+(workspace/.claude/hooks/gates/pre_tool_use/).
 
 Most tests run the real dispatcher on hook input, the way Claude Code does, against a temporary workspace whose
 `.claude/hooks/gates/pre_tool_use/` links the gates one file at a time (as the installer does) and whose
@@ -389,6 +390,61 @@ class MainCheckoutGateTest(GateTest):
         self.assertIsNone(self.run_gate("Edit", {}))
         self.assertIsNone(self.run_gate("Write", {"file_path": ""}))
         self.assertIsNone(self.bash("git status"))
+
+
+class JiraWriteGateTest(GateTest):
+    """The Jira write gate: the server's write tools are denied in the main session, whatever the server is called."""
+
+    WRITES = ("createJiraIssue", "editJiraIssue", "addCommentToJiraIssue", "addOrEditJiraIssueComment",
+              "addWorklogToJiraIssue", "createIssueLink", "transitionJiraIssue", "executeWrite")
+    READS = ("getJiraIssue", "searchJiraIssuesUsingJql", "getTransitionsForJiraIssue", "getIssueLinkTypes",
+             "atlassianUserInfo", "getAccessibleAtlassianResources", "discover", "executeRead",
+             "getJiraIssueTypeMetaWithFields", "lookupJiraAccountId", "search", "fetch")
+
+    def jira(self, name: str, server: str = "atlassian", **extra) -> str | None:
+        return self.run_gate(f"mcp__{server}__{name}", {"cloudId": "c", "issueIdOrKey": "ABC-1"}, **extra)
+
+    def test_a_main_session_create_is_denied_naming_jira_creator(self) -> None:
+        message = self.jira("createJiraIssue")
+        self.assertIsNotNone(message)
+        self.assertIn("`createJiraIssue`", message)
+        self.assertIn("`jira-creator`", message)
+
+    def test_every_write_tool_is_denied(self) -> None:
+        for name in self.WRITES:
+            message = self.jira(name)
+            self.assertIsNotNone(message, name)
+            self.assertIn("`jira-creator`", message, name)
+
+    def test_jira_creator_makes_the_same_call(self) -> None:
+        for name in self.WRITES:
+            self.assertIsNone(self.jira(name, agent_id="a1", agent_type="jira-creator"), name)
+
+    def test_any_subagent_goes_ahead(self) -> None:
+        self.assertIsNone(self.jira("editJiraIssue", agent_id="a1", agent_type="general-purpose"))
+
+    def test_a_main_session_read_goes_ahead(self) -> None:
+        for name in self.READS:
+            self.assertIsNone(self.jira(name), name)
+
+    def test_the_servers_name_is_the_workspaces_choice(self) -> None:
+        for server in ("atlassian-work", "claude_ai_Atlassian", "a"):
+            self.assertIsNotNone(self.jira("transitionJiraIssue", server), server)
+            self.assertIsNone(self.jira("getJiraIssue", server), server)
+
+    def test_it_needs_no_config(self) -> None:
+        (self.ws / ".claude" / "toolbox.local.yml").unlink()
+        self.assertIsNotNone(self.jira("createJiraIssue"))
+        self.assertIsNone(self.jira("getJiraIssue"))
+
+    def test_other_tools_pass(self) -> None:
+        self.assertIsNone(self.jira("createConfluencePage"))
+        self.assertIsNone(self.jira("updateConfluencePage"))
+        self.assertIsNone(self.jira("slack_send_message", "slack"))
+        self.assertIsNone(self.run_gate("Bash", {"command": "echo createJiraIssue"}))
+        self.assertIsNone(self.run_gate("createJiraIssue", {}))  # not an MCP tool
+        self.assertIsNone(self.run_gate("mcp__createJiraIssue", {}))  # no server segment
+        self.assertIsNone(self.run_gate("mcp__atlassian__createJiraIssueDraft", {}))  # a longer name is another tool
 
 
 if __name__ == "__main__":

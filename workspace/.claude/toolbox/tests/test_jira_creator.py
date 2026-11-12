@@ -76,6 +76,10 @@ class JiraCreatorAgentTest(unittest.TestCase):
         for tool in self.tools:
             self.assertNotIn(tool, {"Edit", "Write", "Agent"})
 
+    def test_has_the_transition_tools_so_a_status_move_goes_through_it(self):
+        for needed in ("getTransitionsForJiraIssue", "transitionJiraIssue"):
+            self.assertIn(f"mcp__atlassian-work__{needed}", self.tools)
+
     def test_does_not_yet_have_the_worklog_tool(self):
         self.assertFalse([tool for tool in self.tools if "orklog" in tool])
 
@@ -104,6 +108,17 @@ class JiraCreatorAgentTest(unittest.TestCase):
         for needle in ("draft_to_jira.py", "--ac-field", "before creating anything", "Create nothing, from this draft or "
                        "any other", "`contentFormat: \"adf\"`", "`testing_notes_comment`", "Never change the converted content"):
             self.assertIn(needle, procedure)
+
+    def test_the_procedure_transitions_to_the_named_status_without_guessing(self):
+        section = " ".join((DOCS / "procedure.md").read_text().split("## 7. Transitions", 1)[1].split())
+        for needle in ("getTransitionsForJiraIssue", "ignoring case", "already in `to`", "never guess another",
+                       "`transitionJiraIssue`"):
+            self.assertIn(needle, section)
+
+    def test_the_write_back_reference_spawns_it_instead_of_transitioning_directly(self):
+        text = " ".join((TOOLBOX / "references" / "jira-write-back.md").read_text().split())
+        self.assertIn("Spawn `jira-creator`", text)
+        self.assertIn("denies the main session a direct `transitionJiraIssue`", text)
 
     def test_the_procedure_leaves_room_for_worklogs_without_adding_them(self):
         section = (DOCS / "procedure.md").read_text().split("## 6. Worklogs", 1)[1]

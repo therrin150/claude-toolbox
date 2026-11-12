@@ -16,6 +16,8 @@ Problems: none
 - A converter failure is `Filed: none` and one `Problems:` entry per failing draft, the converter's message as
   printed.
 - For an edit, `Filed` is `none` and `Problems` says what was changed (or `none` when the change was made).
+- For a status move, `Filed` is `none` and `Problems` is `none` when the issue is now in the asked status (moved, or
+  already there), otherwise why it isn't (no transition leads there, or the call failed), with its current status.
 
 ## Contract
 
