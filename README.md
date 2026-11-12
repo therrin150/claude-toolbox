@@ -42,7 +42,7 @@ dropping the feature and keeping a project-owned copy.
 |---|---|---|
 | `git` | `git-commit`, `git-draft-commit-message`, `git-delete-merged-branches`, the `git-conventions.md` rule | |
 | `verify` | `verify-change`, the `change-verifier` agent | |
-| `tests` | `run-unit-tests`, the `check-runner` agent | `workspace.areas` |
+| `tests` | `run-unit-tests`, the `check-runner` agent, the checks and raw output gates (deny builds, tests, `services_lock.py` and build or test logs in the main session) | `workspace.areas` |
 | `worktrees` | `git-worktrees` | |
 | `pr` | `gh-create-pull-request`, `gh-merge-pull-request` | |
 | `tasks` | `work-task`, `propose-tickets`, `create-tickets`, `create-defect`, the `ticket-docs.md` rule | `tracker`, `vault` |

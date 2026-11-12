@@ -35,6 +35,9 @@ verify:
 tests:
   paths:
     - .claude/agents/check-runner.md
+    - .claude/hooks/gates/pre_tool_use/_commands.py
+    - .claude/hooks/gates/pre_tool_use/checks_gate.py
+    - .claude/hooks/gates/pre_tool_use/raw_output_gate.py
     - .claude/skills/run-unit-tests
   needs: [workspace.areas]
 
