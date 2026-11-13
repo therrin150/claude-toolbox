@@ -1601,6 +1601,72 @@ LISTED = ("Create", "Update", "Remove", "Merge settings", "Conflicts, left alone
 LISTED_MOST = 20
 
 
+def feature_state(items: list, picked: bool, state: dict) -> tuple[str, dict, int]:
+    """(state, drift, files) of one feature at one location, from the items it would install there and what is on disk.
+    `drift` counts the files that are `edited` (on disk, not what was written), `outdated` (what was written, but the
+    source has changed since, or a link of an earlier installer) and `missing`. The state is `in-sync`, `drifted`,
+    `pending-install` (picked, nothing written yet), `pending-removal` (not picked, still installed) or `off`."""
+    drift = {"edited": 0, "outdated": 0, "missing": 0}
+    present = recorded = 0
+    for item in items:
+        path = item.target
+        entry = state["files"].get(norm(path))
+        recorded += bool(entry)
+        if path.is_symlink():
+            drift["outdated"] += 1
+            present += 1
+        elif not path.exists():
+            drift["missing"] += 1
+        else:
+            present += 1
+            disk = disk_digest(path)
+            if disk == digest(item.data):
+                continue
+            drift["edited" if entry is None or entry.get("hash") not in (None, disk) else "outdated"] += 1
+    if not items:
+        return ("in-sync" if picked else "off"), drift, 0
+    if not picked:
+        return ("pending-removal" if recorded else "off"), {key: 0 for key in drift}, len(items)
+    if not present and not recorded:
+        return "pending-install", {key: 0 for key in drift}, len(items)
+    return ("drifted" if any(drift.values()) else "in-sync"), drift, len(items)
+
+
+def feature_rows(parts: dict, names: list, workspaces: list, picks: list, state: dict, problems: list) -> list:
+    """Every feature of every toolbox, as {name, toolbox, scope, description, needs, requires, always, installs}.
+    `installs` has one entry per place it installs into (`~/.claude`, or each workspace): where, whether it is picked
+    there, its `state` and `drift` (see `feature_state`) and its file count. A feature's settings fragment and the
+    generated files (the rule, the merged settings, the pointer) are not counted: only the files copied or rendered
+    from the feature's folder."""
+    rows = []
+    for name in names:
+        part = parts[name]
+        if not part.scope:
+            continue
+        ignore = part.spec.get("ignore") or []
+        for feature in part.features.values():
+            row = {"name": feature.name, "toolbox": part.toolbox, "scope": part.scope,
+                   "description": feature.description, "needs": feature.needs, "requires": feature.requires,
+                   "always": feature.name == CORE, "installs": []}
+            if part.scope == "global":
+                target = expand(part.spec["target"])
+                places = [(show(target), target, None,
+                           feature.name == CORE or feature.name in picks)] if target.is_dir() else []
+            else:
+                places = [(show(ws.path), ws.path / ".claude", ws,
+                           feature.name == CORE or feature.name in ws.config.features) for ws in workspaces]
+            for where, root, ws, picked in places:
+                items, local, found = [], [], []
+                install_feature(name, feature, root, ws, ignore, items, [], [], local, found)
+                if picked:  # a feature that is off may well lack the config its templates read
+                    problems.extend(problem for problem in found if problem not in problems)
+                status, drift, files = feature_state(items, picked, state)
+                row["installs"].append({"where": where, "picked": picked, "installed": status in (
+                    "in-sync", "drifted", "pending-removal"), "state": status, "drift": drift, "files": files})
+            rows.append(row)
+    return rows
+
+
 def report_json(plan: Plan, listed: bool) -> None:
     """The preview as JSON, for `toolbox.py doctor`: each section's items, whether anything is pending, whether
     machine.yml lists every workspace acted on, and each rendered, vault-copied or rule file's status (`ok`, `new`,
@@ -1690,9 +1756,25 @@ def main(argv: list | None = None) -> int:
         help="act on this workspace only, ignoring machine.yml's workspaces (repeatable)",
     )
     parser.add_argument("--json", action="store_true", help="print the preview as JSON and write no plan file")
+    parser.add_argument("--features", action="store_true",
+                        help="print every feature of every toolbox as JSON (scope, where it installs, whether it has "
+                             "drifted from its source) and change nothing")
+    parser.add_argument("--enable", action="append", default=[], metavar="FEATURE",
+                        help="preview with this feature picked, without writing the config (repeatable; needs --json). "
+                             "With --workspace: in those workspaces; else a global feature in machine.yml")
+    parser.add_argument("--disable", action="append", default=[], metavar="FEATURE",
+                        help="preview with this feature dropped, as --enable (repeatable)")
     args = parser.parse_args(argv)
     if args.json and args.apply:
         sys.exit("--json previews only; leave out --apply")
+    if (args.enable or args.disable) and not args.json:
+        sys.exit("--enable and --disable preview a change to the config: pair them with --json")
+    if args.features and (args.apply or args.teardown or args.enable or args.disable):
+        sys.exit("--features only lists; leave out --apply, --teardown, --enable and --disable")
+
+    def adjusted(values: list) -> list:
+        return [value for value in values if value not in args.disable] + \
+            [value for value in args.enable if value not in values]
 
     machine = load_machine()
     problems = []
@@ -1703,7 +1785,7 @@ def main(argv: list | None = None) -> int:
         )
     if not machine["features_ok"]:
         problems.append(f"{MACHINE.name}: `features:` must be a list of global feature names")
-    picks = machine["features"]
+    picks = machine["features"] if args.workspace else adjusted(machine["features"])
     parts, held_parts = load_parts(machine["toolboxes"], problems)
     state = load_state()
     per_workspace = [name for name, part in parts.items() if part.per_workspace]
@@ -1740,8 +1822,19 @@ def main(argv: list | None = None) -> int:
     workspaces, held = [], set()
     if any(name in per_workspace for name in names):
         workspaces, held = load_workspaces(paths, problems)
+        if args.features:
+            print(json.dumps({"features": feature_rows(parts, [n for n in names if n in parts], workspaces, picks,
+                                                       state, problems), "problems": problems}, indent=2))
+            return 0
+        if args.workspace:
+            for ws in workspaces:
+                ws.config.data["features"] = adjusted(ws.config.features)
         workspaces = hold_unmet_needs(parts, names, workspaces, held, problems)
         workspaces = hold_unmet_requires(parts, names, workspaces, picks, held, problems)
+    if args.features:  # no part installs into workspaces, so there is nothing to scan there
+        print(json.dumps({"features": feature_rows(parts, [n for n in names if n in parts], workspaces, picks, state,
+                                                   problems), "problems": problems}, indent=2))
+        return 0
     listed = {norm(path) for path in machine["workspaces"]}
     warnings = [
         f"workspace {show(path)}: not in {MACHINE.name}, so the next full sync removes what this run installs there"

@@ -8,7 +8,7 @@
 version: 1
 
 # What installs: a generic skill, rule or agent in a feature folder installs only when its
-# feature is listed here; only the toolbox runtime and toolbox-doctor always install. A feature may need a config
+# feature is listed here; only the toolbox runtime, toolbox-doctor and toolbox-features always install. A feature may need a config
 # section (its feature.yml's `needs`): tasks and obsidian need vault and tracker, jira and jira-sprints need
 # tracker.jira, tests and services-lock need workspace.areas. A feature may also require others (its `requires`): git,
 # tests, pr, tasks and review-ui require worktrees.

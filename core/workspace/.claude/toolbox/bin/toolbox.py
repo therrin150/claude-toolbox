@@ -10,8 +10,17 @@ Commands:
                                {"docs": [...], "apply": <how a skill applies them>}, "apply" only when docs exist
   doctor                       Check the workspace's toolbox setup (see lib/doctor.py): JSON, one line per check, and
                                the MCP checks the toolbox-doctor skill makes; exit 1 when any check isn't ok
+  features [--json]            Every feature of every toolbox: its scope, where it's installed and whether the install
+                               has drifted from its source (see lib/features.py). Needs no workspace config
+  features enable|disable <feature>... --scope global|workspace [--apply] [--confirm-concurrent]
+                               Preview adding or dropping features in machine.yml (global) or this workspace's config:
+                               what the sync would create, update and remove, and for a disable what could be running on
+                               those files (in-progress tasks, task worktrees, held services locks, other sessions).
+                               Nothing is written until --apply, which writes the config and syncs; a disable also needs
+                               --confirm-concurrent, passed only once the user has read the warning
 
-Exit codes: 0 ok, 1 no config or an invalid one (the errors print as JSON), 2 bad arguments or an unknown key.
+Exit codes: 0 ok, 1 no config or an invalid one (the errors print as JSON), 2 bad arguments or an unknown key, 3 a
+disable applied without --confirm-concurrent (nothing was written), 4 the sync after --apply reported a problem.
 """
 
 from __future__ import annotations
@@ -25,8 +34,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 
 import config  # noqa: E402
 import doctor  # noqa: E402
+import features  # noqa: E402
 
-OK, INVALID, USAGE = 0, 1, 2
+OK, INVALID, USAGE, REFUSED, SYNC_FAILED = 0, 1, 2, 3, 4
 
 # How a skill applies its extension docs, printed by `config extensions --apply` only when it has some, so the skills
 # carry one line instead of this text.
@@ -44,6 +54,27 @@ def emit(value) -> None:
     print(json.dumps(value, indent=2, default=str, ensure_ascii=False))
 
 
+def run_features(args) -> int:
+    try:
+        if args.action is None:
+            listed = features.listing()
+            if args.json:
+                emit(listed)
+            else:
+                sys.stdout.write(features.render_listing(listed))
+            return OK
+        code, out = features.run(args.action, args.names, args.scope, args.apply,
+                                 getattr(args, "confirm_concurrent", False))
+        emit(out)
+        return code
+    except features.FeaturesError as error:
+        emit({"ok": False, "errors": [str(error)]})
+        return USAGE
+    except config.ConfigError as error:
+        emit({"ok": False, "config": str(error.path) if error.path else None, "errors": error.errors})
+        return INVALID
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="toolbox.py", description=__doc__.split("\n\n")[0])
     commands = parser.add_subparsers(dest="command", required=True)
@@ -57,7 +88,21 @@ def main(argv: list[str] | None = None) -> int:
     extensions.add_argument("skill")
     extensions.add_argument("--apply", action="store_true", help="also print how the skill applies the docs")
     commands.add_parser("doctor", help="check the workspace's toolbox setup")
+    feature_parser = commands.add_parser("features", help="list, enable and disable features")
+    feature_parser.add_argument("--json", action="store_true", help="print the listing as JSON")
+    changes = feature_parser.add_subparsers(dest="action")
+    for verb in ("enable", "disable"):
+        change = changes.add_parser(verb, help=f"{verb} features in a scope's config")
+        change.add_argument("names", nargs="+", metavar="feature")
+        change.add_argument("--scope", required=True, choices=("global", "workspace"))
+        change.add_argument("--apply", action="store_true", help="write the config and sync (default: preview only)")
+        if verb == "disable":
+            change.add_argument("--confirm-concurrent", action="store_true",
+                                help="the user has read what a disable could affect (required with --apply)")
     args = parser.parse_args(argv)
+
+    if args.command == "features":
+        return run_features(args)
 
     if args.command == "doctor":
         checks, mcp, workspace = doctor.run()

@@ -18,8 +18,8 @@ Every session in a workspace (any folder sessions start in that the toolbox inst
    project. Every skill, rule and agent here sits in a feature folder, and installs only into a workspace whose config
    picks it: workflow skills (`git`, `tasks`, `pr`, `verify`, ...) and knowledge skills (conventions for one
    technology, `java` to `bruno`). Only the workspace core installs everywhere: the runtime (`.claude/toolbox/`),
-   `toolbox-doctor`, the report contract gates (an agent's report template declares what its report must carry and
-   must not; the gates deny a report that breaks it), the `workspace-searcher` agent, and the generated
+   `toolbox-doctor`, `toolbox-features`, the report contract gates (an agent's report template declares what its report
+   must carry and must not; the gates deny a report that breaks it), the `workspace-searcher` agent, and the generated
    `toolbox-config.md` rule.
 3. **The project's own files**: its `.claude/toolbox.local.yml` (features and values, untracked), and, checked in, its
    prefixed rules (`.claude/rules/<prefix>-*.md`, only what it does differently) and extension docs
@@ -79,8 +79,8 @@ The global features, picked in `machine.yml`'s `features:` and installed into `~
 | `sync-toolbox` | re-sync, add or remove a toolbox or workspace, or tear down |
 
 Both cores always install. The global core registers the hook dispatcher (`~/.claude/hooks/run_gates.py`) and allows
-reads of `~/.claude/**`; the workspace core is the runtime, `toolbox-doctor`, the report contract gates and the
-`workspace-searcher` agent. A feature that sits beside another's stage skill `requires` it: a workspace that picks it
+reads of `~/.claude/**`; the workspace core is the runtime, `toolbox-doctor`, `toolbox-features`, the report contract
+gates and the `workspace-searcher` agent. A feature that sits beside another's stage skill `requires` it: a workspace that picks it
 without the other is a problem, and `/setup-workspace` suggests both.
 
 The `workspace-searcher` agent (a read-only Haiku sweep of the workspace's repos that reports each location with a
@@ -105,7 +105,7 @@ core/
   workspace/                     → every listed workspace, always
     feature.yml
     .claude/toolbox/             scripts (bin/), their library (lib/), references, templates, agent docs, and tests/
-    .claude/skills/, agents/     toolbox-doctor, workspace-searcher
+    .claude/skills/, agents/     toolbox-doctor, toolbox-features, workspace-searcher
     .claude/hooks/gates/         the shared gate helper and the report contract gates
 features/<name>/                 → a workspace that lists it, or ~/.claude when machine.yml lists it (target)
   feature.yml                    name, description, target, needs, requires
@@ -120,6 +120,24 @@ tests/                           the installer's tests: python3 -m unittest disc
 The toolbox scripts' tests sit in `core/workspace/.claude/toolbox/tests/` (never installed) and run against an assembled
 copy of every feature folder, since the scripts call each other as installed:
 `python3 -m unittest discover -s core/workspace/.claude/toolbox/tests`.
+
+## Enabling and Disabling Features
+
+`/toolbox-features` (the workspace core's skill, over `toolbox.py features`) is the way to see and change what is
+installed, instead of editing `machine.yml` or `toolbox.local.yml` and syncing by hand:
+
+| Command | Effect |
+|---|---|
+| `toolbox.py features [--json]` | Every feature of every toolbox: scope, where it's installed, state (see `install.py --features`). Needs no workspace |
+| `toolbox.py features enable <feature>... --scope global\|workspace` | Preview: what the sync would create, update and remove. Writes nothing |
+| `toolbox.py features disable <feature>... --scope global\|workspace` | The same, plus `concurrent`: what could be running on the files it removes |
+| `... --apply` | Writes the config (`machine.yml` for a global feature, the workspace's `toolbox.local.yml` otherwise, keeping its comments and list style) and syncs that scope |
+| `disable ... --apply --confirm-concurrent` | A disable is refused without the flag (exit 3, nothing written); the skill passes it only after the user has read the warning |
+
+`concurrent` lists, for a workspace: tasks `in-progress`, task worktrees, held services locks and other sessions started
+in the workspace or its worktrees in the last hour; for a global feature: other sessions anywhere in the last hour.
+An enable that needs a feature or config that isn't picked, and a disable of a feature another picked one requires, are
+refused before anything is written.
 
 ## Naming
 
@@ -156,6 +174,8 @@ installer warns about names that break these rules.
 | `install.py --toolbox <name or path>` | Acts on one toolbox only (`claude-toolbox` means both its global and workspace parts), ignoring the others `machine.yml` lists (repeatable) |
 | `install.py --workspace <path>` | Acts on one workspace only, ignoring `machine.yml`'s workspaces (repeatable) |
 | `install.py --teardown` | Removes everything this installer installed (add `--apply`); combines with the two above |
+| `install.py --features` | Lists every feature of every toolbox as JSON: its scope, each place it installs into and its state there (`in-sync`, `drifted` with counts of edited, outdated and missing files, `pending-install`, `pending-removal`, `off`). Changes nothing; `toolbox.py features` is the readable front end |
+| `install.py --json --workspace <path> --enable/--disable <feature>` | Previews the sync as if the workspace's config picked (or dropped) the feature, without writing the config; without `--workspace`, as if `machine.yml` did, for a global feature. Repeatable |
 
 - **Copies and a manifest.** Every installed file is a copy, written atomically (a temp file beside it, then a
   rename), with the source's executable bit. `.install-state.json` (untracked) is the manifest: for each file, its

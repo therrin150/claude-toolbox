@@ -1612,6 +1612,119 @@ class SettingsFragments(InstallerTest):
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "", ""))
 
 
+
+class FeatureStatus(InstallerTest):
+    """`--features` lists every feature with where it installs and its state; `--enable` and `--disable` preview a
+    config change without writing it."""
+
+    LOCKS = "lock-local-services"
+
+    def listed(self, *args) -> dict:
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = install.main(["--features", *args])
+        self.assertEqual(code, 0)
+        return json.loads(out.getvalue())
+
+    def place(self, feature: str, where: Path | None, scope: str = "workspace") -> dict:
+        """One feature's entry for one place: a workspace's folder, or the global one when `where` is None."""
+        for row in self.listed()["features"]:
+            if row["name"] == feature and row["scope"] == scope:
+                found = [p for p in row["installs"] if where is None or p["where"] == install.show(where)]
+                self.assertEqual(len(found), 1, row)
+                return found[0]
+        self.fail(f"no {scope} feature {feature}")
+
+    def lock_skill(self) -> Path:
+        return self.ws1 / ".claude" / "skills" / self.LOCKS / "SKILL.md"
+
+    def test_lists_every_feature_with_its_scope_and_where_it_installs(self):
+        self.run_install("--apply")
+        rows = {(row["name"], row["scope"]): row for row in self.listed()["features"]}
+        self.assertEqual(set(rows), {("style", "global"), ("core", "workspace"), ("services-lock", "workspace")})
+        self.assertEqual({p["where"] for p in rows[("services-lock", "workspace")]["installs"]},
+                         {install.show(self.ws1), install.show(self.ws2)})
+        self.assertEqual(rows[("services-lock", "workspace")]["description"], "The services-lock feature.")
+        self.assertEqual([p["where"] for p in rows[("style", "global")]["installs"]], [install.show(self.home)])
+        self.assertTrue(rows[("core", "workspace")]["always"])
+
+    def test_states_before_and_after_the_first_sync(self):
+        self.assertEqual(self.place("services-lock", self.ws1)["state"], "pending-install")
+        self.assertEqual(self.place("services-lock", self.ws2)["state"], "off")
+        self.assertEqual(self.place("style", None, "global")["state"], "pending-install")
+        self.run_install("--apply")
+        mine = self.place("services-lock", self.ws1)
+        self.assertEqual((mine["state"], mine["picked"], mine["installed"], mine["files"]), ("in-sync", True, True, 1))
+        self.assertEqual(self.place("services-lock", self.ws2),
+                         {"where": install.show(self.ws2), "picked": False, "installed": False, "state": "off",
+                          "drift": {"edited": 0, "outdated": 0, "missing": 0}, "files": 1})
+        self.assertEqual(self.place("style", None, "global")["state"], "in-sync")
+
+    def test_a_file_edited_after_install_is_drifted(self):
+        self.run_install("--apply")
+        self.lock_skill().write_text("edited by hand\n", encoding="utf-8")
+        edited = self.place("services-lock", self.ws1)
+        self.assertEqual((edited["state"], edited["drift"]), ("drifted", {"edited": 1, "outdated": 0, "missing": 0}))
+        self.assertEqual(self.place("style", None, "global")["state"], "in-sync")
+        self.assertEqual(self.place("core", self.ws1)["state"], "in-sync")
+
+    def test_a_source_changed_since_install_is_outdated_and_a_deleted_copy_is_missing(self):
+        self.run_install("--apply")
+        source = self.repo / "features" / "services-lock" / ".claude" / "skills" / self.LOCKS / "SKILL.md"
+        source.write_text(source.read_text(encoding="utf-8") + "more\n", encoding="utf-8")
+        self.assertEqual(self.place("services-lock", self.ws1)["drift"], {"edited": 0, "outdated": 1, "missing": 0})
+        self.lock_skill().unlink()
+        gone = self.place("services-lock", self.ws1)
+        self.assertEqual((gone["state"], gone["drift"]), ("drifted", {"edited": 0, "outdated": 0, "missing": 1}))
+
+    def test_a_feature_dropped_from_the_config_is_pending_removal_until_synced(self):
+        self.run_install("--apply")
+        write(self.ws1 / CONFIG, workspace_config("one", []))
+        dropped = self.place("services-lock", self.ws1)
+        self.assertEqual((dropped["state"], dropped["picked"], dropped["installed"]), ("pending-removal", False, True))
+        self.run_install("--apply")
+        self.assertEqual(self.place("services-lock", self.ws1)["state"], "off")
+
+    def test_listing_changes_nothing_and_writes_no_plan(self):
+        self.run_install("--apply")
+        before = self.state()
+        plan = (self.repo / "install-plan.txt").read_text(encoding="utf-8")
+        self.lock_skill().write_text("edited by hand\n", encoding="utf-8")
+        self.listed()
+        self.assertEqual(self.state(), before)
+        self.assertEqual((self.repo / "install-plan.txt").read_text(encoding="utf-8"), plan)
+        self.assertEqual(self.lock_skill().read_text(encoding="utf-8"), "edited by hand\n")
+
+    def preview(self, *args) -> dict:
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            install.main(["--json", *args])
+        return json.loads(out.getvalue())
+
+    def test_disable_previews_the_removal_without_writing_the_config(self):
+        self.run_install("--apply")
+        config_text = (self.ws1 / CONFIG).read_text(encoding="utf-8")
+        shown = self.preview("--workspace", str(self.ws1), "--disable", "services-lock")
+        self.assertEqual(shown["sections"]["Remove"], [install.show(self.lock_skill())])
+        self.assertFalse(shown["clean"])
+        self.assertEqual((self.ws1 / CONFIG).read_text(encoding="utf-8"), config_text)
+        self.assertTrue(self.lock_skill().is_file())
+        self.assertTrue(self.preview("--workspace", str(self.ws1))["clean"])
+
+    def test_enable_previews_the_install_in_a_workspace_that_lacks_the_feature(self):
+        self.run_install("--apply")
+        shown = self.preview("--workspace", str(self.ws2), "--enable", "services-lock")
+        self.assertEqual(shown["sections"]["Create"],
+                         [f"{install.show(self.ws2 / '.claude' / 'skills' / self.LOCKS / 'SKILL.md')} (new, "
+                          f"copied from SKILL.md)"])
+        self.assertNotIn("services-lock", (self.ws2 / CONFIG).read_text(encoding="utf-8"))
+
+    def test_enable_and_disable_only_preview(self):
+        with self.assertRaises(SystemExit) as stopped, contextlib.redirect_stderr(io.StringIO()):
+            install.main(["--workspace", str(self.ws2), "--enable", "services-lock", "--apply"])
+        self.assertIn("--json", str(stopped.exception))
+
+
 def shutil_rmtree(path: Path) -> None:
     subprocess.run(["rm", "-rf", str(path)], check=True)
 
