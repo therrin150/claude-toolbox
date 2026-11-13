@@ -1,0 +1,3 @@
+name: core
+description: Registers the hook gate dispatcher, the one hook every gate runs through, in ~/.claude/settings.json.
+target: global

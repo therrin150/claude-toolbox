@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"$HOME/.claude/hooks/run_gates.py\"; [ ! -f \"$f\" ] || python3 \"$f\""
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -10,19 +10,25 @@ toolbox repo machine.yml lists installs its toolbox.yml's source folder too. Eac
 target. Every file is installed as a copy (never a link), so each lands inside the project that uses it;
 templates are rendered and rules get a generated note. A manifest (.install-state.json) records each file's source and
 the hash written, and every target is classified: create, update (still what was written, source changed), unchanged,
-remove (no longer wanted, unedited) or conflict (edited on disk, or a file the installer didn't write). Previews by
-default and changes nothing; pass --apply to make the changes, each file written atomically. See README.md.
+remove (no longer wanted, unedited) or conflict (edited on disk, or a file the installer didn't write). A feature folder
+may also carry a settings.json fragment: the picked workspace features' fragments are merged into the workspace's
+installer-owned .claude/settings.json (a generated file like the rule), and the picked global features' into
+~/.claude/settings.json, where the installer owns only the entries the manifest records it adding and merges around the
+user's own. Previews by default and changes nothing; pass --apply to make the changes, each file written atomically.
+See README.md.
 """
 
 from __future__ import annotations
 
 import argparse
+import copy
 import fnmatch
 import hashlib
 import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -75,6 +81,10 @@ TASKS_FEATURE = "tasks"
 # workspace root: rendered when a file ends .tmpl, copied as it is otherwise.
 VAULT_DIR = ".vault"
 FEATURE_ROOTS = (".claude", VAULT_DIR)  # the only folders of a feature folder that install
+# A feature folder's settings fragment, merged (not copied) into the settings file of its scope: a workspace's
+# .claude/settings.json, or ~/.claude/settings.json.
+SETTINGS_FRAGMENT = "settings.json"
+SETTINGS_FILE = "settings.json"
 # The rules folder in a per-workspace part. Each rule is written with a generated note, after any frontmatter so
 # `paths:` still works.
 RULES_DIR = ".claude/rules"
@@ -193,6 +203,36 @@ class Scope:
 
 
 @dataclass
+class Merge:
+    """The merge of global features' settings fragments into one settings file the user also owns."""
+
+    key: str  # norm path of the file, as the manifest keys it
+    part: str
+    path: Path  # as listed
+    real: Path  # where it is written: the path, or what a link at the path points to
+    data: bytes | None  # the text to write; None when the file is already right
+    created: bool  # the file doesn't exist yet
+    delete: bool  # the file was made by the installer and nothing is left in it
+    added: list  # entries it owns once applied: [{"path": [...], "item": x} | {"path": [...], "set": x}]
+    containers: list  # paths of mappings and lists it made, removed again once empty
+    file_created: bool  # it made the file, so it removes the file when nothing is left
+    adds: int = 0
+    removes: int = 0
+
+    @property
+    def changes(self) -> bool:
+        return self.data is not None or self.delete
+
+    @property
+    def record(self) -> dict | None:
+        """The manifest entry, or None when it owns nothing there."""
+        if self.delete or not (self.added or self.containers):
+            return None
+        return {"path": str(self.path), "part": self.part, "added": self.added, "created": self.containers,
+                "file_created": self.file_created}
+
+
+@dataclass
 class Plan:
     create_dirs: list  # (part, workspace, folder)
     replace_dirs: list  # (part, workspace, folder): a link to one of our folders, replaced by a real folder
@@ -214,6 +254,7 @@ class Plan:
     scope: Scope
     held_generated: list = field(default_factory=list)  # (part, workspace, path) of files that failed to read or render
     rendered: list = field(default_factory=list)  # each special file's {path, template, status}, for --json
+    merges: list = field(default_factory=list)  # Merges into settings files the user also owns
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -267,15 +308,15 @@ def is_executable(path: Path) -> bool:
     return os.name != "nt" and path.stat().st_mode & 0o111 != 0
 
 
-def write_atomic(path: Path, data: bytes, executable: bool) -> None:
+def write_atomic(path: Path, data: bytes, executable: bool, mode: int | None = None) -> None:
     """Write a file so it is never seen half-written: a temp file beside it, then a rename over it (which replaces a
-    link at the path rather than following it)."""
+    link at the path rather than following it). `mode` overrides the executable bit's 755 or 644."""
     path.parent.mkdir(parents=True, exist_ok=True)
     handle, temp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".install")
     try:
         with os.fdopen(handle, "wb") as out:
             out.write(data)
-        os.chmod(temp, 0o755 if executable else 0o644)
+        os.chmod(temp, mode if mode is not None else 0o755 if executable else 0o644)
         os.replace(temp, path)
     except BaseException:
         Path(temp).unlink(missing_ok=True)
@@ -573,7 +614,7 @@ def load_state() -> dict:
     if STATE.exists():
         with open(STATE, encoding="utf-8") as handle:
             state = json.load(handle)
-    for section in ("files", "dirs", "links", "generated"):
+    for section in ("files", "dirs", "links", "generated", "settings"):
         state.setdefault(section, {})
         for entry in state[section].values():
             if "domain" in entry:  # recorded before toolboxes replaced domains
@@ -595,12 +636,259 @@ def save_state(state: dict) -> None:
     handle, temp = tempfile.mkstemp(dir=STATE.parent, prefix=f".{STATE.name}.", suffix=".tmp")
     try:
         with os.fdopen(handle, "w", encoding="utf-8") as out:
-            json.dump({"dirs": state["dirs"], "files": state["files"]}, out, indent=2, sort_keys=True)
+            json.dump({"dirs": state["dirs"], "files": state["files"], "settings": state["settings"]}, out, indent=2,
+                      sort_keys=True)
             out.write("\n")
         os.replace(temp, STATE)
     except BaseException:
         Path(temp).unlink(missing_ok=True)
         raise
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Settings fragments
+#
+# A settings fragment is a JSON object. Its entries are what it adds to a settings file: each item of a list (a
+# permission allow, a hook entry) is one entry, `{"path": [...], "item": value}`, and each other value is one entry,
+# `{"path": [...], "set": value}`. Merging adds the entries the file lacks, in the fragment's order, and never changes
+# a value the file already has: a list item the file holds already, or a key it already sets to the same value, adds
+# nothing; a key it sets to something else keeps the file's value (a conflict, reported as a warning).
+
+
+def canon(value) -> str:
+    return json.dumps(value, sort_keys=True)
+
+
+def fragment_entries(doc: dict, path: list = ()) -> list:
+    """A fragment's entries, in file order. An empty mapping or list holds none."""
+    entries = []
+    for key, value in doc.items():
+        here = [*path, key]
+        if isinstance(value, dict):
+            entries += fragment_entries(value, here)
+        elif isinstance(value, list):
+            entries += [{"path": here, "item": item} for item in value]
+        else:
+            entries.append({"path": here, "set": value})
+    return entries
+
+
+def find(doc: dict, path: list) -> tuple[str, object]:
+    """(`found`, the value at path), (`missing`, None), or (`blocked`, None) when something above it isn't a mapping."""
+    node = doc
+    for key in path:
+        if not isinstance(node, dict):
+            return "blocked", None
+        if key not in node:
+            return "missing", None
+        node = node[key]
+    return "found", node
+
+
+def entry_state(doc: dict, entry: dict) -> str:
+    """`present` (the file has it), `absent` (it can be added) or `conflict` (the file has something else there)."""
+    kind, node = find(doc, entry["path"])
+    if kind == "blocked":
+        return "conflict"
+    if "item" in entry:
+        if kind == "missing":
+            return "absent"
+        if not isinstance(node, list):
+            return "conflict"
+        return "present" if any(canon(item) == canon(entry["item"]) for item in node) else "absent"
+    if kind == "missing":
+        return "absent"
+    return "present" if canon(node) == canon(entry["set"]) else "conflict"
+
+
+def add_entry(doc: dict, entry: dict, containers: list) -> None:
+    """Add an entry, making the mappings and the list above it as needed and noting each in `containers`."""
+    path, node = entry["path"], doc
+    for index, key in enumerate(path[:-1]):
+        if key not in node:
+            node[key] = {}
+            containers.append(path[: index + 1])
+        node = node[key]
+    last = path[-1]
+    if "item" in entry:
+        if last not in node:
+            node[last] = []
+            containers.append(list(path))
+        node[last].append(copy.deepcopy(entry["item"]))
+    else:
+        node[last] = copy.deepcopy(entry["set"])
+
+
+def remove_entry(doc: dict, entry: dict) -> None:
+    """Remove an entry the installer added, if it is still there as it added it."""
+    kind, node = find(doc, entry["path"])
+    if kind != "found":
+        return
+    if "item" in entry:
+        if isinstance(node, list):
+            for index, item in enumerate(node):
+                if canon(item) == canon(entry["item"]):
+                    del node[index]
+                    return
+    elif canon(node) == canon(entry["set"]):
+        del find(doc, entry["path"][:-1])[1][entry["path"][-1]]
+
+
+def prune(doc: dict, containers: list) -> list:
+    """Remove the containers the installer made that are now empty; the paths of those that are left."""
+    kept = []
+    for path in sorted(containers, key=len, reverse=True):
+        kind, node = find(doc, path)
+        if kind != "found":
+            continue
+        if isinstance(node, (dict, list)) and not node:
+            del find(doc, path[:-1])[1][path[-1]]
+        else:
+            kept.append(path)
+    return sorted(kept)
+
+
+def merge_settings(doc: dict, wanted: list, recorded: list, containers: list) -> tuple[dict, list, list, list]:
+    """(the merged settings, the entries the installer owns in it, the containers it made, conflicting entries).
+    `recorded` are the entries a past run added and `wanted` are the entries now: a recorded one no longer wanted is
+    removed, a wanted one the file lacks is added, and everything else, the file's own entries above all, stays where it
+    is."""
+    doc = copy.deepcopy(doc)
+    wanted = list({canon(entry): entry for entry in wanted}.values())
+    wanted_keys = {canon(entry) for entry in wanted}
+    recorded_keys = {canon(entry) for entry in recorded}
+    for entry in recorded:
+        if canon(entry) not in wanted_keys:
+            remove_entry(doc, entry)
+    containers = [list(path) for path in containers]
+    ours, conflicts = [], []
+    for entry in wanted:
+        status = entry_state(doc, entry)
+        if status == "conflict":
+            conflicts.append(entry)
+        elif status == "absent":
+            add_entry(doc, entry, containers)
+            ours.append(entry)
+        elif canon(entry) in recorded_keys:
+            ours.append(entry)
+    return doc, ours, prune(doc, containers), conflicts
+
+
+def conflict_text(entries: list) -> str:
+    keys = dict.fromkeys(".".join(map(str, entry["path"])) for entry in entries)
+    return f"{', '.join(keys)} already set to something else, so the fragment's value isn't used"
+
+
+def dump_settings(doc: dict) -> bytes:
+    return (json.dumps(doc, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+
+
+def read_fragment(feature: Feature) -> dict | None:
+    """A feature folder's settings fragment, or None when it has none. ValueError says why it can't be used."""
+    file = feature.folder / SETTINGS_FRAGMENT
+    if not file.is_file():
+        return None
+    try:
+        doc = json.loads(file.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise ValueError(f"{show(file)}: {error}") from error
+    if not isinstance(doc, dict):
+        raise ValueError(f"{show(file)}: must be a JSON object")
+    return doc
+
+
+def settings_owner(parts: dict, scope: str) -> str | None:
+    """The part a scope's settings file is recorded under: the first feature part of that scope, this repo's first."""
+    return next((name for name, part in parts.items() if part.scope == scope), None)
+
+
+def fragments_for(parts: dict, held_parts: set, scope: str, picked: set, problems: list,
+                  cache: dict) -> tuple[list, bool]:
+    """(the settings fragments of `core` and each picked feature, across every feature part of the scope that isn't
+    held; whether every one could be read). An unreadable one is a problem, said once through `cache`."""
+    docs, ok = [], True
+    for name, part in parts.items():
+        if part.scope != scope or name in held_parts:
+            continue
+        for feature in part.features.values():
+            if feature.name != CORE and feature.name not in picked:
+                continue
+            if feature.folder not in cache:
+                try:
+                    cache[feature.folder] = read_fragment(feature)
+                except ValueError as error:
+                    problems.append(f"{error}. The settings file it feeds is left as it is until it's fixed.")
+                    cache[feature.folder] = False
+            doc = cache[feature.folder]
+            if doc is False:
+                ok = False
+            elif doc:
+                docs.append(doc)
+    return docs, ok
+
+
+def plan_merges(parts: dict, names: list, scope: Scope, state: dict, picks: list, held_parts: set, problems: list,
+                warnings: list) -> list:
+    """The Merges into ~/.claude/settings.json: of the picked global features' fragments, and of the entries the
+    manifest records adding for a part this run covers, which are removed when no longer wanted (a feature dropped, a
+    teardown). The file is the user's, so a file that isn't a JSON object is a problem and left as it is."""
+    owner = settings_owner(parts, "global")
+    target, wanted, held = None, [], set()
+    if owner in names:
+        target = expand(parts[owner].spec["target"]) / SETTINGS_FILE
+        if target.parent.is_dir():
+            docs, ok = fragments_for(parts, held_parts, "global", set(picks), problems, {})
+            wanted = [entry for doc in docs for entry in fragment_entries(doc)]
+            if not ok:
+                held.add(norm(target))
+        else:
+            target = None
+    records = {key: record for key, record in state["settings"].items() if scope.covers(record["part"], None)}
+    keys = {key for key in records if key not in held}
+    if target is not None and norm(target) not in held:
+        keys.add(norm(target))
+    merges = []
+    for key in sorted(keys):
+        record = records.get(key)
+        path = Path(record["path"]) if record else target
+        real = path.resolve() if path.is_symlink() else path
+        before, text = {}, None
+        if real.exists():
+            try:
+                text = real.read_text(encoding="utf-8")
+                before = json.loads(text)
+                if not isinstance(before, dict):
+                    raise ValueError("not a JSON object")
+            except (OSError, ValueError) as error:
+                problems.append(f"{show(path)}: can't merge settings into it, so it is left as it is: {error}")
+                continue
+        recorded = record["added"] if record else []
+        entries = wanted if target is not None and key == norm(target) else []
+        after, ours, containers, conflicts = merge_settings(before, entries, recorded,
+                                                            record["created"] if record else [])
+        if conflicts:
+            warnings.append(f"{show(path)}: {conflict_text(conflicts)}")
+        ours_keys = {canon(entry) for entry in ours}
+        recorded_keys = {canon(entry) for entry in recorded}
+        file_created = bool(record and record.get("file_created")) or (text is None and bool(ours))
+        delete = file_created and text is not None and not after
+        changed = canon(after) != canon(before)
+        merges.append(Merge(
+            key, record["part"] if record else owner, path, real,
+            dump_settings(after) if changed and not delete and (after or text is not None) else None,
+            text is None, delete, ours, containers, file_created,
+            adds=sum(canon(entry) not in recorded_keys for entry in ours),
+            removes=sum(entry_state(before, entry) == "present" and entry_state(after, entry) == "absent"
+                        for entry in recorded if canon(entry) not in ours_keys),
+        ))
+    return merges
+
+
+def merged_fragments(docs: list) -> tuple[dict, list]:
+    """(one settings document holding every fragment, conflicting entries). The first fragment to set a key wins."""
+    entries = [entry for doc in docs for entry in fragment_entries(doc)]
+    doc, _, _, conflicts = merge_settings({}, entries, [], [])
+    return doc, conflicts
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -820,7 +1108,7 @@ def desired_features(name: str, part: Part, workspaces: list, picks: list, probl
 
 
 def desired(parts: dict, names: list, workspaces: list, problems: list, warnings: list, held: list | None = None,
-            missing: list | None = None, picks: list = ()):
+            missing: list | None = None, picks: list = (), held_parts: set = frozenset()):
     """(items, folders, skill folders). A file that can't be read or a template that fails to render is a problem, and
     its target goes in `held` as (part, workspace, path): neither written nor removed. An outside source that doesn't
     exist goes in `missing` as (part, workspace, target, source)."""
@@ -907,6 +1195,22 @@ def desired(parts: dict, names: list, workspaces: list, problems: list, warnings
                     continue
                 for folder in (ws.config.tasks_dir, ws.config.discussions_dir):
                     dirs.extend((rule_part, ws.key, d) for d in [*parents_within(folder, vault), folder])
+
+    owner = settings_owner(parts, "workspace")
+    if owner in names:
+        cache = {}
+        for ws in workspaces:
+            docs, ok = fragments_for(parts, held_parts, "workspace", set(ws.config.features), problems, cache)
+            path = ws.path / ".claude" / SETTINGS_FILE
+            if not ok:
+                held.append((owner, ws.key, path))
+                continue
+            doc, conflicts = merged_fragments(docs)
+            if conflicts:
+                warnings.append(f"workspace {show(ws.path)}: {conflict_text(conflicts)}")
+            if doc:
+                dirs.extend((owner, ws.key, folder) for folder in parents_within(path, ws.path))
+                items.append(Item(owner, ws.key, path, dump_settings(doc), None, GENERATED))
 
     pointer_part = own_part(parts, names, False)
     if pointer_part:
@@ -1061,7 +1365,7 @@ def classify(item: Item, counts: dict, blocked: list, replacing: list, state: di
 def build_plan(parts: dict, names: list, scope: Scope, state: dict, workspaces: list, problems: list,
                known: set = frozenset(), picks: list = ()) -> Plan:
     warnings, held, missing = [], [], []
-    items, dirs, skills = desired(parts, names, workspaces, problems, warnings, held, missing, picks)
+    items, dirs, skills = desired(parts, names, workspaces, problems, warnings, held, missing, picks, known)
     plan = Plan(
         [], [], [], [], [], [], [], [], [], [], warnings, problems, set(), names, dirs, set(parts) | known,
         [ws.path for ws in workspaces], scope, held,
@@ -1148,6 +1452,7 @@ def build_plan(parts: dict, names: list, scope: Scope, state: dict, workspaces: 
         else:
             plan.forget.append(key)
 
+    plan.merges = plan_merges(parts, names, scope, state, picks, known, problems, warnings)
     plan.excludes = plan_excludes(parts, scope, state, workspaces, plan)
     plan.warnings += feature_warnings(parts, names, workspaces, picks)
     plan.warnings = list(dict.fromkeys(plan.warnings))
@@ -1256,6 +1561,20 @@ def apply_plan(plan: Plan, state: dict) -> list:
                 "path": str(item.target), "part": item.part, "source": str(item.source) if item.source else None,
                 "hash": digest(item.data), **({"special": True} if item.special else {}),
             }, item.workspace)
+    for merge in plan.merges:
+        try:
+            if merge.delete:
+                merge.real.unlink(missing_ok=True)
+            elif merge.data is not None:
+                mode = stat.S_IMODE(merge.real.stat().st_mode) if merge.real.exists() else 0o644
+                write_atomic(merge.real, merge.data, False, mode)
+        except OSError as error:
+            errors.append(f"{show(merge.path)}: {error}")
+            continue
+        if merge.record:
+            state["settings"][merge.key] = merge.record
+        else:
+            state["settings"].pop(merge.key, None)
     for exclude_file, text, _ in plan.excludes:
         exclude_file.parent.mkdir(parents=True, exist_ok=True)
         exclude_file.write_text(text, encoding="utf-8")
@@ -1308,6 +1627,13 @@ def describe_toolboxes(names: list, known: set = frozenset()) -> str:
     return ", ".join(shown + list(dict.fromkeys(toolbox_of(name) for name in names if name not in own)))
 
 
+def merge_line(merge: Merge) -> str:
+    if merge.delete:
+        return f"{show(merge.path)} (removes the file, which only the installer's entries were in)"
+    verb = "new file" if merge.created else "merge"
+    return f"{show(merge.path)} ({verb}: +{merge.adds} -{merge.removes} entries)"
+
+
 def plan_sections(plan: Plan, errors: list) -> list:
     replaced = {norm(folder) for _, _, folder in plan.replace_dirs}
     return [
@@ -1316,8 +1642,10 @@ def plan_sections(plan: Plan, errors: list) -> list:
         ("Create", [f"{show(item.target)} (new{made_from(item)})" for item in plan.create]),
         ("Update", [f"{show(item.target)} ({detail}{made_from(item)})" for item, detail in plan.update]),
         ("Remove", [show(entry["path"]) for _, entry in plan.remove]),
+        ("Merge settings", [merge_line(merge) for merge in plan.merges if merge.changes]),
         ("Update git excludes", [f"{show(path)} ({count} entries)" for path, _, count in plan.excludes]),
-        ("Unchanged", [f"{show(item.target)} ({made_by(item)})" for item in plan.unchanged]),
+        ("Unchanged", [f"{show(item.target)} ({made_by(item)})" for item in plan.unchanged]
+         + [f"{show(merge.path)} (merged settings)" for merge in plan.merges if not merge.changes and merge.added]),
         (
             "Conflicts, left alone",
             [
@@ -1333,10 +1661,10 @@ def plan_sections(plan: Plan, errors: list) -> list:
 
 
 # Sections that mean the preview would change something, or can't.
-PENDING = ("Create folders", "Replace links", "Create", "Update", "Remove", "Update git excludes",
+PENDING = ("Create folders", "Replace links", "Create", "Update", "Remove", "Merge settings", "Update git excludes",
            "Conflicts, left alone", "Problems", "Errors")
 # Sections the summary on screen lists item by item when they are short; the plan file always lists every one.
-LISTED = ("Create", "Update", "Remove", "Conflicts, left alone", "Warnings", "Problems", "Errors")
+LISTED = ("Create", "Update", "Remove", "Merge settings", "Conflicts, left alone", "Warnings", "Problems", "Errors")
 LISTED_MOST = 20
 
 
@@ -1471,7 +1799,8 @@ def main(argv: list | None = None) -> int:
     if chosen is not None:
         scope_parts = set(chosen)
     else:
-        scope_parts = set(parts) | {entry["part"] for section in ("files", "dirs") for entry in state[section].values()}
+        scope_parts = set(parts) | {entry["part"] for section in ("files", "dirs", "settings")
+                                  for entry in state[section].values()}
     scope_parts -= held_parts
 
     paths = [expand(value).absolute() for value in args.workspace] if args.workspace else machine["workspaces"]

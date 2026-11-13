@@ -11,6 +11,7 @@ import contextlib
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -133,6 +134,17 @@ class InstallerTest(unittest.TestCase):
 
     def state(self) -> dict:
         return json.loads((self.repo / ".install-state.json").read_text(encoding="utf-8"))
+
+    def feature(self, name: str, target: str = "workspace", repo: Path | None = None, files: dict | None = None,
+                **extra) -> Path:
+        """Make a feature folder (`core` goes at the repo's top level) holding `files`, {path in the folder: text}."""
+        repo = repo or self.repo
+        folder = repo / "core" if name == "core" else repo / "features" / name
+        write(folder / "feature.yml", yaml.safe_dump({"name": name, "description": f"The {name} feature.",
+                                                      "target": target, **extra}))
+        for path, text in (files or {}).items():
+            write(folder / path, text)
+        return folder
 
     def assertCopy(self, target: Path, source: Path):
         """A real file (never a link) holding the source's bytes, with the source's executable bit."""
@@ -891,17 +903,6 @@ class FeatureFolders(InstallerTest):
     """A toolbox repo laid out as `core/` and `features/<name>/`, each a feature.yml and a `.claude/` tree that mirrors
     where its files install. ws1 picks `lint` and `services-lock`'s companion `locks`; ws2 picks nothing."""
 
-    def feature(self, name: str, target: str = "workspace", repo: Path | None = None, files: dict | None = None,
-                **extra) -> Path:
-        """Make a feature folder (`core` goes at the repo's top level) holding `files`, {path in the folder: text}."""
-        repo = repo or self.repo
-        folder = repo / "core" if name == "core" else repo / "features" / name
-        write(folder / "feature.yml", yaml.safe_dump({"name": name, "description": f"The {name} feature.",
-                                                      "target": target, **extra}))
-        for path, text in (files or {}).items():
-            write(folder / path, text)
-        return folder
-
     def setUp(self):
         super().setUp()
         self.core = self.feature("core", files={".claude/toolbox/bin/core.py": "print('core')\n"})
@@ -1195,6 +1196,378 @@ class FeatureFolders(InstallerTest):
         self.assertIn("# >>> claude-toolbox:features-workspace (managed by install.py)", text)
         self.assertIn("\n/.claude/skills/lint/SKILL.md\n", text)
         self.assertIn("\n/.claude/toolbox/bin/core.py\n", text)
+
+
+class SettingsFragments(InstallerTest):
+    """A feature folder's settings.json fragment: the picked workspace features' merge into the workspace's
+    installer-owned .claude/settings.json, and the picked global features' into ~/.claude/settings.json, where the
+    installer owns only the entries it recorded adding. ws1 picks `lint` and `locks`; ws2 picks nothing."""
+
+    def fragment(self, name: str, doc: dict, target: str = "workspace", **extra) -> Path:
+        return self.feature(name, target, files={"settings.json": json.dumps(doc)}, **extra)
+
+    def allow(self, *rules: str, **more) -> dict:
+        return {"permissions": {"allow": list(rules), **more}}
+
+    def pick(self, *features: str) -> None:
+        write(self.ws1 / CONFIG, workspace_config("one", ["services-lock", *features]))
+
+    def settings(self, ws: Path | None = None) -> dict:
+        return json.loads(((ws or self.ws1) / ".claude" / "settings.json").read_text(encoding="utf-8"))
+
+    def home_settings(self) -> dict:
+        return json.loads((self.home / "settings.json").read_text(encoding="utf-8"))
+
+    def write_home(self, doc: dict) -> Path:
+        return write(self.home / "settings.json", json.dumps(doc, indent=2) + "\n")
+
+    def machine_features(self, *features: str) -> None:
+        self.machine(toolboxes=[self.work], workspaces=[self.ws1, self.ws2], features=list(features))
+
+    def setUp(self):
+        super().setUp()
+        self.local = write(self.ws1 / ".claude" / "settings.local.json", '{"permissions": {"allow": ["Mine"]}}\n')
+        self.pick("lint", "locks")
+
+    # Workspace settings
+
+    def test_workspace_settings_hold_every_picked_features_allows_and_local_settings_are_untouched(self):
+        self.fragment("lint", self.allow("Bash(lint *)"))
+        self.fragment("locks", self.allow("Bash(lock *)", "Bash(lint *)", defaultMode="plan"))
+        self.fragment("other", self.allow("Bash(other *)"))
+        before = self.local.read_bytes()
+        code, plan = self.run_install("--apply")
+        self.assertEqual(code, 0, plan)
+        self.assertEqual(self.settings()["permissions"], {"allow": ["Bash(lint *)", "Bash(lock *)"],
+                                                          "defaultMode": "plan"})
+        self.assertEqual(self.local.read_bytes(), before)
+        self.assertFalse((self.ws2 / ".claude" / "settings.json").exists())  # picks neither feature
+        self.assertFalse((self.ws2 / ".claude" / "settings.local.json").exists())
+        record = self.state()["files"][install.norm(self.ws1 / ".claude" / "settings.json")]
+        self.assertEqual((record["part"], record["workspace"], record["source"]),
+                         ("claude-toolbox:workspace", install.norm(self.ws1), None))
+
+    def test_core_fragment_reaches_every_workspace(self):
+        self.fragment("core", self.allow("Bash(core *)"))
+        self.fragment("lint", self.allow("Bash(lint *)"))
+        self.run_install("--apply")
+        self.assertEqual(self.settings()["permissions"]["allow"], ["Bash(core *)", "Bash(lint *)"])
+        self.assertEqual(self.settings(self.ws2)["permissions"]["allow"], ["Bash(core *)"])
+
+    def test_a_second_apply_changes_nothing_and_a_dropped_feature_loses_its_entries_then_the_file(self):
+        self.fragment("lint", self.allow("Bash(lint *)"))
+        self.fragment("locks", self.allow("Bash(lock *)"))
+        self.run_install("--apply")
+        path = self.ws1 / ".claude" / "settings.json"
+        written = path.read_bytes()
+        code, plan = self.run_install("--apply")
+        self.assertEqual((code, self.written(plan), self.section(plan, "Remove")), (0, [], []))
+        self.assertEqual(path.read_bytes(), written)
+        self.pick("locks")
+        _, plan = self.run_install("--apply")
+        self.assertIn(f"{path} (changed)", self.section(plan, "Update"))
+        self.assertEqual(self.settings()["permissions"]["allow"], ["Bash(lock *)"])
+        self.pick()
+        self.run_install("--apply")
+        self.assertFalse(path.exists())
+        self.assertTrue(self.local.is_file())
+
+    def test_a_changed_fragment_updates_the_file(self):
+        folder = self.fragment("lint", self.allow("Bash(lint *)"))
+        self.run_install("--apply")
+        write(folder / "settings.json", json.dumps(self.allow("Bash(lint --all)")))
+        self.run_install("--apply")
+        self.assertEqual(self.settings()["permissions"]["allow"], ["Bash(lint --all)"])
+
+    def test_an_edited_settings_file_is_a_conflict_and_left_alone(self):
+        self.fragment("lint", self.allow("Bash(lint *)"))
+        self.run_install("--apply")
+        path = self.ws1 / ".claude" / "settings.json"
+        write(path, '{"permissions": {"allow": ["Mine"]}}\n')
+        self.fragment("lint", self.allow("Bash(lint --all)"))
+        code, plan = self.run_install("--apply")
+        self.assertEqual(code, 1)
+        self.assertTrue(any(f"[edited] {path}" in line for line in self.section(plan, "Conflicts, left alone")))
+        self.assertEqual(path.read_text(encoding="utf-8"), '{"permissions": {"allow": ["Mine"]}}\n')
+
+    def test_a_settings_file_the_installer_didnt_write_is_a_conflict(self):
+        self.fragment("lint", self.allow("Bash(lint *)"))
+        path = write(self.ws1 / ".claude" / "settings.json", '{"hooks": {}}\n')
+        code, plan = self.run_install("--apply")
+        self.assertEqual(code, 1)
+        self.assertTrue(any(f"[unmanaged] {path}" in line for line in self.section(plan, "Conflicts, left alone")))
+        self.assertEqual(path.read_text(encoding="utf-8"), '{"hooks": {}}\n')
+
+    def test_two_fragments_setting_one_key_differently_warn_and_the_first_wins(self):
+        self.fragment("lint", self.allow(defaultMode="plan"))
+        self.fragment("locks", self.allow(defaultMode="auto"))
+        code, plan = self.run_install("--apply")
+        self.assertEqual(code, 0, plan)
+        self.assertEqual(self.settings()["permissions"]["defaultMode"], "plan")
+        self.assertTrue(any("permissions.defaultMode already set" in line for line in self.section(plan, "Warnings")))
+
+    def test_an_unreadable_fragment_is_a_problem_and_its_workspaces_settings_are_left_as_they_are(self):
+        self.fragment("lint", self.allow("Bash(lint *)"))
+        self.run_install("--apply")
+        before = (self.ws1 / ".claude" / "settings.json").read_bytes()
+        write(self.repo / "features" / "lint" / "settings.json", "{not json")
+        code, plan = self.run_install("--apply")
+        self.assertEqual((code, self.section(plan, "Remove")), (1, []))
+        self.assertTrue(any("settings.json" in line and "left as it is" in line
+                            for line in self.section(plan, "Problems")), plan)
+        self.assertEqual((self.ws1 / ".claude" / "settings.json").read_bytes(), before)
+        write(self.repo / "features" / "lint" / "settings.json", "[1]")
+        code, plan = self.run_install()
+        self.assertTrue(any("must be a JSON object" in line for line in self.section(plan, "Problems")), plan)
+
+    def test_a_fragment_beside_the_claude_tree_is_never_copied_as_a_file(self):
+        self.fragment("lint", self.allow("Bash(lint *)"))
+        self.run_install("--apply")
+        self.assertEqual([path for path in self.sources(self.ws1) if "settings" in path],
+                         [".claude/settings.json", ".claude/settings.local.json"])
+
+    def sources(self, ws: Path) -> list:
+        return sorted(str(path.relative_to(ws)) for path in (ws / ".claude").rglob("*") if path.is_file())
+
+    # Global settings
+
+    def mine(self) -> dict:
+        return {
+            "permissions": {"allow": ["Bash(mine)"], "defaultMode": "auto"},
+            "model": "sonnet",
+            "hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "mine.sh"}]}]},
+        }
+
+    def notes(self) -> dict:
+        return {
+            "permissions": {"allow": ["Read(~/.claude/**)"], "defaultMode": "plan"},
+            "hooks": {
+                "PreToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": "ours.sh"}]}],
+                "Stop": [{"hooks": [{"type": "command", "command": "stop.sh"}]}],
+            },
+            "env": {"NOTES": "1"},
+        }
+
+    def test_a_global_fragment_merges_around_your_entries_and_disabling_it_removes_only_its_own(self):
+        mine = self.mine()
+        self.write_home(mine)
+        self.fragment("notes", self.notes(), target="global")
+        self.machine_features("notes")
+        code, plan = self.run_install("--apply")
+        self.assertEqual(code, 0, plan)
+        merged = self.home_settings()
+        self.assertEqual(merged["permissions"], {"allow": ["Bash(mine)", "Read(~/.claude/**)"], "defaultMode": "auto"})
+        self.assertEqual(merged["model"], "sonnet")
+        self.assertEqual([hook["matcher"] for hook in merged["hooks"]["PreToolUse"]], ["Bash", "*"])
+        self.assertEqual(merged["hooks"]["Stop"], self.notes()["hooks"]["Stop"])
+        self.assertEqual(merged["env"], {"NOTES": "1"})
+        self.assertTrue(any("permissions.defaultMode already set" in line for line in self.section(plan, "Warnings")))
+        self.assertEqual(self.section(plan, "Merge settings"),
+                         [f"{self.home / 'settings.json'} (merge: +4 -0 entries)"])
+        self.machine_features()
+        code, plan = self.run_install("--apply")
+        self.assertEqual(code, 0, plan)
+        self.assertEqual(self.home_settings(), mine)  # its hooks.Stop and env, which it made, are gone too
+        self.assertEqual(self.state()["settings"], {})
+
+    def test_a_second_apply_changes_nothing_and_keeps_your_later_edits(self):
+        self.write_home(self.mine())
+        self.fragment("notes", self.notes(), target="global")
+        self.machine_features("notes")
+        self.run_install("--apply")
+        edited = self.home_settings()
+        edited["theme"] = "dark"
+        edited["permissions"]["allow"].insert(0, "Bash(first)")
+        edited["hooks"]["PreToolUse"].append({"matcher": "Edit", "hooks": []})
+        text = json.dumps(edited, indent=4) + "\n"  # your own formatting stays while nothing is to change
+        write(self.home / "settings.json", text)
+        code, plan = self.run_install("--apply")
+        self.assertEqual((code, self.section(plan, "Merge settings")), (0, []))
+        self.assertEqual((self.home / "settings.json").read_text(encoding="utf-8"), text)
+        self.assertIn(f"{self.home / 'settings.json'} (merged settings)", self.section(plan, "Unchanged"))
+        self.machine_features()
+        self.run_install("--apply")
+        after = self.home_settings()
+        self.assertEqual(after["theme"], "dark")
+        self.assertEqual(after["permissions"]["allow"], ["Bash(first)", "Bash(mine)"])
+        self.assertEqual([hook["matcher"] for hook in after["hooks"]["PreToolUse"]], ["Bash", "Edit"])
+        self.assertNotIn("env", after)
+
+    def test_an_entry_you_already_had_is_never_recorded_or_removed(self):
+        mine = self.mine()
+        mine["permissions"]["allow"].append("Read(~/.claude/**)")
+        self.write_home(mine)
+        self.fragment("notes", {"permissions": {"allow": ["Read(~/.claude/**)"]}}, target="global")
+        self.machine_features("notes")
+        code, plan = self.run_install("--apply")
+        self.assertEqual((code, self.section(plan, "Merge settings"), self.state()["settings"]), (0, [], {}))
+        self.machine_features()
+        self.run_install("--apply")
+        self.assertEqual(self.home_settings(), mine)
+
+    def test_an_entry_it_changed_in_a_fragment_is_swapped(self):
+        self.write_home(self.mine())
+        folder = self.fragment("notes", self.allow("Bash(a)"), target="global")
+        self.machine_features("notes")
+        self.run_install("--apply")
+        write(folder / "settings.json", json.dumps(self.allow("Bash(b)")))
+        self.run_install("--apply")
+        self.assertEqual(self.home_settings()["permissions"]["allow"], ["Bash(mine)", "Bash(b)"])
+
+    def test_it_makes_the_file_when_there_is_none_and_removes_it_with_the_last_entry(self):
+        self.fragment("notes", self.allow("Bash(a)"), target="global")
+        self.machine_features("notes")
+        _, plan = self.run_install("--apply")
+        self.assertEqual(self.section(plan, "Merge settings"),
+                         [f"{self.home / 'settings.json'} (new file: +1 -0 entries)"])
+        self.assertEqual(self.home_settings(), self.allow("Bash(a)"))
+        self.machine_features()
+        self.run_install("--apply")
+        self.assertFalse((self.home / "settings.json").exists())
+
+    def test_the_file_stays_when_it_has_your_entries_by_then(self):
+        self.fragment("notes", self.allow("Bash(a)"), target="global")
+        self.machine_features("notes")
+        self.run_install("--apply")
+        doc = self.home_settings()
+        doc["model"] = "sonnet"
+        self.write_home(doc)
+        self.machine_features()
+        self.run_install("--apply")
+        self.assertEqual(self.home_settings(), {"model": "sonnet"})
+
+    def test_a_dropped_machine_feature_and_a_teardown_remove_its_entries(self):
+        mine = self.mine()
+        self.write_home(mine)
+        self.fragment("notes", self.notes(), target="global")
+        self.machine_features("notes")
+        self.run_install("--apply")
+        self.run_install("--teardown", "--apply")
+        self.assertEqual(self.home_settings(), mine)
+        self.assertEqual(self.state()["settings"], {})
+
+    def test_a_scoped_run_leaves_another_toolboxs_entries_alone(self):
+        self.fragment("notes", self.allow("Bash(a)"), target="global")
+        self.machine_features("notes")
+        self.run_install("--apply")
+        self.run_install("--toolbox", "work-toolbox", "--apply")
+        self.assertEqual(self.home_settings(), self.allow("Bash(a)"))
+        self.machine_features()
+        self.run_install("--toolbox", "work-toolbox", "--apply")
+        self.assertEqual(self.home_settings(), self.allow("Bash(a)"))  # the global part wasn't in this run
+
+    def test_a_settings_file_that_isnt_json_is_a_problem_and_left_alone(self):
+        write(self.home / "settings.json", "{// mine\n}")
+        self.fragment("notes", self.allow("Bash(a)"), target="global")
+        self.machine_features("notes")
+        code, plan = self.run_install("--apply")
+        self.assertEqual(code, 1)
+        self.assertTrue(any("can't merge settings" in line for line in self.section(plan, "Problems")), plan)
+        self.assertEqual((self.home / "settings.json").read_text(encoding="utf-8"), "{// mine\n}")
+        write(self.home / "settings.json", "[]")
+        code, _ = self.run_install("--apply")
+        self.assertEqual(code, 1)
+
+    def test_an_unreadable_global_fragment_leaves_the_file_and_its_entries(self):
+        self.write_home(self.mine())
+        folder = self.fragment("notes", self.allow("Bash(a)"), target="global")
+        self.machine_features("notes")
+        self.run_install("--apply")
+        before = (self.home / "settings.json").read_bytes()
+        write(folder / "settings.json", "oops")
+        code, plan = self.run_install("--apply")
+        self.assertEqual(code, 1)
+        self.assertTrue(any("left as it is" in line for line in self.section(plan, "Problems")), plan)
+        self.assertEqual((self.home / "settings.json").read_bytes(), before)
+
+    def test_a_linked_settings_file_is_written_through(self):
+        real = write(self.tmp / "dotfiles" / "settings.json", json.dumps(self.mine()) + "\n")
+        (self.home / "settings.json").symlink_to(real)
+        self.fragment("notes", self.allow("Bash(a)"), target="global")
+        self.machine_features("notes")
+        self.run_install("--apply")
+        self.assertTrue((self.home / "settings.json").is_symlink())
+        merged = json.loads(real.read_text(encoding="utf-8"))
+        self.assertEqual(merged["permissions"]["allow"], ["Bash(mine)", "Bash(a)"])
+
+    def test_a_missing_home_folder_is_the_existing_problem_and_nothing_is_registered_half_way(self):
+        shutil.copytree(REPO / "core", self.repo / "core")
+        shutil.rmtree(self.home)
+        code, plan = self.run_install("--apply")
+        self.assertEqual(code, 1)
+        self.assertTrue(any("target folder" in line and "doesn't exist" in line
+                            for line in self.section(plan, "Problems")), plan)
+        self.assertFalse(self.home.exists())
+        self.assertEqual(self.section(plan, "Merge settings"), [])
+
+    def test_a_preview_changes_nothing(self):
+        self.write_home(self.mine())
+        before = (self.home / "settings.json").read_bytes()
+        self.fragment("notes", self.notes(), target="global")
+        self.machine_features("notes")
+        self.fragment("lint", self.allow("Bash(lint *)"))
+        code, plan = self.run_install()
+        self.assertEqual(code, 0, plan)
+        self.assertEqual(len(self.section(plan, "Merge settings")), 1)
+        self.assertEqual((self.home / "settings.json").read_bytes(), before)
+        self.assertFalse((self.ws1 / ".claude" / "settings.json").exists())
+
+    # The dispatcher's registration, as shipped in core
+
+    def registered(self) -> tuple[Path, str]:
+        """Install the repo's real core fragment over the user's own hooks; (the user's settings file, the command)."""
+        shutil.copytree(REPO / "core", self.repo / "core")
+        self.write_home({"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command",
+                                                                                 "command": "mine.sh"}]}]}})
+        code, plan = self.run_install("--apply")
+        self.assertEqual(code, 0, plan)
+        entries = [entry for entry in self.home_settings()["hooks"]["PreToolUse"] if entry["matcher"] == "*"]
+        return self.home / "settings.json", entries[0]["hooks"][0]["command"]
+
+    def test_the_dispatcher_is_registered_once_beside_your_hooks(self):
+        path, command = self.registered()
+        written = path.read_bytes()
+        code, plan = self.run_install("--apply")
+        self.assertEqual((code, self.section(plan, "Merge settings")), (0, []))
+        self.assertEqual(path.read_bytes(), written)
+        pre = json.loads(written)["hooks"]["PreToolUse"]
+        self.assertEqual(len(pre), 2)
+        self.assertEqual(pre[0]["hooks"][0]["command"], "mine.sh")
+        self.assertEqual([entry["matcher"] for entry in pre], ["Bash", "*"])
+        self.assertIn("run_gates.py", command)
+        self.assertEqual(list(self.state()["settings"]), [install.norm(path)])
+
+    def run_hook(self, command: str, cwd: Path, event: dict) -> subprocess.CompletedProcess:
+        """Run a registered hook command as Claude Code does: through a shell, the event on stdin, HOME set."""
+        env = {**os.environ, "HOME": str(self.home.parent), "CLAUDE_PROJECT_DIR": str(cwd)}
+        return subprocess.run(["sh", "-c", command], input=json.dumps(event), capture_output=True, text=True, env=env,
+                              cwd=cwd, check=False)
+
+    def test_a_gate_in_the_workspace_denies_a_call_from_a_repo_under_it(self):
+        _, command = self.registered()
+        (self.home / "hooks").mkdir()
+        shutil.copy(REPO / "global" / "hooks" / "run_gates.py", self.home / "hooks" / "run_gates.py")
+        write(self.ws1 / ".claude" / "hooks" / "gates" / "pre_tool_use" / "block.py", (
+            'TOOLS = {"Bash"}\nMAIN_ONLY = True\n\n'
+            'def check(event):\n'
+            '    return "blocked by the test gate" if event["tool_input"]["command"] == "echo blocked" else None\n'))
+        repo = self.ws1 / "repo"
+        repo.mkdir()
+        event = {"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": str(repo)}
+        denied = self.run_hook(command, repo, {**event, "tool_input": {"command": "echo blocked"}})
+        self.assertEqual(denied.returncode, 0, denied.stderr)
+        out = json.loads(denied.stdout)["hookSpecificOutput"]
+        self.assertEqual((out["permissionDecision"], out["permissionDecisionReason"]),
+                         ("deny", "blocked by the test gate"))
+        allowed = self.run_hook(command, repo, {**event, "tool_input": {"command": "echo fine"}})
+        self.assertEqual((allowed.returncode, allowed.stdout, allowed.stderr), (0, "", ""))
+
+    def test_a_missing_dispatcher_lets_the_call_go_ahead_without_an_error(self):
+        _, command = self.registered()
+        self.assertFalse((self.home / "hooks" / "run_gates.py").exists())
+        event = {"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": "echo blocked"}}
+        result = self.run_hook(command, self.ws1, event)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "", ""))
 
 
 def shutil_rmtree(path: Path) -> None:

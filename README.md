@@ -168,7 +168,7 @@ installer warns about names that break these rules.
   `feature.yml` and a `.claude/` tree that mirrors where its files install: `features/tests/.claude/agents/
   check-runner.md` installs to `<workspace>/.claude/agents/check-runner.md`. A feature's `.vault/` tree mirrors the
   workspace's vault, and `.tmpl` files and `.claude/rules/` rules behave as in the workspace folder below. Nothing
-  else in the folder installs. `feature.yml` has:
+  else in the folder installs except its `settings.json` fragment, which is merged (below). `feature.yml` has:
 
   | Key | Meaning |
   |---|---|
@@ -186,6 +186,24 @@ installer warns about names that break these rules.
   `--toolbox` and `--workspace` select with the rest of the toolbox. Git excludes and the manifest record them like any
   part. The older `workspace/` folder and `features.yml` path lists still install, for the layout that predates
   feature folders.
+- **Settings fragments.** A feature folder may hold a `settings.json` beside its `feature.yml`: a JSON object of what
+  the feature adds to the settings file of its scope (its permission allows, its hooks). It is merged, never copied:
+  each item of a list (an allow, a hook entry) is one entry, and each other value is one entry. A key the settings
+  already set to something else keeps its value, with a warning, and the first of two fragments to set a key wins. A
+  fragment that isn't a JSON object is a problem, and the settings file it feeds is left as it is.
+  - **Workspace.** The fragments of `core` and each picked workspace feature, across every toolbox, are merged into the
+    workspace's `.claude/settings.json`, which the installer owns: it is generated like the rule, recorded in the
+    manifest, rewritten on a change, removed when no fragment is left, and a file there it didn't write or that was
+    edited is a conflict. Your own entries go in `.claude/settings.local.json`, which the installer never reads or
+    writes.
+  - **Global.** The fragments of `core` and each global feature `machine.yml` picks are merged into
+    `~/.claude/settings.json`, which is yours. The manifest's `settings` section records the entries the installer
+    added and the mappings and lists it made, so it merges around your entries and on a dropped feature or `--teardown`
+    removes only those (and its empty mappings, and the file if it made it and nothing else is left). A second `--apply`
+    changes nothing, and leaves your formatting as it is. An entry you already had is not recorded, so it stays. A file
+    that isn't a JSON object is a problem and left alone; a link at the path is written through.
+  - **The dispatcher.** `core/settings.json` registers `~/.claude/hooks/run_gates.py` as the one `PreToolUse` `*` hook.
+    Its command skips a missing script, since a hook command that exits 2 blocks the call.
 - **The workspace folder** installs into every listed workspace. A workspace with no `.claude/toolbox.local.yml`, or an
   invalid one, is a problem line naming `/setup-workspace`, and nothing there is installed or removed. Otherwise its
   `features` gate what installs: `workspace/features.yml` maps each feature to paths, a path needs every feature that
