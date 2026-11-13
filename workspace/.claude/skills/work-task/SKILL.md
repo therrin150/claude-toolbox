@@ -16,10 +16,11 @@ second publishes, and their merge instruction merges and cleans up. The **work i
 ticket key, else the slug of its summary (the toolbox-config rule's tracker line says which this workspace has). The
 task's record holds all its progress, so any session can resume it.
 
-It composes the toolbox's skills and scripts named in its phase files; each owns its own mechanics, so follow them
-rather than redoing their work inline. The scripts are in `.claude/toolbox/bin/` (`<bin>` below), whose absolute path
-the toolbox-config rule names: write that path out in every call, since a shell that moved into a worktree can't use
-the relative one. Every script prints JSON.
+It sequences the stage skills (`start-change`, `check-change`, `review-change`, `publish-change`, `finish-change`:
+"Stage Skills" below) and composes the other skills and scripts its phase files name; each owns its own mechanics, so
+follow them rather than redoing their work inline. The scripts are in `.claude/toolbox/bin/` (`<bin>` below), whose
+absolute path the toolbox-config rule names: write that path out in every call, since a shell that moved into a
+worktree can't use the relative one. Every script prints JSON.
 
 The body is split by phase, and a session reads only the phase its record names ("Dispatch"). At the long waits it
 ends with a prompt to paste into a new session (`references/hand-off.md`), so a phase that resumes hours later starts
@@ -55,10 +56,11 @@ worktree (the workspace's skills and rules load only from there). `work-tasks` l
 - **Stops.** Only these: the code review stop (stop 1) and the publish review stop (stop 2), each once per cycle; with
   `pr.required`, the wait for the user's merge instruction; and the STOP conditions below. Each stop sends a desktop
   notification (`PushNotification`).
-- **Git writes.** Commit, push, PRs and the announcement happen ONLY after the user approves at stop 2. With
-  `pr.required`, merging happens ONLY on their merge instruction; without it, the approval covers the push to the
-  default branch too. "Done reviewing" at stop 1 is the cue to draft the messages, never to publish. Nothing else in
-  this flow writes to git history or a remote.
+- **Git writes.** Commit, push, PRs and the announcement happen ONLY after the user approves at stop 2 (`publish-change
+  --approved`). With `pr.required`, merging happens ONLY on their merge instruction (`finish-change`); without it, the
+  approval covers the push to the default branch too. "Done reviewing" at stop 1 is the cue to draft the messages
+  (`publish-change --draft-only`, which only drafts and saves), never to publish. Nothing else in this flow writes to
+  git history or a remote.
 - **Three attempts.** Per area, each check (format, unit tests, integration tests) gets at most three attempts. After
   the third failure, STOP and discuss; don't keep looping.
 - **Isolation.** Each task works in its own worktrees. With `work.dependencies: isolate` (the default), a `depends_on`
@@ -93,7 +95,8 @@ STOP (record it, notify, explain in a few lines, wait) when:
 - a third attempt of a check fails in any area;
 - testing would need an unreleased build of a shared library against local services (Ground Rules);
 - a lock, worktree, git, publish or watcher step reports something unexpected (`not-owner`, `refused`, `failed`,
-  conflicts) that its skill or script says to report;
+  conflicts) that its skill or script says to report, and a stage skill refuses for a reason its phase file doesn't
+  treat as routine (a worktree that already exists, a checkout on the default branch, a PR that isn't ready);
 - a step an extension added fails, unless its doc says otherwise;
 - an extension's own condition holds (hook `stop-conditions`).
 
@@ -158,33 +161,53 @@ are relative to this skill's folder, `.claude/skills/work-task/`. Read them with
 and `limit`, never through Bash (`sed`, `awk`): the folder is a symlink out of the workspace, and a Bash read Claude
 Code can't prove read-only asks the user for write access there.
 
+## Stage Skills
+
+Each stage of a ticket runs through its stage skill (the Skill tool), so a change worked here meets the same gates as
+one worked in any session. Each skill checks only its own requirements; this skill owns the order, and keeps what is
+its own: the record (`status`, `stage`, `cycle`), the stops and their reports, the hand-offs, the extension hooks, the
+cycles, the attempt counts and the waits.
+
+| Stage | Skill | Run from | The record |
+|---|---|---|---|
+| Start | `start-change <work id> [--repos <a,b>] [--desc <kebab-desc>]` | `work.md` "Each Cycle", step 1 | worktrees added; `in-progress`, `implementing` |
+| Implement | none: this session | `work.md` "Each Cycle", step 2 | |
+| Check | `check-change <work id> <mode>` | `work.md` steps 3–5, and every re-run (SKILL.md "## Checks") | `testing` (set by `work.md`) |
+| Review | `review-change <work id> --no-browser --resume-hint "/work-task <work id>"` | `code-review.md` | `review`, `code-review` (set by `code-review.md`) |
+| Publish | `publish-change <work id> --draft-only`, then `--approved` | `code-review.md` "Close Out the Review", then `merge.md` "Publish" | `review`, `publish-review`; `awaiting-ci` (set by `publish.py`) |
+| Finish | `finish-change <work id>` | `merge.md` "Merge" | `done` (set by its cleanup) |
+
+A stage skill that isn't installed (its feature isn't in the workspace's config) is a STOP naming the feature, except
+`review-change`: with no `review-ui` feature there is no review page, and stop 1 is answered in chat. A refusal is the
+stage's own gate speaking: the phase files name the refusals they expect and what to do; any other is a STOP
+("STOP Conditions"). A stage skill's own waiting and opening steps give way to this skill's when its flags say so
+(`--no-browser`, `--draft-only`, `--approved`).
+
 ## Checks
 
 Every place that runs the checks follows this, in whatever phase and session it is: a session resumed at a review
 stop reads this file but not `work.md`, so the delegation lives here.
 
-- **Who runs them:** a `check-runner` agent, for every check (format, unit tests, integration tests, and a build when a
-  step needs one), so the output and the integration bracket's many mechanical steps stay out of this session's
-  context. This session never runs `<bin>/run_checks.py`, `<bin>/run_tests.py`, `<bin>/services_lock.py`, an area's
-  `format`, `unit`, `build` or `integration` command, `start-local-services`, `stop-local-services` or
-  `run-unit-tests` itself, in any phase, and never reads a build, test or service log.
-- **Spawn it** with `Agent` (`subagent_type: check-runner`, `run_in_background: true`), passing the mode (`format`,
-  `unit`, `build` or `integration`), the applying areas as `<area>=<dir>` (from `worktrees.py changes`), the absolute
-  path of `<bin>`, the work id, and a test when only some need re-running; then end your turn. One runner per mode runs
-  all its areas. For `integration` in a `nested` workspace, spawn one runner per repo (each repo has its own lock), but
-  locks don't see port overlaps: when two repos' services may share a port, run them one at a time.
-- **Its report** gives `pass`, `fail` or `blocked`, the counts, and each failure's test, assertion, expected/actual and
-  trimmed stack, with no log path. Act on each report's `result`:
+- **Who runs them:** the `check-change` stage skill, for every check (format, unit tests, integration tests, and a
+  build when a step needs one). It hands the check to a `check-runner` agent, so the output and the integration
+  bracket's many mechanical steps stay out of this session's context. This session never runs `<bin>/run_checks.py`,
+  `<bin>/run_tests.py`, `<bin>/services_lock.py`, an area's `format`, `unit`, `build` or `integration` command,
+  `start-local-services`, `stop-local-services` or `run-unit-tests` itself, in any phase, and never reads a build, test
+  or service log.
+- **Run it** with the Skill tool, args `<work id> <mode>` (`format`, `unit`, `build` or `integration`), plus the failing
+  tests when only some need re-running, and only when `worktrees.py changes` lists areas that apply (`work.md`,
+  "Which Checks Apply"): with none, the checks are listed as skipped, not run. The skill spawns the runner in the
+  background and ends your turn; the runner's report wakes you.
+- **Its result** is the runner's report, `pass`, `fail` or `blocked`, with the counts and each failure's test,
+  assertion, expected/actual and trimmed stack and no log path, or the skill's own refusal. Act on it:
     - `pass`: done with that area.
-    - `fail`: an attempt. Fix the code, format, re-run its unit tests, then spawn a new runner for the check that
+    - `fail`: an attempt. Fix the code, format, re-run its unit tests, then run `check-change` again for the check that
       failed. At most three attempts per area, then STOP.
-    - `blocked`: hook `blocked-bracket`. By default: not an attempt. If its reason is a STOP condition or something
-      you can't clear yourself, STOP. If it took over the user's expired manual lock (`notes`), notify them and go on.
+    - `blocked`, or a refusal because the services lock is held elsewhere: hook `blocked-bracket`. By default: not an
+      attempt. If its reason is a STOP condition or something you can't clear yourself, STOP. If it took over the
+      user's expired manual lock (`notes`), notify them and go on.
     - `lock: NOT RELEASED`, in any result: STOP.
     - A takeover in `notes`: notify the user that their manual lock was taken over.
-
-  Don't edit a worktree while its runner is running. If the runner itself misbehaves, the fix goes in its agent file
-  (`check-runner`) or its docs (`<bin>/../agents/check-runner/`), never a by-hand run.
 
 Which areas need which check, and the hooks around them, are in `work.md` "Which Checks Apply" and steps 3–5; the places
 that re-run them later (the review stops, a change after the PRs are open, a release wait) say "the Checks" and mean this

@@ -161,6 +161,20 @@ class Walkthrough(unittest.TestCase):
         self.assertEqual(dispatch(out["fields"]), phase)
         return out
 
+    def start_change(self, wid: str, *args: str) -> dict:
+        """Each Cycle step 1: the `start-change` stage's script makes the worktrees and records them."""
+        out = self.script("change.py", "start", wid, *args)
+        self.assertEqual(self.fields(wid)["worktrees"], [r["path"] for r in out["results"]])
+        return out
+
+    def finish_change(self, wid: str, *args: str) -> dict:
+        """The Merge phase: the `finish-change` stage's gate, then the two commands it prints, then the record."""
+        gate = self.script("change.py", "finish", wid)
+        self.assertEqual(gate["merge_command"], f"publish.py merge {wid}")
+        if gate["merge_needed"]:
+            self.script("publish.py", "merge", wid, *args)
+        return self.script("publish.py", "cleanup", wid)
+
     def finish(self, wid: str, sessions: list[str]) -> None:
         for session in sessions:
             self.transcript(session)
@@ -205,10 +219,9 @@ class SingleVaultTest(Walkthrough):
 
         # Work: fresh start, worktree, implement, checks that apply.
         self.tasks("set", wid, "status=in-progress", "owner=claude", "stage=implementing")
-        made = self.script("worktrees.py", "create", wid, "--desc", "shelf-counts")
+        made = self.start_change(wid, "--desc", "shelf-counts")
         tree = Path(made["results"][0]["path"])
         self.assertEqual(made["branch"], "jdoe/PT-1-shelf-counts")
-        self.tasks("set-list", wid, "worktrees", str(tree))
         (tree / "app/src/Shelf.java").write_text("class Shelf { int count; }\n")
         (tree / "app/README.md").write_text("notes\n")
         changes = self.script("worktrees.py", "changes", wid)
@@ -216,6 +229,9 @@ class SingleVaultTest(Walkthrough):
         self.assertEqual(changes["skipped"], [])
         diff = changes["checkouts"][0]["diff"]
         self.assertEqual(diff, "2 files, +2 −1")
+        # The check stage's gate hands its runner the same areas.
+        gate = self.script("change.py", "check", wid, "unit")
+        self.assertEqual((gate["areas"], gate["skipped"]), (changes["areas"], []))
         # A shell that moved into the worktree finds the workspace's scripts and records the same way.
         self.assertEqual(self.tasks("get", wid, "stage", cwd=tree)["fields"], {"stage": "implementing"})
         self.script("run_tests.py", "format", *changes["areas"], "--label", wid)
@@ -225,19 +241,35 @@ class SingleVaultTest(Walkthrough):
         (tree / "app/.formatted").unlink()  # format output isn't part of the change
 
         # Stop 1, then a fresh session resumes it from the record and the saved report.
+        review = self.script("change.py", "review", wid)  # the review stage's gate: the checkouts to register
+        self.assertEqual([(c["repo"], c["diff"]) for c in review["checkouts"]], [("pantry", diff)])
         self.stop(wid, publish_dir, "code-review", "code-review", diff)
         self.resume(wid, "s2", "code-review.md")
         self.assertIn(diff, (publish_dir / "code-review.md").read_text())
         self.assertEqual(self.script("worktrees.py", "changes", wid)["checkouts"][0]["diff"], diff)
 
-        # Close out: the drafts go to the publish folder; stop 2; a fresh session resumes it.
+        # Close out: `publish-change --draft-only` gates and says where each text goes; stop 2; a fresh session
+        # resumes it.
+        draft = self.script("change.py", "publish", wid, "--draft")
+        self.assertEqual(draft["messages"], {"pantry": str(publish_dir / "commit.txt")})
+        self.assertFalse(draft["announce"])
         (publish_dir / "commit.txt").write_text("PT-1 add shelf counts\n\nShelves now carry a count.\n")
         self.stop(wid, publish_dir, "publish-review", "publish-review", diff)
         self.resume(wid, "s3", "publish-review.md")
 
-        # Approval: no PRs, so the run pushes straight to the default branch and closes the task.
-        out = self.script("publish.py", "run", wid)
-        self.assertTrue(out["done"], out)
+        # Approval: `publish-change --approved` commits and rebases and pushes nothing (no PRs); `finish-change`, which
+        # the same approval covers, pushes straight to the default branch and closes the task.
+        self.assertTrue(self.script("change.py", "publish", wid)["ok"])
+        out = self.script("publish.py", "run", wid, "--stop-after", "push")
+        self.assertEqual(out["stopped_after"], "push")
+        # A session that died before `finish-change` resumes at stop 2, and the approval runs the publish again.
+        again = self.script("publish.py", "run", wid, "--stop-after", "push")
+        self.assertEqual(again["stopped_after"], "push")
+        self.assertEqual(sh(self.root, "git", "rev-list", "--count", f"main..{made['branch']}"), "1")
+        self.assertEqual(sh(self.root, "git", "--git-dir", self.remotes["remotes/pantry"], "log", "-1", "--format=%s",
+                            "main"), "initial")
+        out = self.finish_change(wid)
+        self.assertEqual([w["status"] for w in out["worktrees"]], ["removed"], out)
         self.assertEqual(sh(self.root, "git", "--git-dir", self.remotes["remotes/pantry"], "log", "-1", "--format=%s",
                             "main"), "PT-1 add shelf counts")
         fields = self.fields(wid)
@@ -283,9 +315,8 @@ class NestedJiraTest(Walkthrough):
         self.assertEqual(self.script("toolbox.py", "config", "show", "work.dependencies"), "isolate")
 
         self.tasks("set", wid, "status=in-progress", "owner=claude", "stage=implementing")
-        made = self.script("worktrees.py", "create", wid, "--repos", "api,web", "--desc", "shelf-counts")
+        made = self.start_change(wid, "--repos", "api,web", "--desc", "shelf-counts")
         trees = {r["repo"]: Path(r["path"]) for r in made["results"]}
-        self.tasks("set-list", wid, "worktrees", *map(str, trees.values()))
         (trees["api"] / "src/Main.java").write_text("class Main { int count; }\n")
         (trees["web"] / "README.md").write_text("web, with counts\n")
         changes = self.script("worktrees.py", "changes", wid)
@@ -295,15 +326,23 @@ class NestedJiraTest(Walkthrough):
         self.tasks("set", wid, "stage=testing")
         self.assertIn("api (unit): pass", self.script("run_tests.py", "unit", *changes["areas"])["text"])
 
+        # The review stage's gate hands `local-review-ui` every repo with a changed file, README or not.
+        review = self.script("change.py", "review", wid)
+        self.assertEqual({c["repo"] for c in review["checkouts"]}, {"api", "web"})
         self.stop(wid, publish_dir, "code-review", "code-review", "1 file, +1 −1")
         self.resume(wid, "s2", "code-review.md")
+        draft = self.script("change.py", "publish", wid, "--draft")
+        self.assertEqual((draft["pr_required"], draft["announce"]), (True, True))
+        self.assertEqual(draft["messages"], {repo: str(publish_dir / f"{repo}.txt") for repo in ("api", "web")})
         for repo in ("api", "web"):
             (publish_dir / f"{repo}.txt").write_text(f"ACME-12 show shelf counts in {repo}\n\nAdds the count.\n")
         (publish_dir / "announce.txt").write_text("Shelf counts are up for review.\n")
         self.stop(wid, publish_dir, "publish-review", "publish-review", "1 file, +1 −1")
         self.resume(wid, "s3", "publish-review.md")
 
-        # Approval: commit, push and open the PRs; the merge waits for the user's instruction.
+        # Approval: `publish-change --approved` commits, pushes and opens the PRs; the merge waits for the user's
+        # instruction.
+        self.assertTrue(self.script("change.py", "publish", wid)["ok"])
         out = self.script("publish.py", "run", wid, "--stop-after", "open-pr")
         self.assertEqual(out["stopped_after"], "open-pr")
         self.assertEqual(out["announce"]["channel"], "C123")
@@ -313,9 +352,10 @@ class NestedJiraTest(Walkthrough):
         state = json.loads((self.tmp / "gh.json").read_text())
         self.assertEqual({p["state"] for p in state["prs"]}, {"OPEN"})
 
-        # The merge instruction: the same run resumes, waits for CI, merges and cleans up.
-        out = self.script("publish.py", "run", wid, "--interval", "0", "--grace", "0")
-        self.assertTrue(out["done"], out)
+        # The merge instruction: `finish-change` gates, merges, cleans up and the record is done.
+        self.script("publish.py", "wait-ci", wid, "--interval", "0", "--grace", "0")
+        out = self.finish_change(wid)
+        self.assertEqual({w["status"] for w in out["worktrees"]}, {"removed"}, out)
         state = json.loads((self.tmp / "gh.json").read_text())
         self.assertEqual({p["state"] for p in state["prs"]}, {"MERGED"})
         for repo in ("api", "web"):
@@ -350,9 +390,8 @@ class NestedSharedLibraryTest(Walkthrough):
 
     def cycle(self, wid: str, publish_dir: Path, repo: str, first: str, label: str) -> Path:
         """One cycle from worktree to stop 2, resumed in fresh sessions at both stops; returns its worktree."""
-        made = self.script("worktrees.py", "create", wid, "--repos", repo, "--desc", "shelf-labels")
+        made = self.start_change(wid, "--repos", repo, "--desc", "shelf-labels")
         tree = Path(made["results"][0]["path"])
-        self.tasks("set-list", wid, "worktrees", str(tree))
         if repo == "api":
             # Step 2 starts by picking up the release, with the configured command run in the consumer checkout.
             update = self.script("toolbox.py", "config", "show", "shared_libraries.update")
@@ -383,9 +422,11 @@ class NestedSharedLibraryTest(Walkthrough):
         self.tasks("set", wid, "status=in-progress", "owner=claude", "stage=implementing", "cycle=shared-library")
         self.cycle(wid, publish_dir, "common", "s2", "shared-library")
 
-        # Approval publishes the library; the task stays open, waiting for the release.
-        out = self.script("publish.py", "run", wid)
-        self.assertEqual((out["done"], out["next"]), (True, "release"), out)
+        # Approval publishes the library (`publish-change --approved`, then `finish-change`); the task stays open,
+        # waiting for the release.
+        self.script("publish.py", "run", wid, "--stop-after", "push")
+        out = self.finish_change(wid)
+        self.assertEqual(out["next"], "release", out)
         common_head = sh(self.root, "git", "--git-dir", self.remotes["remotes/common"], "rev-parse", "main")
         self.assertEqual(json.loads((publish_dir / "merged.json").read_text()), {"common": common_head})
         fields = self.fields(wid)
@@ -403,9 +444,10 @@ class NestedSharedLibraryTest(Walkthrough):
         self.assertEqual(dispatch(self.fields(wid)), "work.md")
         tree = self.cycle(wid, publish_dir, "api", "s4", "consumers")
         self.assertEqual((tree / "deps.txt").read_text(), "common released\n")
-        out = self.script("publish.py", "run", wid)
-        self.assertTrue(out["done"], out)
+        self.script("publish.py", "run", wid, "--stop-after", "push")
+        out = self.finish_change(wid)
         self.assertNotIn("next", out)
+        self.assertEqual(self.fields(wid)["status"], "done")
         self.assertEqual(sh(self.root, "git", "--git-dir", self.remotes["remotes/api"], "show", "main:deps.txt"),
                          "common released")
         fields = self.fields(wid)
@@ -500,10 +542,12 @@ class SkillTextTest(unittest.TestCase):
     def test_the_integration_bracket_is_delegated_in_one_place_every_re_run_names(self):
         # SKILL.md is the one file every session reads, so the delegation to `check-runner` lives there; a session
         # resumed at a review stop reads code-review.md or publish-review.md but not work.md.
-        checks = self.skill.split("## Checks", 1)[1].split("\n## ", 1)[0]
+        checks = self.skill.split("\n## Checks\n", 1)[1].split("\n## ", 1)[0]
         self.assertIn("`check-runner`", checks)
-        self.assertIn("subagent_type: check-runner", checks)
+        self.assertIn("`check-change`", checks)
         self.assertIn("never runs `<bin>/run_checks.py`", " ".join(checks.split()))
+        # The spawn itself is the stage skill's (check-change), not this skill's.
+        self.assertNotIn("subagent_type: check-runner", self.skill)
         self.assertNotIn("services-runner", self.skill)
         for name, text in self.texts.items():
             if name in ("SKILL.md", "extension-points.md"):
@@ -519,6 +563,51 @@ class SkillTextTest(unittest.TestCase):
                 flat = " ".join(block.split())
                 if re.search(r"integration tests", flat) and re.search(r"re-run|run the|Integration tests\*\*", flat):
                     self.assertIn('SKILL.md "## Checks"', flat, f"{name}: {flat[:120]!r}")
+
+    def test_each_stage_runs_through_its_stage_skill(self):
+        stages = self.skill.split("\n## Stage Skills\n", 1)[1].split("\n## ", 1)[0]
+        rows = {m.group(1): m.group(2) for m in re.finditer(r"^\| ([A-Z][a-z]+) \| `([a-z-]+)", stages, re.M)}
+        self.assertEqual(rows, {"Start": "start-change", "Check": "check-change", "Review": "review-change",
+                                "Publish": "publish-change", "Finish": "finish-change"})
+        for name in rows.values():
+            self.assertTrue((SKILLS / name / "SKILL.md").is_file(), name)
+        # Each is invoked from the phase file the table names, with the Skill tool.
+        runs = {"start-change": "work.md", "review-change": "code-review.md", "publish-change": "merge.md",
+                "finish-change": "merge.md"}
+        for name, where in runs.items():
+            self.assertRegex(" ".join(self.texts[where].split()), rf"`{name}` skill with the Skill tool", name)
+        self.assertIn("`check-change` stage skill", self.skill)
+        self.assertIn("Run it** with the Skill tool, args `<work id> <mode>`", self.skill)
+        self.assertRegex(" ".join(self.texts["code-review.md"].split()), r"`publish-change` skill with the Skill tool, "
+                                                                           r"args `<work id> --draft-only`")
+        self.assertRegex(" ".join(self.texts["merge.md"].split()), r"`publish-change` skill with the Skill tool, "
+                                                                     r"args `<work id> --approved`")
+        # The flags it passes are ones the stage skills take.
+        for name, flags in {"review-change": ("--no-browser", "--resume-hint"),
+                            "publish-change": ("--draft-only", "--approved"), "check-change": ("<test>",)}.items():
+            text = (SKILLS / name / "SKILL.md").read_text()
+            for flag in flags:
+                self.assertIn(flag, text, f"{name} takes {flag}")
+
+    def test_a_resume_picks_up_at_the_stage_the_record_names(self):
+        # Scenario "Resumed Mid-Task", the text half: the Dispatch table sends a task stopped at `publish-review` to
+        # publish-review.md, whose approval runs `publish-change --approved` (merge.md "Publish"). The record half is
+        # `Walkthrough.resume`, and the rerun that approval may make is checked in the single-vault walkthrough.
+        table = self.skill.split("\n## Dispatch\n", 1)[1].split("\n## ", 1)[0]
+        for stage, phase in (("code-review", "code-review.md"), ("publish-review", "publish-review.md")):
+            self.assertIn(f"| `review`, `{stage}` | `references/{phase}` |", table)
+        flat = " ".join(self.texts["publish-review.md"].split())
+        self.assertIn("A session that starts at `publish-review`", flat)
+        self.assertIn("read `merge.md` and publish", flat)
+        self.assertIn("## Publish", self.texts["merge.md"])
+        self.assertIn("args `<work id> --approved`", " ".join(self.texts["merge.md"].split()))
+
+    def test_the_phase_files_leave_the_stage_mechanics_to_the_stage_skills(self):
+        for name, text in self.texts.items():
+            flat = " ".join(text.split())
+            for owned in ("worktrees.py create", "git-worktrees", "publish.py run", "review.py forget", "--confirm-squash",
+                          "admin_merge", "gh-create-pull-request"):
+                self.assertNotIn(owned, flat, f"{name} carries {owned}, which a stage skill owns")
 
     def test_dispatch_covers_every_generic_stage(self):
         import records

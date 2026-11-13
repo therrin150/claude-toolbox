@@ -2,34 +2,35 @@
 
 Publish on the user's approval at stop 2, watch the PRs, merge on their instruction and clean up; after a
 shared-library cycle, wait for the release and start the consumers cycle. Stages `awaiting-ci` and `awaiting-merge`,
-then `status: done`, where `done.md` takes over. `<bin>` is the scripts folder (SKILL.md). Every
-`publish.py` command prints JSON; its exit codes are 0 done, 2 a precheck failed (nothing changed), 3 a step failed part
-way, 4 halted for the session or the user. A run resumes from wherever it stopped, so after fixing a cause, run the
-same command again.
+then `status: done`, where `done.md` takes over. `<bin>` is the scripts folder (SKILL.md). The publish and the merge
+run through their stage skills (`publish-change`, `finish-change`), which call `publish.py`; its commands print JSON,
+with exit codes 0 done, 2 a precheck failed (nothing changed), 3 a step failed part way, 4 halted for the session or
+the user, and a run resumes from wherever it stopped, so after fixing a cause, run the same command again.
 
 ## Publish
 
 On approval only, and only with nothing `Pending`. First hook `before-publishing` (SKILL.md "Extension Points"):
-whatever an extension does before anything is committed.
+whatever an extension does before anything is committed. Then run the `publish-change` skill with the Skill tool, args
+`<work id> --approved`: the saved messages are the approved ones. It gates them, then commits every worktree with its
+message and rebases onto `origin/<default>` when that has new code.
 
-**With `pr.required`:** `<bin>/publish.py run <work id> --stop-after open-pr`. It commits every worktree with its
-approved message, rebases onto `origin/<default>` when that has new code, pushes, opens the PRs (appending them to
-`prs` and setting `status=review` and the stage), and prints `announce` when the config has `pr.announce`. Then:
+**With `pr.required`:** it also pushes, opens the PRs (appending them to `prs` and setting `status=review` and the
+stage) and posts the announcement, verbatim, when the config has `pr.announce`; the approval covered it. Then:
 
-1. Post the announcement as `gh-create-pull-request`'s "Step 4" says, verbatim; the approval covered it.
-2. `<bin>/tasks.py set <work id> owner=<user>`; the merge is their move.
-3. Report the PR links and end with the hand-off block (read `hand-off.md` for it). Don't start a watcher here: it
+1. `<bin>/tasks.py set <work id> owner=<user>`; the merge is their move.
+2. Report the PR links and end with the hand-off block (read `hand-off.md` for it). Don't start a watcher here: it
    belongs to the session that resumes from the pasted prompt, whose wake is cheap. If the user answers here instead,
    go on with "Watch the PRs" in this session.
 
-**Without `pr.required`:** `<bin>/publish.py run <work id>`. It commits, rebases onto `origin/<default>` when needed,
-pushes the branch to the default branch (a fast-forward), removes the worktrees and the branch, and sets
-`status=done`. Then go on to "Merge", step 2.
+**Without `pr.required`:** it commits and rebases and pushes nothing. The approval covers the push to the default
+branch, so go straight on to "Merge", step 1. Running it again is safe: a commit already made is skipped, so a session
+that died between the two resumes at stop 2 and the approval runs both again.
 
 On a failure, report where it stopped (`stopped_at`) and why:
 
-- exit 2: the `problems` (a message without a body, a stray file, a branch that doesn't match `git.branch`). Nothing
-  was written. A wording problem goes back to stop 2; anything else is a STOP.
+- a refusal for a message that is missing or can't be committed, or exit 2 with `problems` (a message without a body,
+  a stray file, a branch that doesn't match `git.branch`): nothing was written. A wording problem goes back to stop 2;
+  anything else is a STOP.
 - exit 4 with `conflicts`: the rebase is left open in the worktree. STOP and show the conflicting files. On the
   user's go-ahead, resolve them, `git rebase --continue`, re-run the checks the resolution touches, and run the same
   command again.
@@ -66,24 +67,22 @@ Before merging, or if the user says to stop watching, stop the watcher (`TaskSto
 
 ## Merge
 
-1. On the user's merge instruction, or when they merged on GitHub: `<bin>/publish.py run <work id>`. Every step
-   already done is skipped; it rebases a PR that fell behind the default branch and pushes it, waits for CI (with
-   `pr.wait_for_ci`), merges by `pr.merge`, removes the worktrees, deletes the merged branches, and sets
-   `status=done`. With every PR already merged it runs cleanup only (`skipped` in its output); a merged PR is never
-   rebased or pushed. If its output shows a `push` or `open-pr` step for a merged PR, STOP: that is a `publish.py`
-   bug. Run it in the background when CI may take a while (it exits on a result). Exit 4 is a halt, not a failure:
-    - `needs_confirmation`: squashes that collapse several commits. Show the user, then run again with
-      `--confirm-squash`.
-    - waiting for a review approval, or CI timed out: start the watcher ("Watch the PRs") and run again on `ready`.
-    - `conflicts`: as in "Publish".
-
-   A PR whose merge precheck shows `admin_merge` (every file it changes is path-filtered out of the workflows behind
-   its required checks, so they never report) merges with `--admin`; the user's merge instruction covers it. Name it
-   and its `missing_checks` in the report. A refused worktree removal (uncommitted files) is a STOP. Report its
-   `warnings`.
-2. With the `review-ui` feature, forget the task's review and its comments, and prune reviews whose repos are gone:
-   `python3 .claude/skills/local-review-ui/scripts/review.py forget <work id> --delete-comments`, then `... prune`.
-3. Hook `after-the-merge`. By default: after the shared-library cycle (`publish.py` set `status=review
+1. On the user's merge instruction, when they merged on GitHub, or, without `pr.required`, right after publishing: the
+   `finish-change` skill with the Skill tool, args `<work id>`. It gates the merge, says what will merge, merges by
+   `pr.merge` (or pushes straight to the default branch), removes the worktrees, deletes the merged branches, sets
+   `status=done` and forgets the task's review. With every PR already merged it runs cleanup only. The user's
+   instruction covers a squash that collapses several commits and an `--admin` merge, both of which it names: don't ask
+   again, as its "ask once" is for a user who hasn't seen them; with no `pr.required`, the approval at stop 2 is the
+   instruction. Its refusals, merging and removing nothing:
+    - a PR waiting on a review approval or on CI: start the watcher ("Watch the PRs") and run it again on `ready`.
+    - a PR or branch behind the default branch: `<bin>/publish.py push <work id>` rebases it (and pushes the PR's
+      branch), then, with `pr.wait_for_ci`, `<bin>/publish.py wait-ci <work id>` in the background (it exits on a
+      result), then `finish-change` again. A rebase conflict (`publish.py push` exit 4 with `conflicts`) is handled as
+      in "Publish".
+    - uncommitted or untracked files in a worktree: STOP; they are the user's to settle.
+   An exit 3 is a merge that failed or left a PR open: report it; running it again is safe. The cleanup of a
+   `shared-library` cycle leaves the task open (`next: release`).
+2. Hook `after-the-merge`. By default: after the shared-library cycle (the cleanup set `status=review
    stage=awaiting-ci owner=claude` and printed `next: release`), "Wait for the Release". Otherwise nothing: read
    `done.md` and follow it.
 

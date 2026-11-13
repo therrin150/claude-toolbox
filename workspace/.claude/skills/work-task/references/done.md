@@ -1,7 +1,7 @@
 # Done Phase
 
-The final sweep and the usage report, once `publish.py` has set `status=done`. `<bin>` is the scripts folder
-(SKILL.md).
+The final sweep and the usage report, once `finish-change`'s cleanup has set `status=done`. `<bin>` is the scripts
+folder (SKILL.md).
 
 ## Done
 

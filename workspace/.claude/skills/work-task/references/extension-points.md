@@ -15,18 +15,18 @@ headings freely, never an id. A default in a phase file is the text at the hook.
 | `before-first-cycle` | `work.md` "Before the First Cycle", once on a fresh start: after the record and its context are loaded, before any worktree | nothing | add |
 | `plan-the-cycles` | `work.md` "Before the First Cycle", step 6 | that step, and `cycles.md` for a shared library | add, replace |
 | `after-implementing` | `work.md` "Each Cycle", after step 2, before format and tests | nothing | add |
-| `format` | `work.md` "Each Cycle", step 3 | a `format` runner (SKILL.md "Checks") | add, skip |
-| `unit-tests` | `work.md` "Each Cycle", step 4 | a `unit` runner (SKILL.md "Checks") | add, skip |
-| `before-integration-tests` | `work.md` "Each Cycle", step 5, before the first runner | nothing beyond `start-local-services`' own checks | add |
-| `integration-tests` | `work.md` "Each Cycle", step 5 | `integration` runners (SKILL.md "Checks") | add, skip |
-| `blocked-bracket` | SKILL.md "Checks": a runner's `blocked` result | that bullet's `blocked` text | add, replace |
+| `format` | `work.md` "Each Cycle", step 3 | `check-change` in `format` mode (SKILL.md "Checks") | add, skip |
+| `unit-tests` | `work.md` "Each Cycle", step 4 | `check-change` in `unit` mode (SKILL.md "Checks") | add, skip |
+| `before-integration-tests` | `work.md` "Each Cycle", step 5, before the first `check-change` run | nothing beyond `start-local-services`' own checks | add |
+| `integration-tests` | `work.md` "Each Cycle", step 5 | `check-change` in `integration` mode (SKILL.md "Checks") | add, skip |
+| `blocked-bracket` | SKILL.md "Checks": a `blocked` result, or a refusal for a lock held elsewhere | that bullet's `blocked` text | add, replace |
 | `code-review` | `work.md` "Each Cycle", step 6 | `/code-review` | add, skip |
 | `verify` | `work.md` "Each Cycle", step 6 | `verify-change` | add, skip |
 | `review-checks` | `work.md` "Each Cycle", step 6, beside `/code-review` and `verify-change`; findings join the triage | nothing | add |
 | `needs-a-release` | `other-tasks.md` "Needs a Release": the task needs another task's release | that section's text | add, replace |
-| `before-publishing` | `merge.md` "Publish", after stop 2's approval, before `publish.py` | nothing | add |
-| `after-the-merge` | `merge.md` "Merge", step 3 | that step's text | add |
-| `before-done` | `done.md` "Done", after the cleanup (`publish.py` has set `status=done`), before the done line and "Usage" | nothing | add |
+| `before-publishing` | `merge.md` "Publish", after stop 2's approval, before `publish-change` | nothing | add |
+| `after-the-merge` | `merge.md` "Merge", step 2 | that step's text | add |
+| `before-done` | `done.md` "Done", after the cleanup (`finish-change`'s cleanup has set `status=done`), before the done line and "Usage" | nothing | add |
 
 Built-in steps (`format`, `unit-tests`, `integration-tests`, `code-review`, `verify`) take `add` and `skip`, never
 `replace`, since replacing one would bypass its record updates. A skipped step is listed at both stops beside the

@@ -14,10 +14,11 @@ review's id is the work id. Without the `review-ui` feature there is no review p
 Order of the turn, so the report lands after `wrap_up` (text before the call can reach the user cut to a short
 summary) and the waiter is running before the turn ends:
 
-1. **Register the review, without the tab:** run the `local-review-ui` skill with the Skill tool, args `<work id>
-   --no-browser --resume-hint "/work-task <work id>"`. As its Arguments describe, it covers the task's worktrees,
-   titles the review `<work id> <summary>` and diffs against the default base. Note the URL it prints. Opening again
-   is safe: the same id reopens the same review with its comments.
+1. **Register the review, without the tab:** run the `review-change` skill with the Skill tool, args `<work id>
+   --no-browser --resume-hint "/work-task <work id>"`. It gates the stop (a task with no diff to review is refused:
+   STOP) and registers the review through `local-review-ui`, which covers the task's worktrees, titles the review
+   `<work id> <summary>` and diffs against the default base. Note the URL it prints. Opening again is safe: the same
+   id reopens the same review with its comments.
 2. **Seed the decisions:** one thread per **Ask** finding and per **Decided alone** item that has a code location, on
    its line: `<review> note <work id> --repo <repo> --path <file> --line <n> --body "<the question, with the
    options>"`. Anything with no location stays in the report. Don't seed a decision that already has a thread (a stop
@@ -91,7 +92,7 @@ Check first that the task is still this session's (`hand-off.md`, step 2), then:
 
 | Event | Do |
 |---|---|
-| `submitted` | `<review> read <work id>`. Per comment, change the code or answer. If code changed: format the touched areas and run their unit tests only (a `unit` runner, as SKILL.md "## Checks" says; a failure is an attempt, three then STOP). Then reply on each thread with what changed and the test result (`<review> reply`; never resolve a thread, the user does). One line per comment in chat. Then start the waiter again, with a fresh hand-off time, and end with the short hand-off block |
+| `submitted` | `<review> read <work id>`. Per comment, change the code or answer. If code changed: format the touched areas and run their unit tests only (`check-change` in `unit` mode, as SKILL.md "## Checks" says; a failure is an attempt, three then STOP). Then reply on each thread with what changed and the test result (`<review> reply`; never resolve a thread, the user does). One line per comment in chat. Then start the waiter again, with a fresh hand-off time, and end with the short hand-off block |
 | The user answers in chat | `TaskStop` the waiter, apply the answer like a comment, reply on the matching threads, start the waiter again |
 | `done`, or "looks good" in chat | Answer any comment left (as `submitted`); ask in chat about any decision still unanswered (`<review> read <work id> --all --peek`: a thread "opened by Claude" with no reply) and wait for the answer, applied like a comment; then "Close Out the Review" |
 | `closed` | The review was already closed with nothing unread (a session resumed after "Done reviewing" that an earlier session had read): go on to "Close Out the Review" |
@@ -112,16 +113,17 @@ Reached on "Done reviewing" or "looks good". Nothing here commits, pushes or pub
 
 1. **Format** the areas changed since the last run (`work.md` step 3). A no-op when nothing changed; if it changed a
    file, re-run that area's unit tests.
-2. **Integration tests**, as SKILL.md "## Checks" says (an `integration` runner, never a bracket by hand), for each
-   area that has them and whose code changed since its last pass, once, for all the rounds together; skip when none
+2. **Integration tests**, as SKILL.md "## Checks" says (`check-change` in `integration` mode, never a bracket by
+   hand), for each area that has them and whose code changed since its last pass, once, for all the rounds together; skip when none
    did. A failure is an attempt (three, then STOP); fix, format, re-run the unit tests, then the integration tests
    again.
-3. **Draft:** run the `git-draft-commit-message` skill with the Skill tool, `<worktree>... --task <work id>`, plus
-   `--announce` when the config has `pr.announce` and `pr.required`. Never draft the messages yourself instead: the
-   skill loads `commit-style.md` and `voice.md` in full, and the announcement is held to `voice.md`'s "Slack" rules,
-   not the commit message's. Write each message to the publish folder, `commit.txt` in a `single` workspace or
-   `<repo>.txt` per repo in a `nested` one, and the announcement to `announce.txt`; `publish.py` commits and posts
-   those files byte for byte.
+3. **Draft:** run the `publish-change` skill with the Skill tool, args `<work id> --draft-only`. It gates the publish
+   (a checkout on the default branch, or a task with no diff, is refused: STOP), drafts each message and, when the
+   config has `pr.announce` and `pr.required`, the announcement through `git-draft-commit-message`, and saves them in
+   the publish folder, `commit.txt` in a `single` workspace or `<repo>.txt` per repo in a `nested` one, and
+   `announce.txt`; `publish.py` commits and posts those files byte for byte. Never draft the messages yourself
+   instead. Its `warnings` say a check hasn't passed on the diff as it stands: run it (SKILL.md "## Checks") before
+   stop 2, or list it there as not run.
 4. **Stop 2:** read `publish-review.md` and follow it. If steps 1–2 changed code after the user reviewed it, say so on
    that worktree's `Changed since review` line there.
 
@@ -133,8 +135,8 @@ A session that starts at `code-review` (a pasted prompt, or the user back after 
    it since: say which, and re-run the unit tests (and integration tests, if they apply) before presenting, the
    integration tests as SKILL.md "## Checks" says. Without a `code-review.md`, rebuild the report: re-run the checks
    that apply for its Testing list, the same way.
-2. Reopen the review: the `local-review-ui` skill with the Skill tool, args `<work id> --resume-hint "/work-task
-   <work id>"`.
+2. Reopen the review: the `review-change` skill with the Skill tool, args `<work id> --no-browser --resume-hint
+   "/work-task <work id>"`, then open the tab with `python3 -m webbrowser -t <url>` (nothing is seeded on a resume).
 3. Start the waiter with no `--until`: a new session's context is small, so a wake is cheap. A finished round it
    hasn't read makes it exit at once, and that wake handles the round (table above) right after the report.
 4. Present `code-review.md`, after `wrap_up` as above, with no hand-off block.

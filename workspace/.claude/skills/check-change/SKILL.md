@@ -14,11 +14,13 @@ requirements, never that an earlier stage ran or that a later one will.
 ## Arguments
 
 ```
-/check-change <work id> <build | unit | format | integration>
+/check-change <work id> <build | unit | format | integration> [<test>...]
 ```
 
 - **work id**: the change's record, the one `start-change` printed. Its worktrees are the change.
 - **mode**: one check per run. To run several, run them one after another (format, then unit, then integration).
+- **test**: only these tests, to re-run what failed. `work-task` runs every check through this stage and counts the
+  attempts itself.
 
 ## Steps
 
@@ -44,7 +46,7 @@ requirements, never that an earlier stage ran or that a later one will.
    actual:
    - `pass`: say so per area, and which areas were `skipped` and why.
    - `fail`: report each failure. Fixing it and counting attempts is the caller's call; this stage runs the check
-     once. When it was asked to fix and re-run, at most three attempts per area, then ask the user.
+     once. A caller that fixes and re-runs (`work-task`) counts the attempts: at most three per area, then ask the user.
    - `blocked`: say why. A lock held elsewhere isn't a failure; try again when it's free.
    - `lock: NOT RELEASED`, in any result: stop and tell the user.
    - A takeover in `notes`: the runner took over an expired lock; tell the user if it was theirs (a manual one).

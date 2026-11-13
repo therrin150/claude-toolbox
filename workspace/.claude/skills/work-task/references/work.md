@@ -47,8 +47,8 @@ scripts folder (SKILL.md). At each `hook <id>`, follow the extension docs at tha
 
 It reads each worktree's whole change against its branch point (committed, uncommitted and untracked, without touching
 the index) and prints, per worktree, `diff` (the stops' Diff line) and `files`, and overall `areas`, the areas whose
-checks apply as `<area>=<dir>`, ready for the Checks' runners, and `skipped`, the areas with changes but none their
-config's `files` globs count (a doc-only change to a repo whose checks look at code). Run it again whenever a round
+checks apply as `<area>=<dir>` (the ones `check-change` hands its runner), and `skipped`, the areas with changes but
+none their config's `files` globs count (a doc-only change to a repo whose checks look at code). Run it again whenever a round
 changes code. Per applying area:
 
 | Check | Runs when | Else, at the stops |
@@ -64,29 +64,29 @@ check at both stops.
 
 ## Each Cycle
 
-1. **Worktrees:** `<bin>/worktrees.py create <work id> [--repos <a,b>] [--desc <kebab-desc>]` for this cycle's repos
-   (`--repos` in a `nested` workspace only), from the latest `origin/<default>` (so a consumers cycle starts after the
-   shared library merged), as `.claude/skills/git-worktrees/SKILL.md`'s "Create" describes (read it; it isn't a
-   Skill-tool skill). With a key the description is required; without one, leave it off and the branch is named by the
-   work id. Record them: `<bin>/tasks.py set-list <work id> worktrees <path>...`. A `failed` repo is a STOP.
+1. **Worktrees:** the `start-change` skill with the Skill tool, args `<work id> [--repos <a,b>] [--desc <kebab-desc>]`
+   for this cycle's repos (`--repos` in a `nested` workspace only). It branches from the latest `origin/<default>` (so a
+   consumers cycle starts after the shared library merged), creates each worktree and records them in the task's
+   `worktrees`. With a key the description is required; without one, leave it off and the branch is named by the work
+   id. A `refused` or `failed` repo is a STOP.
 2. **Implement** the change in the worktrees, following the workspace's rules, including anything carried from another
    in-flight task (`other-tasks.md`). In a consumers cycle, first pick up the release in each consumer worktree, as
    `cycles.md` step 3 says (read it, if this session hasn't). Then hook `after-implementing`, before any check.
 3. **Format** (hook `format`) every applying area that has a `format` command, before the first test run, so the
-   tests, `/code-review`, the verifier and the user all see formatted code: a `format` runner, as SKILL.md "## Checks"
-   says. A formatter that rewrites whole files brings unrelated
+   tests, `/code-review`, the verifier and the user all see formatted code: `check-change` in `format` mode, as SKILL.md
+   "## Checks" says. A formatter that rewrites whole files brings unrelated
    lines into the diff; that's accepted. A failure (the formatter couldn't parse a file) is an attempt: fix and run it
    again. It runs again on the areas touched by every later fix.
-4. **Unit tests** (hook `unit-tests`): set `stage=testing`, then a `unit` runner on every applying area, as SKILL.md
-   "## Checks" says (one runner for all of them), and end the turn until it wakes you.
+4. **Unit tests** (hook `unit-tests`): set `stage=testing`, then `check-change` in `unit` mode, as SKILL.md
+   "## Checks" says (it covers every applying area), and end the turn until it wakes you.
    Fix and re-run the failing areas only; at most three attempts per area, then STOP. After a fix, format again before
    the re-run.
 5. **Integration tests** (hook `integration-tests`), for each applying area with an `integration` command, when the
    workspace has the `services-lock` feature. First hook `before-integration-tests`: by default nothing to check
    beyond what `start-local-services` checks itself. When a check an extension adds there fails (a network that must
-   be up, say), STOP and ask the user to fix it, and spawn the runners when they say it's done.
+   be up, say), STOP and ask the user to fix it, and run `check-change` when they say it's done.
 
-   Run the bracket as SKILL.md "## Checks" says: an `integration` runner, never by hand.
+   Run the bracket as SKILL.md "## Checks" says: `check-change` in `integration` mode, never by hand.
 6. **Review:** `/code-review` on the cycle's change (hook `code-review`), then the `verify-change` skill with the Skill
    tool, args `<work id> <worktree>...` (hook `verify`), then the checks extensions add beside them (hook
    `review-checks`). Sort every finding from all of them into one of three groups before changing anything:

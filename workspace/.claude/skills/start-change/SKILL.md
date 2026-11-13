@@ -1,15 +1,15 @@
 ---
 name: start-change
-description: Start a change in its own branch and worktrees, from a task record or an ad-hoc summary (a keyless record is made for it). Refuses when the record already has a worktree for that repo. Use before editing code outside work-task - "start a change for X", "make a branch for this fix" - or to give a record its worktree.
+description: Start a change in its own branch and worktrees, from a task record or an ad-hoc summary (a keyless record is made for it). Refuses when the record already has a worktree for that repo. Use before editing code - "start a change for X", "make a branch for this fix" - or to give a record its worktree; `work-task` runs it for each cycle.
 allowed-tools: Bash(*), Read
 ---
 
 # Start Change
 
 The first stage of a change, for any session: the record that holds its state, a branch, and a worktree per repo, so
-nothing is edited in a main checkout. `work-task` does the same through its own steps; this skill is for a session
-working outside it (an ad-hoc fix, a change started from a plan). It checks only its own requirement, that the record
-has no worktree for the repo yet. It never checks that anything ran before it.
+nothing is edited in a main checkout. `work-task` runs it for each cycle of a ticket; a session working outside
+`work-task` (an ad-hoc fix, a change started from a plan) runs it directly. It checks only its own requirement, that the
+record has no worktree for the repo yet. It never checks that anything ran before it.
 
 All the work is in one script. Run it from the workspace root, or by the absolute path in the toolbox-config rule (a
 shell that moved into a worktree can't use the relative one):
