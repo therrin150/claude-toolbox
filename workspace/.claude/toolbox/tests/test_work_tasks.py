@@ -254,9 +254,9 @@ class NamedNoneTest(Fixture):
         out = self.plan(str(self.plan_path), str(self.draft), "export-shelves")
         launch = [(i["title"], i["prompt"]) for i in out["launch"]]
         self.assertEqual(launch, [
-            ("shelf-counts Shelf Counts", f"/work-task {self.plan_path}"),
-            ("add-shelf-labels Add Shelf Labels", f"/work-task {self.draft}"),
-            ("export-shelves Export Shelves", "/work-task export-shelves")])
+            ("shelf-counts", f"/work-task {self.plan_path}"),
+            ("add-shelf-labels", f"/work-task {self.draft}"),
+            ("export-shelves", "/work-task export-shelves")])
         self.assertEqual(self.snapshot(), self.before)
 
     def test_no_queue_and_no_bare_numbers(self):
@@ -264,7 +264,7 @@ class NamedNoneTest(Fixture):
         self.assertIn("needs a key prefix", self.plan("12", code=1)["error"])
 
     def test_a_running_slug_is_found_by_its_title_prefix(self):
-        out = self.plan("export-shelves", "--sessions", self.sessions("export-shelves Export Shelves"))
+        out = self.plan("export-shelves", "--sessions", self.sessions("export-shelves"))
         self.assertEqual((self.groups(out), out["launch"]), ({"running": ["export-shelves"]}, []))
 
 

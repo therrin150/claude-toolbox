@@ -24,7 +24,7 @@ Prints JSON: `dispatch` (direct|chips), `initiation` (what start_session takes),
 root, where every session starts), `mode` (queue|named), `launch` (the entries to start now, in order), `entries`
 (everything, with a `group`: start, resume, running, offered, next, blocked, held, done or skipped, and a
 `reason`), and in queue mode `waiting_on_user`, `limits`, `load`, `held` and `stopped`. Every entry has `work_id`,
-`key`, `summary`, `title` (`<work id> <summary>`, at most 60 characters) and `prompt` (`/work-task <ref>`, nothing else:
+`key`, `summary`, `title` (`<key> <summary>`, or just the slug with no key; at most 60 characters) and `prompt` (`/work-task <ref>`, nothing else:
 the record holds the rest).
 
 Exit codes: 0 ok, 1 failed (the reason prints as JSON), 2 bad arguments.
@@ -54,8 +54,9 @@ class Failed(Exception):
     pass
 
 
-def title_for(work_id: str, summary: str | None) -> str:
-    return (f"{work_id} {summary}" if summary else work_id)[:TITLE_MAX].rstrip()
+def title_for(work_id: str, key: str | None, summary: str | None) -> str:
+    """A keyed task is `<key> <summary>`; a keyless one is just its slug, which its summary mostly repeats."""
+    return (f"{work_id} {summary}" if key and summary else work_id)[:TITLE_MAX].rstrip()
 
 
 def live_sessions(path: str | None) -> list[dict]:
@@ -84,7 +85,7 @@ def session_for(work_id: str | None, sessions: list[dict]) -> dict | None:
 def entry(work_id: str | None, key: str | None, summary: str | None, ref: str | None, group: str, reason: str = "",
           **extra) -> dict:
     return {"work_id": work_id, "key": key, "summary": summary,
-            "title": title_for(work_id, summary) if work_id else None,
+            "title": title_for(work_id, key, summary) if work_id else None,
             "prompt": f"/work-task {ref}" if ref else None, "group": group, "reason": reason, **extra}
 
 

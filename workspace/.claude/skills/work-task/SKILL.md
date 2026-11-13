@@ -127,8 +127,9 @@ are, so a resume lands back here. On the user's answer, log it (`tasks.py log <w
 
    When it prints `needs_import` (exit 1: a Jira key with no record), `needs_scope` or `needs_requirement`, read
    `references/new-record.md` and follow it before going on.
-3. **Name the session** `<work id> <summary>` (`set_session_title` with `session_id: "self"`), e.g. `ABC-12 Add Shelf
-   Labels`, or `shelf-labels Shelf Labels` with no key. `work-tasks` finds running tasks by the `<work id> ` prefix.
+3. **Name the session** `<key> <summary>` (`set_session_title` with `session_id: "self"`), e.g. `ABC-12 Add Shelf
+   Labels`, or just the slug with no key (`shelf-labels`), since the summary would only repeat it. `work-tasks` finds
+   running tasks by the work id, alone or as the `<work id> ` prefix.
 4. **Check who's on it.** When `new_session` is true and the task is `in-progress` at `implementing` or `testing`,
    another session may still be working: STOP and ask whether to take over. A new session at a review stop or a wait
    is a hand-off: go on without asking. A run of the whole ticket overlaps every slice: when the ticket's own record

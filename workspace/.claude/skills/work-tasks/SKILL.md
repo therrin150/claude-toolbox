@@ -37,8 +37,8 @@ in the toolbox-config rule; anywhere else, say so and stop), since the workspace
    mcp__ccd_session_mgmt__list_sessions`, plus `mcp__ccd_session__dismiss_task` with chips and, under the `jira`
    tracker, `mcp__<server>__getJiraIssue` (server from the toolbox-config rule). Skip `start_session` with `--dry-run`.
 2. **List the sessions.** `list_sessions` with `limit: 100` (archived excluded), and write the result as JSON to the
-   session scratchpad as `sessions.json`. `work-task` names its session `<work id> <summary>` as its first step, so
-   that prefix is how a task's live session is found.
+   session scratchpad as `sessions.json`. `work-task` names its session `<key> <summary>` (just the slug with no
+   key) as its first step, so the work id, alone or as a prefix, is how a task's live session is found.
 3. **Plan.** From the workspace root:
    `<bin>/dispatch.py plan [<task> ...] --sessions <scratchpad>/sessions.json`. On an error, report it and stop.
    - **A named Jira key with no record** comes back with `summary: null`: fetch it (`getJiraIssue`, the rule's cloud
