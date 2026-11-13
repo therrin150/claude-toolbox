@@ -515,6 +515,46 @@ class FeaturesTest(Workspace):
                 config.read_features(raw)
             self.assertIn(message, str(caught.exception))
 
+    def test_read_feature_parses_a_feature_file(self):
+        self.assertEqual(
+            config.read_feature({"name": "tests", "description": " Run the checks. ", "target": "workspace",
+                                 "needs": ["workspace.areas"], "requires": ["git"]}, "tests"),
+            {"name": "tests", "description": "Run the checks.", "target": "workspace", "needs": ["workspace.areas"],
+             "requires": ["git"]},
+        )
+        self.assertEqual(
+            config.read_feature({"name": "discussion", "description": "d", "target": "global"}, "discussion"),
+            {"name": "discussion", "description": "d", "target": "global", "needs": [], "requires": []},
+        )
+
+    def test_read_feature_refuses_a_bad_file_with_every_problem(self):
+        good = {"name": "tests", "description": "d", "target": "workspace"}
+        for raw, messages in (
+            (["tests"], ["must be a mapping"]),
+            ({**good, "name": "other"}, ["name must be 'tests', its folder's name"]),
+            ({**good, "name": "Tests"}, ["name must be 'tests'"]),
+            ({**good, "description": ""}, ["description is required"]),
+            ({**good, "target": "machine"}, ["target must be one of global, workspace, not 'machine'"]),
+            ({**good, "colour": "red"}, ["unknown key(s) colour"]),
+            ({**good, "needs": "vault"}, ["needs must be a list of strings"]),
+            ({**good, "requires": [3]}, ["requires must be a list of strings"]),
+            ({**good, "requires": ["tests"]}, ["requires names the feature itself"]),
+            ({**good, "target": "global", "needs": ["vault"]}, ["a global feature has none of"]),
+            ({"name": "x", "target": "nope"}, ["name must be 'tests'", "description is required", "target must be"]),
+        ):
+            with self.subTest(raw=raw), self.assertRaises(ValueError) as caught:
+                config.read_feature(raw, "tests")
+            for message in messages:
+                self.assertIn(message, str(caught.exception))
+
+    def test_unmet_needs_includes_always_features_that_are_never_picked(self):
+        raw = {"version": 1, "features": [], "workspace": {"name": "notes", "layout": "single"},
+               "user": {"handle": "jdoe", "name": "Jordan"}}
+        loaded = config.load(self.write(raw))
+        needs = {"core": ["workspace.areas"]}
+        self.assertEqual(loaded.unmet_needs(needs), {})
+        self.assertEqual(loaded.unmet_needs(needs, always=("core",)), {"core": ["workspace.areas"]})
+
     def test_schema_has(self):
         for key in ("vault", "tracker.jira", "tracker.jira.board", "workspace.areas", "workspace.areas.api.unit"):
             self.assertTrue(config.schema_has(key), key)

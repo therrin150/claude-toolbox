@@ -1,3 +1,6 @@
+# The layout that predates feature folders (a core/ folder and features/<name>/ folders, each with a feature.yml); see
+# README.md. It stays until claude-toolbox's own files move into them.
+#
 # Which parts of the workspace folder need a feature, and which config a feature needs. install.py installs a listed
 # path into a workspace only when that workspace's .claude/toolbox.local.yml lists the feature under `features`;
 # anything unlisted always installs, so only the runtime (.claude/toolbox/), toolbox-doctor, the generated

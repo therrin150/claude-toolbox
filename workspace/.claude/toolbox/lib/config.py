@@ -9,9 +9,9 @@ Every toolbox script and the installer read the config through this module.
 - validate() checks a parsed config against SCHEMA (`version: 1`) and applies defaults. Unknown keys, wrong types and
   missing required keys fail with the key's dotted path, all at once.
 - render_rule() writes `.claude/rules/toolbox-config.md`: the few values a session needs to act, loaded every session.
-- read_features() parses claude-toolbox's `workspace/features.yml`, and Config.unmet_needs() names the config a
-  workspace's picked features need and lack: `vault` and `tracker` are optional sections, required only by the
-  features that use them.
+- read_features() parses claude-toolbox's `workspace/features.yml`, read_feature() a feature folder's `feature.yml`,
+  and Config.unmet_needs() names the config a workspace's picked features need and lack: `vault` and `tracker` are
+  optional sections, required only by the features that use them.
 
 Scripts import it by path from their own resolved location:
 
@@ -450,6 +450,49 @@ def read_features(raw) -> tuple[dict, dict]:
     return paths, needs
 
 
+FEATURE_FILE = "feature.yml"
+FEATURE_TARGETS = ("global", "workspace")
+FEATURE_KEYS = ("name", "description", "target", "needs", "requires")
+FEATURE_NAME = re.compile(r"[a-z][a-z0-9]*(-[a-z0-9]+)*")
+
+
+def read_feature(raw, folder: str) -> dict:
+    """A feature folder's feature.yml, parsed and checked: {name, description, target, needs, requires}. `name` must be
+    the folder's name; `target` is `global` (installs into ~/.claude, picked in machine.yml) or `workspace` (installs
+    into each workspace that lists it in `features`); `needs` are dotted config keys, which only a workspace feature
+    has; `requires` are the names of features that must be picked wherever this one is. ValueError says what's wrong
+    with it, every problem at once."""
+    if not isinstance(raw, dict):
+        raise ValueError("must be a mapping with name, description and target")
+    errors = []
+    unknown = sorted(set(map(str, raw)) - set(FEATURE_KEYS))
+    if unknown:
+        errors.append(f"unknown key(s) {', '.join(unknown)}; use {', '.join(FEATURE_KEYS)}")
+    name, description, target = raw.get("name"), raw.get("description"), raw.get("target")
+    if name != folder:
+        errors.append(f"name must be {folder!r}, its folder's name, not {name!r}")
+    elif not FEATURE_NAME.fullmatch(folder):
+        errors.append(f"name {folder!r} must be lowercase words joined by hyphens")
+    if not isinstance(description, str) or not description.strip():
+        errors.append("description is required")
+    if target not in FEATURE_TARGETS:
+        errors.append(f"target must be one of {', '.join(FEATURE_TARGETS)}, not {target!r}")
+    lists = {}
+    for key in ("needs", "requires"):
+        value = raw.get(key) or []
+        if not isinstance(value, list) or not all(isinstance(item, str) and item.strip() for item in value):
+            errors.append(f"{key} must be a list of strings")
+            value = []
+        lists[key] = [item.strip() for item in value]
+    if lists["needs"] and target == "global":
+        errors.append("needs are workspace config keys, which a global feature has none of")
+    if folder in lists["requires"]:
+        errors.append("requires names the feature itself")
+    if errors:
+        raise ValueError("; ".join(errors))
+    return {"name": folder, "description": description.strip(), "target": target, **lists}
+
+
 def schema_has(dotted: str) -> bool:
     """Whether a dotted key names a key or section the schema allows (any name under a free-form map)."""
     spec = SCHEMA
@@ -530,10 +573,11 @@ class Config:
             return False
         return value is not None and value != {} and value != [] and value != ""
 
-    def unmet_needs(self, needs: dict) -> dict[str, list[str]]:
-        """For each picked feature, the config it needs (features.yml's `needs:`, as read_features() gives them) and
-        doesn't set."""
-        unmet = {feature: [key for key in needs.get(feature, []) if not self.is_set(key)] for feature in self.features}
+    def unmet_needs(self, needs: dict, always: tuple = ()) -> dict[str, list[str]]:
+        """For each picked feature, and each of `always` (core, which is never picked), the config it needs (the
+        `needs` of features.yml or feature.yml) and doesn't set."""
+        unmet = {feature: [key for key in needs.get(feature, []) if not self.is_set(key)]
+                 for feature in [*self.features, *always]}
         return {feature: keys for feature, keys in unmet.items() if keys}
 
     # Paths

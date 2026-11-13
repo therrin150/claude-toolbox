@@ -164,6 +164,28 @@ installer warns about names that break these rules.
   holding the retired `domains.yml`, or a `toolbox.yml` with `domains:` in it, is a problem, and nothing it installed
   is touched until it's reshaped. A `machine.yml` that still has `domains:` is a problem too: the key is no longer
   read.
+- **Feature folders.** A toolbox repo (this one or any listed) may hold `core/` and `features/<name>/`, each a
+  `feature.yml` and a `.claude/` tree that mirrors where its files install: `features/tests/.claude/agents/
+  check-runner.md` installs to `<workspace>/.claude/agents/check-runner.md`. A feature's `.vault/` tree mirrors the
+  workspace's vault, and `.tmpl` files and `.claude/rules/` rules behave as in the workspace folder below. Nothing
+  else in the folder installs. `feature.yml` has:
+
+  | Key | Meaning |
+  |---|---|
+  | `name` | the folder's name (lowercase words joined by hyphens) |
+  | `description` | one line on what it is for |
+  | `target` | `workspace`: installs into each workspace whose `features` lists it. `global`: installs into `~/.claude` when `machine.yml`'s `features` lists it |
+  | `needs` | workspace config keys it reads, as in `features.yml` (workspace features only) |
+  | `requires` | features that must be picked wherever it is: a workspace picks them (or `machine.yml` does, for a global one), or the workspace is a problem and nothing there is installed or removed; for a global feature, nothing is installed or removed from that toolbox's global features |
+
+  `core/` always installs (into every workspace, or into `~/.claude` if its `target` is `global`); a feature can't be
+  named `core`. An invalid or missing `feature.yml` is a problem, and nothing is installed or removed from that
+  toolbox's feature folders until it's fixed. A listed toolbox with feature folders may leave `source` and `target`
+  out of its `toolbox.yml`; one with only one of them is a problem. Two features installing to the same path are a
+  collision. Each toolbox's feature folders are two parts, `<toolbox>:workspace` and `<toolbox>:global`, which
+  `--toolbox` and `--workspace` select with the rest of the toolbox. Git excludes and the manifest record them like any
+  part. The older `workspace/` folder and `features.yml` path lists still install, for the layout that predates
+  feature folders.
 - **The workspace folder** installs into every listed workspace. A workspace with no `.claude/toolbox.local.yml`, or an
   invalid one, is a problem line naming `/setup-workspace`, and nothing there is installed or removed. Otherwise its
   `features` gate what installs: `workspace/features.yml` maps each feature to paths, a path needs every feature that

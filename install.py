@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """Copy every toolbox's Claude Code files into place on this machine.
 
-This repo installs two folders of its own: global/ into ~/.claude, and workspace/ into every workspace machine.yml
-lists, gated by each workspace's features, with the workspace's generated config rule. Every other toolbox repo
-machine.yml lists installs whole: its toolbox.yml names one source folder and the folder it mirrors. Each source folder
-mirrors its target. Every file is installed as a copy (never a link), so each lands inside the project that uses it;
+A toolbox repo is laid out as feature folders: `core/` (always installs) and `features/<name>/`, each holding a
+feature.yml and a `.claude/` tree that mirrors where its files install. A `target: workspace` feature installs into
+each workspace that lists it under `features` (core into every workspace), a `target: global` feature into ~/.claude
+when machine.yml lists it. This repo also still installs its older two folders: global/ into ~/.claude, and workspace/
+into every workspace machine.yml lists, gated by features.yml, with the workspace's generated config rule. Every other
+toolbox repo machine.yml lists installs its toolbox.yml's source folder too. Each source folder mirrors its
+target. Every file is installed as a copy (never a link), so each lands inside the project that uses it;
 templates are rendered and rules get a generated note. A manifest (.install-state.json) records each file's source and
 the hash written, and every target is classified: create, update (still what was written, source changed), unchanged,
 remove (no longer wanted, unedited) or conflict (edited on disk, or a file the installer didn't write). Previews by
@@ -56,10 +59,14 @@ OWN_PARTS = {
 # The keys a listed toolbox's toolbox.yml may hold: what it installs, and how ship-toolbox-change lands its changes.
 TOOLBOX_KEYS = {"source", "target", "prefix", "ignore", "external", "ship", "branch_prefix"}
 FEATURES_FILE = "features.yml"
-# The per-workspace part that writes each workspace's generated rule.
-RULE_PART = "workspace"
-# The part whose install also writes the pointer to this repo, so a script installed as a copy can find the installer.
-POINTER_PART = "global"
+# A toolbox repo's feature folders: `core` always installs, each folder under `features` when picked. Each holds a
+# feature.yml and a `.claude/` tree (and, for a workspace feature, a `.vault/` tree) that mirrors where its files go.
+CORE = "core"
+FEATURES_DIR = "features"
+FEATURE_FILE = "feature.yml"
+SCOPES = ("global", "workspace")
+# This repo's own first per-workspace part writes each workspace's generated rule, and its first global part writes the
+# pointer to this repo, so a script installed as a copy can find the installer.
 POINTER_NAME = "toolbox-repo"
 # The feature whose workspaces get their vault's tasks and discussions folders made, when the vault exists. Like any
 # folder the installer makes, they are removed only once empty, so a task record is never touched.
@@ -67,6 +74,7 @@ TASKS_FEATURE = "tasks"
 # The folder in a per-workspace part that mirrors each workspace's vault (its config's `vault.path`) instead of the
 # workspace root: rendered when a file ends .tmpl, copied as it is otherwise.
 VAULT_DIR = ".vault"
+FEATURE_ROOTS = (".claude", VAULT_DIR)  # the only folders of a feature folder that install
 # The rules folder in a per-workspace part. Each rule is written with a generated note, after any frontmatter so
 # `paths:` still works.
 RULES_DIR = ".claude/rules"
@@ -98,16 +106,36 @@ CONFLICT_REASONS = {
 
 
 @dataclass
+class Feature:
+    """One feature folder: `core` or a folder under `features/`, with its feature.yml read."""
+
+    name: str
+    folder: Path
+    target: str  # global or workspace
+    description: str
+    needs: list
+    requires: list
+
+
+@dataclass
 class Part:
-    """One source folder and where it installs: one of this repo's own two, or a listed toolbox's."""
+    """What one source installs and where: one of this repo's own two folders, a listed toolbox's source folder, or the
+    feature folders of one scope (global or workspace) of a toolbox repo."""
 
     name: str
     spec: dict
     repo: Path  # the toolbox repo it comes from
+    toolbox: str = ""  # the toolbox's name: the repo's folder name, as machine.yml lists it
+    features: dict = field(default_factory=dict)  # a feature part's {name: Feature}
 
     @property
     def per_workspace(self) -> bool:
         return self.spec.get("target") == PER_WORKSPACE
+
+    @property
+    def scope(self) -> str | None:
+        """`global` or `workspace` for a part made of feature folders; None for a source folder."""
+        return self.spec.get("features")
 
     @property
     def source(self) -> Path:
@@ -264,37 +292,104 @@ def load_yaml(path: Path) -> dict:
 
 
 def load_machine() -> dict:
-    """machine.yml's toolboxes and workspaces, all empty when there is no machine.yml, and whether it still has the
-    retired `domains:` key."""
+    """machine.yml's toolboxes, workspaces and global features, all empty when there is no machine.yml, and whether it
+    still has the retired `domains:` key. `features` is the global features picked, as a list of names."""
     raw = load_yaml(MACHINE) if MACHINE.exists() else {}
+    features = raw.get("features") or []
     return {
         "toolboxes": [expand(value, REPO).absolute() for value in raw.get("toolboxes") or []],
         "workspaces": [expand(value, REPO).absolute() for value in raw.get("workspaces") or []],
+        "features": [str(name) for name in features] if isinstance(features, list) else [],
+        "features_ok": isinstance(features, list),
         "domains": "domains" in raw,
     }
 
 
-def manifest_errors(spec) -> list:
+def manifest_errors(spec, has_features: bool = False) -> list:
+    """What's wrong with a listed toolbox's manifest. A toolbox with feature folders may leave out `source` and `target`
+    (it installs only those), but gives both or neither."""
     if not isinstance(spec, dict):
         return [f"{MANIFEST_NAME} must be a mapping"]
     if "domains" in spec:
         return [f"its {MANIFEST_NAME} still has `domains:`; move its one entry's keys (source, target, prefix, ignore, "
                 "external) to the top level"]
-    errors = [f"{MANIFEST_NAME} needs `{key}`" for key in ("source", "target") if not isinstance(spec.get(key), str)]
+    keys = ("source", "target")
+    optional = has_features and not any(key in spec for key in keys)
+    errors = [] if optional else \
+        [f"{MANIFEST_NAME} needs `{key}`" for key in keys if not isinstance(spec.get(key), str)]
     unknown = sorted(set(spec) - TOOLBOX_KEYS)
     if unknown:
         errors.append(f"{MANIFEST_NAME} has unknown key(s): {', '.join(unknown)}")
     return errors
 
 
+def has_feature_folders(repo: Path) -> bool:
+    return (repo / CORE).is_dir() or (repo / FEATURES_DIR).is_dir()
+
+
+def discover_features(repo: Path) -> tuple[dict, list]:
+    """({name: Feature}, errors) for a toolbox repo's `core/` and each folder under `features/`. A folder without a
+    readable, valid feature.yml is an error."""
+    config = import_config()
+    folders = [repo / CORE] if (repo / CORE).is_dir() else []
+    if (repo / FEATURES_DIR).is_dir():
+        folders += sorted(entry for entry in (repo / FEATURES_DIR).iterdir()
+                          if entry.is_dir() and entry.name not in ALWAYS_SKIP)
+    found, errors = {}, []
+    for folder in folders:
+        where = f"{folder.relative_to(repo).as_posix()}/{FEATURE_FILE}"
+        if folder.parent.name == FEATURES_DIR and folder.name == CORE:
+            errors.append(f"{where}: `{CORE}` is the name of the always-installed folder, {CORE}/")
+            continue
+        if not (folder / FEATURE_FILE).is_file():
+            errors.append(f"{where}: missing")
+            continue
+        try:
+            spec = config.read_feature(load_yaml(folder / FEATURE_FILE), folder.name)
+        except (ValueError, yaml.YAMLError) as error:
+            errors.append(f"{where}: {error}")
+            continue
+        found[folder.name] = Feature(folder.name, folder, spec["target"], spec["description"], spec["needs"],
+                                     spec["requires"])
+    return found, errors
+
+
+def feature_parts(toolbox: str, repo: Path, spec: dict, problems: list) -> tuple[dict, set]:
+    """(the toolbox repo's feature parts, names to hold). One part per scope that has a feature; an error in any
+    feature.yml is a problem and holds both, so nothing it installed is removed until it's fixed."""
+    names = {scope: f"{toolbox}:{scope}" for scope in SCOPES}
+    found, errors = discover_features(repo)
+    if errors:
+        problems.append(f"toolbox {show(repo)}: " + "; ".join(errors) + ". Nothing installed or removed from its "
+                        "feature folders until it's fixed.")
+        return {}, set(names.values())
+    parts = {}
+    for scope in SCOPES:
+        chosen = {name: feature for name, feature in found.items() if feature.target == scope}
+        if chosen:
+            part_spec = {
+                "features": scope,
+                "source": f"features-{scope}",  # not a folder: it names the part's managed git-exclude block
+                "target": PER_WORKSPACE if scope == "workspace" else OWN_PARTS["global"]["target"],
+                **{key: spec[key] for key in ("ignore", "prefix") if key in spec},
+            }
+            parts[names[scope]] = Part(names[scope], part_spec, repo, toolbox, chosen)
+    return parts, set()
+
+
 def load_parts(toolboxes: list, problems: list) -> tuple[dict, set]:
-    """(every part this installer knows, the names of parts to leave as they are). The parts are this repo's own two,
-    then one per listed toolbox, named after its folder; a name taken twice is a problem, and the first wins. A toolbox
-    whose manifest can't be read in the new shape is a problem, and everything it installed, under its name or its old
-    domains' names, is held: neither installed nor removed until it's fixed."""
-    parts = {name: Part(name, spec, REPO) for name, spec in OWN_PARTS.items()}
-    taken = {REPO.name: REPO, **{name: REPO for name in parts}}
+    """(every part this installer knows, the names of parts to leave as they are). The parts are this repo's own two
+    folders that exist and its feature folders' (one part per scope), then the same for each listed toolbox, named after
+    its folder; a name taken twice is a problem, and the first wins. A toolbox whose manifest can't be read in the new
+    shape is a problem, and everything it installed, under its name or its old domains' names, is held: neither
+    installed nor removed until it's fixed."""
+    parts = {name: Part(name, spec, REPO, REPO.name) for name, spec in OWN_PARTS.items()
+             if (REPO / spec["source"]).is_dir()}
+    taken = {REPO.name: REPO, **{name: REPO for name in OWN_PARTS}}
     held = set()
+    own_features, own_held = feature_parts(REPO.name, REPO, {"ignore": OWN_PARTS["workspace"]["ignore"]}, problems)
+    parts.update(own_features)
+    held |= own_held
     for toolbox in toolboxes:
         if norm(toolbox) == norm(REPO):
             continue
@@ -312,23 +407,32 @@ def load_parts(toolboxes: list, problems: list) -> tuple[dict, set]:
                 problems.append(f"toolbox {show(toolbox)}: no {MANIFEST_NAME} there")
             continue
         spec = load_yaml(file)
-        errors = manifest_errors(spec)
+        errors = manifest_errors(spec, has_feature_folders(toolbox))
         if errors:
             problems.append(f"toolbox {show(toolbox)}: " + "; ".join(errors) + ". Nothing installed or removed from it "
                             "until it's fixed.")
             old_domains = spec.get("domains") if isinstance(spec, dict) else None
-            held |= {name, *(old_domains if isinstance(old_domains, dict) else {})}
+            held |= {name, *(f"{name}:{scope}" for scope in SCOPES),
+                     *(old_domains if isinstance(old_domains, dict) else {})}
             continue
         if name in taken:
             problems.append(f"toolbox {show(toolbox)}: the name {name} is taken by {show(taken[name])}; skipping it")
             continue
         taken[name] = toolbox
-        parts[name] = Part(name, spec, toolbox.resolve())
+        repo = toolbox.resolve()
+        if "source" in spec:
+            parts[name] = Part(name, spec, repo, name)
+        features, hold = feature_parts(name, repo, spec, problems)
+        parts.update(features)
+        held |= hold
     return parts, held
 
 
 def read_features(part: Part) -> tuple[dict, dict]:
-    """A per-workspace part's features.yml: ({feature: [paths relative to its source]}, {feature: [config needed]})."""
+    """A per-workspace part's features: ({feature: [paths relative to its source]}, {feature: [config needed]}). A part
+    of feature folders has no paths (each folder is its own files), only the needs of its feature.yml files."""
+    if part.scope:
+        return {name: [] for name in part.features}, {name: feature.needs for name, feature in part.features.items()}
     file = part.source / FEATURES_FILE
     if not file.exists():
         return {}, {}
@@ -354,7 +458,7 @@ def hold_unmet_needs(parts: dict, names: list, workspaces: list, held: set, prob
                 needs.setdefault(feature, []).extend(key for key in keys if key not in needs.get(feature, []))
     active = []
     for ws in workspaces:
-        unmet = ws.config.unmet_needs(needs)
+        unmet = ws.config.unmet_needs(needs, always=(CORE,))
         if not unmet:
             active.append(ws)
             continue
@@ -365,6 +469,55 @@ def hold_unmet_needs(parts: dict, names: list, workspaces: list, held: set, prob
         )
         held.add(ws.key)
     return active
+
+
+def hold_unmet_requires(parts: dict, names: list, workspaces: list, picks: list, held: set, problems: list) -> list:
+    """The workspaces that pick every feature their picked features require (a global feature picked in machine.yml
+    counts, and core always does). Each of the others gets a problem line and joins `held`: nothing is installed or
+    removed there until it picks them or drops the features."""
+    requires = {}
+    for name in names:
+        if parts[name].scope == "workspace":
+            for feature in parts[name].features.values():
+                requires.setdefault(feature.name, []).extend(feature.requires)
+    active = []
+    for ws in workspaces:
+        picked = {CORE, *picks, *ws.config.features}
+        lacking = {feature: [need for need in dict.fromkeys(needed) if need not in picked]
+                   for feature, needed in requires.items() if feature in picked}
+        lacking = {feature: needed for feature, needed in lacking.items() if needed}
+        if not lacking:
+            active.append(ws)
+            continue
+        text = "; ".join(f"{feature} requires {', '.join(needed)}" for feature, needed in lacking.items())
+        problems.append(
+            f"workspace {show(ws.path)}: its picked features require features it doesn't pick ({text}), so nothing "
+            "installed or removed there. Add them to its features (a global feature to machine.yml's), or drop the "
+            "features that require them."
+        )
+        held.add(ws.key)
+    return active
+
+
+def hold_unmet_global_requires(parts: dict, names: list, picks: list, problems: list) -> set:
+    """The names of feature parts of global features whose picked features require one machine.yml doesn't pick. Each
+    gets a problem line; nothing is installed or removed from it until machine.yml picks them or drops the features."""
+    picked, held = {CORE, *picks}, set()
+    for name in names:
+        if parts[name].scope != "global":
+            continue
+        lacking = {feature.name: [need for need in feature.requires if need not in picked]
+                   for feature in parts[name].features.values() if feature.name in picked}
+        lacking = {feature: needed for feature, needed in lacking.items() if needed}
+        if lacking:
+            text = "; ".join(f"{feature} requires {', '.join(needed)}" for feature, needed in lacking.items())
+            problems.append(
+                f"toolbox {name.split(':')[0]}: its picked global features require features {MACHINE.name} doesn't "
+                f"pick ({text}), so nothing installed or removed from them. Add them to {MACHINE.name}'s features, or "
+                "drop the features that require them."
+            )
+            held.add(name)
+    return held
 
 
 def import_config():
@@ -454,6 +607,13 @@ def save_state(state: dict) -> None:
 # Desired state
 
 
+def own_part(parts: dict, names: list, per_workspace: bool) -> str | None:
+    """The first of this repo's own parts in `names` that installs into every workspace (`per_workspace`) or into
+    ~/.claude: the part that records the generated rule, or the pointer to this repo."""
+    return next((name for name in names if parts[name].toolbox == REPO.name
+                 and parts[name].per_workspace == per_workspace), None)
+
+
 def is_skill_dir(path: Path) -> bool:
     return any((path / name).is_file() for name in SKILL_FILES)
 
@@ -488,10 +648,13 @@ def read_source(part: str, workspace: str | None, source: Path, target: Path, it
 
 
 def walk(part: str, src_root: Path, tgt_root: Path, ignore: list, skip, workspace, items: list, dirs: list,
-         skills: list, held: list, problems: list, templates: list | None = None, rules: list | None = None) -> None:
+         skills: list, held: list, problems: list, templates: list | None = None, rules: list | None = None,
+         rel: str = "") -> None:
     """Collect a part's files, folders and skill folders. With `templates` and `rules` (a per-workspace part), each
     .tmpl file goes in `templates` as (source, target without the suffix), and each other rule in its rules folder goes
-    in `rules` as (source, target), to be rendered or noted instead of copied as they are."""
+    in `rules` as (source, target), to be rendered or noted instead of copied as they are. `rel` is where src_root sits
+    within the part's mirror (`.claude` for a feature folder's `.claude/` tree), for the ignore globs and rules
+    folder."""
     suffix = import_templates().SUFFIX if templates is not None else None
 
     def visit(src: Path, tgt: Path, rel: str, in_skill: bool) -> None:
@@ -516,7 +679,7 @@ def walk(part: str, src_root: Path, tgt_root: Path, ignore: list, skip, workspac
             else:
                 read_source(part, workspace, entry, target, items, held, problems, in_skill=in_skill)
 
-    visit(src_root, tgt_root, "", False)
+    visit(src_root, tgt_root, rel, False)
 
 
 def parents_within(path: Path, root: Path) -> list:
@@ -611,8 +774,53 @@ def vault_files(part: str, src_root: Path, ws: Workspace, ignore: list, skip, di
         read_source(part, ws.key, entry, target, items, held, problems, kind=VAULT)
 
 
+def install_feature(name: str, feature: Feature, root: Path, ws: Workspace | None, ignore: list, items: list,
+                    dirs: list, skills: list, held: list, problems: list) -> None:
+    """Collect one feature folder's files: its `.claude/` tree into `root` (a workspace's .claude, or ~/.claude), and,
+    for a workspace feature (`ws`), its `.vault/` tree into the workspace's vault. Templates and rules are rendered and
+    noted as in any per-workspace part."""
+    tree = feature.folder / ".claude"
+    key = ws.key if ws else None
+    if tree.is_dir():
+        found = [] if ws else None
+        rules = [] if ws else None
+        walk(name, tree, root, ignore, lambda relpath: False, key, items, dirs, skills, held, problems, found, rules,
+             ".claude")
+        for template, path in found or []:
+            render_template(name, ws, template, path, items, held, problems)
+        for source, path in rules or []:
+            copy_rule(name, ws, source, path, items, held, problems)
+    if ws:
+        vault_files(name, feature.folder, ws, ignore, lambda relpath: False, dirs, items, held, problems)
+
+
+def desired_features(name: str, part: Part, workspaces: list, picks: list, problems: list, warnings: list, items: list,
+                     dirs: list, skills: list, held: list) -> None:
+    """Collect the files of a feature part: for each workspace, core and each feature its config lists; for the global
+    scope, core and each feature `picks` (machine.yml's) names."""
+    ignore = part.spec.get("ignore") or []
+    if part.scope == "workspace":
+        schema_has = import_config().schema_has
+        for feature in part.features.values():
+            where = (feature.folder / FEATURE_FILE).relative_to(part.repo).as_posix()
+            warnings.extend(f"{part.toolbox}/{where}: needs {key}, which isn't a config key"
+                            for key in feature.needs if not schema_has(key))
+        for ws in workspaces:
+            for feature in part.features.values():
+                if feature.name == CORE or feature.name in ws.config.features:
+                    install_feature(name, feature, ws.path / ".claude", ws, ignore, items, dirs, skills, held, problems)
+        return
+    target = expand(part.spec["target"])
+    if not target.is_dir():
+        problems.append(f"{name}: target folder {show(target)} doesn't exist. Create or clone it first.")
+        return
+    for feature in part.features.values():
+        if feature.name == CORE or feature.name in picks:
+            install_feature(name, feature, target, None, ignore, items, dirs, skills, held, problems)
+
+
 def desired(parts: dict, names: list, workspaces: list, problems: list, warnings: list, held: list | None = None,
-            missing: list | None = None):
+            missing: list | None = None, picks: list = ()):
     """(items, folders, skill folders). A file that can't be read or a template that fails to render is a problem, and
     its target goes in `held` as (part, workspace, path): neither written nor removed. An outside source that doesn't
     exist goes in `missing` as (part, workspace, target, source)."""
@@ -623,6 +831,9 @@ def desired(parts: dict, names: list, workspaces: list, problems: list, warnings
     for name in names:
         part = parts[name]
         spec = part.spec
+        if part.scope:
+            desired_features(name, part, workspaces, picks, problems, warnings, items, dirs, skills, held)
+            continue
         src_root = part.source
         if not src_root.is_dir():
             problems.append(f"{name}: source folder {show(src_root)} doesn't exist")
@@ -679,12 +890,13 @@ def desired(parts: dict, names: list, workspaces: list, problems: list, warnings
                     missing.append((name, workspace, target, source))
                     held.append((name, workspace, target))
 
-    if RULE_PART in names and parts[RULE_PART].per_workspace and workspaces:
+    rule_part = own_part(parts, names, True)
+    if rule_part and workspaces:
         config = import_config()
         for ws in workspaces:
             path = ws.path / config.RULE_PATH
-            dirs.extend((RULE_PART, ws.key, folder) for folder in parents_within(path, ws.path))
-            items.append(Item(RULE_PART, ws.key, path, config.render_rule(ws.config).encode("utf-8"), None, GENERATED))
+            dirs.extend((rule_part, ws.key, folder) for folder in parents_within(path, ws.path))
+            items.append(Item(rule_part, ws.key, path, config.render_rule(ws.config).encode("utf-8"), None, GENERATED))
             if TASKS_FEATURE in ws.config.features and ws.config.vault_dir is not None:
                 vault = ws.config.vault_dir
                 if not vault.is_dir():
@@ -694,13 +906,13 @@ def desired(parts: dict, names: list, workspaces: list, problems: list, warnings
                         problems.append(problem)
                     continue
                 for folder in (ws.config.tasks_dir, ws.config.discussions_dir):
-                    dirs.extend((RULE_PART, ws.key, d) for d in [*parents_within(folder, vault), folder])
+                    dirs.extend((rule_part, ws.key, d) for d in [*parents_within(folder, vault), folder])
 
-    if POINTER_PART in names:
-        target = expand(parts[POINTER_PART].spec["target"])
+    pointer_part = own_part(parts, names, False)
+    if pointer_part:
+        target = expand(parts[pointer_part].spec["target"])
         if target.is_dir():
-            items.append(Item(POINTER_PART, None, target / POINTER_NAME, f"{REPO}\n".encode("utf-8"), None,
-                              GENERATED))
+            items.append(Item(pointer_part, None, target / POINTER_NAME, f"{REPO}\n".encode("utf-8"), None, GENERATED))
 
     unique_dirs = {}
     for part, workspace, folder in dirs:
@@ -746,18 +958,33 @@ def name_warnings(source: Path, part: Part) -> list:
     return warnings
 
 
-def feature_warnings(parts: dict, names: list, workspaces: list) -> list:
-    """Features a workspace's config names that no features.yml it installs from mentions."""
-    known = set()
+def feature_warnings(parts: dict, names: list, workspaces: list, picks: list = ()) -> list:
+    """Features a workspace's config names that no features.yml or workspace feature folder it installs from mentions
+    (or that is a global feature, picked in machine.yml instead), and global features machine.yml picks that no global
+    feature folder is named for."""
+    known, global_known = set(), set()
     for name in names:
-        if parts[name].per_workspace:
+        if parts[name].scope == "global":
+            global_known |= set(parts[name].features)
+        elif parts[name].per_workspace:
             known |= set(load_features(parts[name]))
-    return [
-        f"workspace {show(ws.path)}: feature {feature!r} isn't in any {FEATURES_FILE}, so it gates nothing"
-        for ws in workspaces
-        for feature in ws.config.features
-        if feature not in known
-    ]
+    warnings = []
+    for ws in workspaces:
+        for feature in ws.config.features:
+            if feature in known:
+                continue
+            if feature in global_known:
+                warnings.append(f"workspace {show(ws.path)}: feature {feature!r} is a global feature, picked in "
+                                f"{MACHINE.name}, so listing it here does nothing")
+            else:
+                warnings.append(f"workspace {show(ws.path)}: feature {feature!r} isn't in any {FEATURES_FILE} or "
+                                "feature folder, so it gates nothing")
+    for feature in picks:
+        if feature not in global_known:
+            kind = "a workspace feature, listed in a workspace's config" if feature in known else \
+                "a feature of any global feature folder it installs from"
+            warnings.append(f"{MACHINE.name}: feature {feature!r} isn't {kind}, so it installs nothing")
+    return warnings
 
 
 def git_exclude(root: Path):
@@ -832,9 +1059,9 @@ def classify(item: Item, counts: dict, blocked: list, replacing: list, state: di
 
 
 def build_plan(parts: dict, names: list, scope: Scope, state: dict, workspaces: list, problems: list,
-               known: set = frozenset()) -> Plan:
+               known: set = frozenset(), picks: list = ()) -> Plan:
     warnings, held, missing = [], [], []
-    items, dirs, skills = desired(parts, names, workspaces, problems, warnings, held, missing)
+    items, dirs, skills = desired(parts, names, workspaces, problems, warnings, held, missing, picks)
     plan = Plan(
         [], [], [], [], [], [], [], [], [], [], warnings, problems, set(), names, dirs, set(parts) | known,
         [ws.path for ws in workspaces], scope, held,
@@ -922,7 +1149,7 @@ def build_plan(parts: dict, names: list, scope: Scope, state: dict, workspaces: 
             plan.forget.append(key)
 
     plan.excludes = plan_excludes(parts, scope, state, workspaces, plan)
-    plan.warnings += feature_warnings(parts, names, workspaces)
+    plan.warnings += feature_warnings(parts, names, workspaces, picks)
     plan.warnings = list(dict.fromkeys(plan.warnings))
     return plan
 
@@ -949,7 +1176,8 @@ def plan_excludes(parts: dict, scope: Scope, state: dict, workspaces: list, plan
         roots += [(name, key, active[key].path if key in active else Path(key)) for key in sorted(keys)]
 
     config = import_config() if any(workspace for _, workspace, _ in roots) else None
-    excludes = []
+    rule_part = own_part(parts, list(parts), True)
+    texts = {}  # exclude file: [its text with every block so far, entries across them]: parts share a file
     for name, workspace, root in roots:
         found = git_exclude(root) if root.is_dir() else None
         if found is None:
@@ -962,15 +1190,18 @@ def plan_excludes(parts: dict, scope: Scope, state: dict, workspaces: list, plan
         # A vault outside the workspace's repo (work's lives elsewhere on disk) has nothing to exclude here.
         entries = {entry(path) for part, key, path in installed
                    if part == name and key == workspace and inside(norm(path), {norm(top)})}
-        if name == RULE_PART and workspace in active:
+        if name == rule_part and workspace in active:
             entries.add(entry(root / config.CONFIG_PATH))
         if entries:
             entries.add(PYCACHE_EXCLUDE)
-        current = exclude_file.read_text(encoding="utf-8") if exclude_file.exists() else ""
-        updated = render_exclude(current, parts[name].marker, sorted(entries))
-        if updated != current:
-            excludes.append((exclude_file, updated, len(entries)))
-    return excludes
+        if exclude_file not in texts:
+            texts[exclude_file] = [exclude_file.read_text(encoding="utf-8") if exclude_file.exists() else "", 0]
+        texts[exclude_file][0] = render_exclude(texts[exclude_file][0], parts[name].marker, sorted(entries))
+        texts[exclude_file][1] += len(entries)
+    return [
+        (file, updated, count) for file, (updated, count) in texts.items()
+        if updated != (file.read_text(encoding="utf-8") if file.exists() else "")
+    ]
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -1059,11 +1290,22 @@ def made_from(item: Item) -> str:
     return f", {made_by(item)} from {item.source.name}" if item.source else ""
 
 
-def describe_toolboxes(names: list) -> str:
-    """The toolboxes a run installs, with this repo's folders named when the run installs only some of them."""
-    own = [name for name in names if name in OWN_PARTS]
-    shown = [REPO.name if own == list(OWN_PARTS) else f"{REPO.name} ({', '.join(own)})"] if own else []
-    return ", ".join(shown + [name for name in names if name not in OWN_PARTS])
+def toolbox_of(part: str) -> str:
+    """The toolbox a part belongs to: a listed toolbox's source part is named for it, its feature parts `name:scope`."""
+    return REPO.name if part in OWN_PARTS else part.split(":")[0]
+
+
+def describe_toolboxes(names: list, known: set = frozenset()) -> str:
+    """The toolboxes a run installs, with this repo's parts named when the run installs only some of them."""
+    own = [name for name in names if toolbox_of(name) == REPO.name]
+    every = {name for name in known if toolbox_of(name) == REPO.name}
+    if own and every <= set(own):
+        shown = [REPO.name]
+    elif own:
+        shown = [f"{REPO.name} ({', '.join(dict.fromkeys(name.split(':')[-1] for name in own))})"]
+    else:
+        shown = []
+    return ", ".join(shown + list(dict.fromkeys(toolbox_of(name) for name in names if name not in own)))
 
 
 def plan_sections(plan: Plan, errors: list) -> list:
@@ -1117,7 +1359,7 @@ def report(plan: Plan, applied: bool, rerun: str, errors: list) -> None:
     mode = "APPLIED" if applied else "PREVIEW"
     header = [
         f"{REPO.name} install plan: {mode}, {datetime.now().isoformat(timespec='seconds')}",
-        f"Toolboxes: {describe_toolboxes(plan.parts) or '(none)'}",
+        f"Toolboxes: {describe_toolboxes(plan.parts, plan.known) or '(none)'}",
         f"Workspaces: {', '.join(show(path) for path in plan.workspaces) or '(none)'}",
     ]
     with open(PLAN, "w", encoding="utf-8") as handle:
@@ -1155,14 +1397,15 @@ def select(values: list, parts: dict, held: set) -> list:
     """The parts the --toolbox values name: a toolbox's folder name or path. This repo stands for both its folders."""
     toolboxes = {}  # folder name or path: part names
     for name, part in parts.items():
-        for key in (REPO.name, norm(REPO)) if name in OWN_PARTS else (name, norm(part.repo)):
+        for key in (REPO.name, norm(REPO)) if part.toolbox == REPO.name else (part.toolbox, norm(part.repo)):
             toolboxes.setdefault(key, []).append(name)
     chosen = []
     for value in values:
         names = toolboxes.get(value) or toolboxes.get(norm(expand(value).absolute()))
         if names is None:
-            known = ", ".join([REPO.name] + [name for name in parts if name not in OWN_PARTS])
-            reason = "its manifest needs fixing first; run install.py to see why" if value in held else \
+            known = ", ".join(dict.fromkeys([REPO.name] + [part.toolbox for part in parts.values()]))
+            fixing = value in map(toolbox_of, held)
+            reason = "its manifest needs fixing first; run install.py to see why" if fixing else \
                 f"not a listed toolbox. Known toolboxes: {known}"
             sys.exit(f"--toolbox {value}: {reason}")
         chosen += [name for name in names if name not in chosen]
@@ -1197,6 +1440,9 @@ def main(argv: list | None = None) -> int:
             f"{MACHINE.name}: remove `domains:`, which is no longer read. Every toolbox under `toolboxes:` installs "
             f"whole, and {REPO.name}'s global and workspace folders always install."
         )
+    if not machine["features_ok"]:
+        problems.append(f"{MACHINE.name}: `features:` must be a list of global feature names")
+    picks = machine["features"]
     parts, held_parts = load_parts(machine["toolboxes"], problems)
     state = load_state()
     per_workspace = [name for name, part in parts.items() if part.per_workspace]
@@ -1208,11 +1454,6 @@ def main(argv: list | None = None) -> int:
             sys.exit(f"--workspace acts only on what installs into every workspace: {REPO.name}'s "
                      f"{', '.join(per_workspace) or '(none)'}")
 
-    if chosen is not None:
-        scope_parts = set(chosen)
-    else:
-        scope_parts = set(parts) | {entry["part"] for section in ("files", "dirs") for entry in state[section].values()}
-    scope_parts -= held_parts
     if args.teardown:
         names = []
     elif chosen is not None:
@@ -1225,11 +1466,20 @@ def main(argv: list | None = None) -> int:
             )
         names = list(parts)
 
+    held_parts |= hold_unmet_global_requires(parts, names, picks, problems)
+    names = [name for name in names if name not in held_parts]
+    if chosen is not None:
+        scope_parts = set(chosen)
+    else:
+        scope_parts = set(parts) | {entry["part"] for section in ("files", "dirs") for entry in state[section].values()}
+    scope_parts -= held_parts
+
     paths = [expand(value).absolute() for value in args.workspace] if args.workspace else machine["workspaces"]
     workspaces, held = [], set()
     if any(name in per_workspace for name in names):
         workspaces, held = load_workspaces(paths, problems)
         workspaces = hold_unmet_needs(parts, names, workspaces, held, problems)
+        workspaces = hold_unmet_requires(parts, names, workspaces, picks, held, problems)
     listed = {norm(path) for path in machine["workspaces"]}
     warnings = [
         f"workspace {show(path)}: not in {MACHINE.name}, so the next full sync removes what this run installs there"
@@ -1238,7 +1488,7 @@ def main(argv: list | None = None) -> int:
     ]
     scope = Scope(scope_parts, {norm(path) for path in paths} if args.workspace else None, held)
 
-    plan = build_plan(parts, names, scope, state, workspaces, problems, held_parts)
+    plan = build_plan(parts, names, scope, state, workspaces, problems, held_parts, picks)
     plan.warnings = warnings + plan.warnings
     if args.json:
         report_json(plan, all(norm(path) in listed for path in paths))

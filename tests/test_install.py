@@ -887,6 +887,316 @@ class CopiesWithManifest(InstallerTest):
         self.assertEqual(((self.repo / ".install-state.json").read_text(), self.always().read_text()), before)
 
 
+class FeatureFolders(InstallerTest):
+    """A toolbox repo laid out as `core/` and `features/<name>/`, each a feature.yml and a `.claude/` tree that mirrors
+    where its files install. ws1 picks `lint` and `services-lock`'s companion `locks`; ws2 picks nothing."""
+
+    def feature(self, name: str, target: str = "workspace", repo: Path | None = None, files: dict | None = None,
+                **extra) -> Path:
+        """Make a feature folder (`core` goes at the repo's top level) holding `files`, {path in the folder: text}."""
+        repo = repo or self.repo
+        folder = repo / "core" if name == "core" else repo / "features" / name
+        write(folder / "feature.yml", yaml.safe_dump({"name": name, "description": f"The {name} feature.",
+                                                      "target": target, **extra}))
+        for path, text in (files or {}).items():
+            write(folder / path, text)
+        return folder
+
+    def setUp(self):
+        super().setUp()
+        self.core = self.feature("core", files={".claude/toolbox/bin/core.py": "print('core')\n"})
+        self.lint = self.feature("lint", files={
+            ".claude/agents/linter.md": "---\nname: linter\n---\n",
+            ".claude/skills/lint/SKILL.md": "---\nname: lint\ndescription: x\n---\n",
+            ".claude/toolbox/bin/lint.py": "print('lint')\n",
+        })
+        self.feature("locks", files={".claude/skills/locks/SKILL.md": "---\nname: locks\ndescription: x\n---\n"})
+        write(self.ws1 / CONFIG, workspace_config("one", ["services-lock", "lint", "locks"]))
+
+    def sources(self, ws: Path) -> list:
+        return sorted(str(path.relative_to(ws)) for path in (ws / ".claude").rglob("*") if path.is_file())
+
+    def test_a_feature_folder_installs_into_each_workspace_that_picks_it(self):
+        code, plan = self.run_install("--apply")
+        self.assertEqual(code, 0, plan)
+        folder = self.lint / ".claude"
+        for relative in ("agents/linter.md", "skills/lint/SKILL.md", "toolbox/bin/lint.py"):
+            self.assertCopy(self.ws1 / ".claude" / relative, folder / relative)
+            self.assertFalse((self.ws2 / ".claude" / relative).exists(), relative)
+        self.assertFalse((self.ws1 / "feature.yml").exists())
+        self.assertFalse((self.ws1 / ".claude" / "feature.yml").exists())
+        record = self.state()["files"][install.norm(self.ws1 / ".claude/agents/linter.md")]
+        self.assertEqual((record["part"], record["workspace"], record["source"]),
+                         ("claude-toolbox:workspace", install.norm(self.ws1), str(folder / "agents/linter.md")))
+        self.assertIn("Toolboxes: claude-toolbox, work-toolbox", plan)
+
+    def test_core_installs_into_every_workspace_whatever_they_pick(self):
+        self.run_install("--apply")
+        for ws in (self.ws1, self.ws2):
+            self.assertCopy(ws / ".claude" / "toolbox" / "bin" / "core.py", self.core / ".claude/toolbox/bin/core.py")
+
+    def test_a_second_apply_is_all_unchanged_and_a_dropped_feature_is_removed(self):
+        self.run_install("--apply")
+        code, plan = self.run_install("--apply")
+        self.assertEqual((code, self.written(plan), self.section(plan, "Remove")), (0, [], []))
+        write(self.ws1 / CONFIG, workspace_config("one", ["services-lock", "locks"]))
+        _, plan = self.run_install("--apply")
+        self.assertEqual(sorted(self.section(plan, "Remove")), sorted(
+            str(self.ws1 / ".claude" / relative) for relative in
+            ("agents/linter.md", "skills/lint/SKILL.md", "toolbox/bin/lint.py")))
+        self.assertFalse((self.ws1 / ".claude" / "skills" / "lint").exists())
+        self.assertTrue((self.ws1 / ".claude" / "skills" / "locks" / "SKILL.md").is_file())
+
+    def test_a_missing_required_feature_is_reported_and_nothing_is_applied(self):
+        self.feature("lint", requires=["locks"], files={".claude/skills/lint/SKILL.md": "x\n"})
+        write(self.ws1 / CONFIG, workspace_config("one", ["lint"]))
+        code, plan = self.run_install()
+        self.assertEqual(code, 1)
+        problems = self.section(plan, "Problems")
+        self.assertTrue(any(str(self.ws1) in line and "lint requires locks" in line
+                            and "nothing installed or removed there" in line for line in problems), problems)
+        self.assertFalse(any(str(self.ws1) in line for line in self.section(plan, "Create")))
+        code, _ = self.run_install("--apply")
+        self.assertEqual(code, 1)
+        self.assertFalse((self.ws1 / ".claude" / "skills").exists())
+        self.assertFalse((self.ws1 / RULE).exists())  # not even core's files or the generated rule
+        self.assertFalse((self.ws1 / ".claude" / "toolbox").exists())
+        self.assertTrue((self.ws2 / ".claude" / "toolbox" / "bin" / "core.py").is_file())  # ws2 picks nothing
+
+    def test_a_missing_required_feature_keeps_what_the_workspace_had(self):
+        self.run_install("--apply")
+        self.feature("lint", requires=["gone"], files={".claude/skills/lint/SKILL.md": "x\n"})
+        code, plan = self.run_install("--apply")
+        self.assertEqual((code, self.section(plan, "Remove")), (1, []))
+        self.assertTrue((self.ws1 / ".claude" / "skills" / "lint" / "SKILL.md").is_file())
+
+    def test_requiring_a_picked_feature_installs_both(self):
+        self.feature("lint", requires=["locks"], files={".claude/skills/lint/SKILL.md": "x\n"})
+        code, plan = self.run_install("--apply")
+        self.assertEqual(code, 0, plan)
+        self.assertTrue((self.ws1 / ".claude" / "skills" / "lint" / "SKILL.md").is_file())
+
+    def test_requires_is_checked_only_for_picked_features(self):
+        self.feature("lint", requires=["locks"], files={".claude/skills/lint/SKILL.md": "x\n"})
+        write(self.ws1 / CONFIG, workspace_config("one", ["locks"]))
+        code, plan = self.run_install("--apply")
+        self.assertEqual(code, 0, plan)
+        self.assertFalse((self.ws1 / ".claude" / "skills" / "lint").exists())
+
+    def test_core_requiring_a_feature_holds_every_workspace_that_doesnt_pick_it(self):
+        self.feature("core", requires=["locks"], files={".claude/toolbox/bin/core.py": "x\n"})
+        code, plan = self.run_install("--apply")
+        self.assertEqual(code, 1)
+        problems = self.section(plan, "Problems")
+        self.assertTrue(any(str(self.ws2) in line and "core requires locks" in line for line in problems), problems)
+        self.assertFalse((self.ws2 / ".claude" / "toolbox").exists())
+        self.assertTrue((self.ws1 / ".claude" / "toolbox" / "bin" / "core.py").is_file())
+
+    def test_a_global_feature_installs_into_the_home_folder_when_machine_yml_picks_it(self):
+        self.feature("notes", target="global", files={".claude/skills/notes/SKILL.md": "---\nname: notes\n---\n",
+                                                      ".claude/rules/mine.md": "# Mine\n"})
+        self.run_install("--apply")
+        self.assertFalse((self.home / "skills" / "notes").exists())
+        self.machine(toolboxes=[self.work], workspaces=[self.ws1, self.ws2], features=["notes"])
+        code, plan = self.run_install("--apply")
+        self.assertEqual(code, 0, plan)
+        self.assertCopy(self.home / "skills" / "notes" / "SKILL.md",
+                        self.repo / "features/notes/.claude/skills/notes/SKILL.md")
+        self.assertCopy(self.home / "rules" / "mine.md", self.repo / "features/notes/.claude/rules/mine.md")  # no note
+        self.assertFalse((self.ws1 / ".claude" / "skills" / "notes").exists())
+        self.assertEqual(self.state()["files"][install.norm(self.home / "skills/notes/SKILL.md")]["part"],
+                         "claude-toolbox:global")
+        self.machine(toolboxes=[self.work], workspaces=[self.ws1, self.ws2])
+        self.run_install("--apply")
+        self.assertFalse((self.home / "skills" / "notes").exists())
+        self.assertTrue((self.home / "rules" / "style.md").is_file())  # the legacy global folder is untouched
+
+    def test_a_global_feature_with_a_missing_requirement_holds_the_global_features(self):
+        self.feature("notes", target="global", requires=["recap"], files={".claude/skills/notes/SKILL.md": "x\n"})
+        self.feature("recap", target="global", files={".claude/skills/recap/SKILL.md": "x\n"})
+        self.machine(toolboxes=[self.work], workspaces=[self.ws1, self.ws2], features=["notes"])
+        code, plan = self.run_install("--apply")
+        self.assertEqual(code, 1)
+        problems = self.section(plan, "Problems")
+        self.assertTrue(any("notes requires recap" in line and "machine.yml" in line for line in problems), problems)
+        self.assertFalse((self.home / "skills" / "notes").exists())
+        self.assertFalse((self.home / "skills" / "recap").exists())
+        self.assertTrue((self.ws1 / ".claude" / "skills" / "lint" / "SKILL.md").is_file())  # workspaces go ahead
+        self.machine(toolboxes=[self.work], workspaces=[self.ws1, self.ws2], features=["notes", "recap"])
+        code, plan = self.run_install("--apply")
+        self.assertEqual(code, 0, plan)
+        self.assertTrue((self.home / "skills" / "notes" / "SKILL.md").is_file())
+
+    def test_a_workspace_feature_may_require_a_global_one(self):
+        self.feature("recap", target="global", files={".claude/skills/recap/SKILL.md": "x\n"})
+        self.feature("lint", requires=["recap"], files={".claude/skills/lint/SKILL.md": "x\n"})
+        code, plan = self.run_install()
+        self.assertEqual(code, 1)
+        self.assertTrue(any("lint requires recap" in line for line in self.section(plan, "Problems")))
+        self.machine(toolboxes=[self.work], workspaces=[self.ws1, self.ws2], features=["recap"])
+        code, plan = self.run_install("--apply")
+        self.assertEqual(code, 0, plan)
+        self.assertTrue((self.ws1 / ".claude" / "skills" / "lint" / "SKILL.md").is_file())
+
+    def test_a_feature_with_unmet_needs_holds_the_workspace(self):
+        self.feature("lint", needs=["workspace.areas"], files={".claude/skills/lint/SKILL.md": "x\n"})
+        code, plan = self.run_install("--apply")
+        self.assertEqual(code, 1)
+        self.assertTrue(any(str(self.ws1) in line and "lint needs workspace.areas" in line
+                            for line in self.section(plan, "Problems")))
+        self.assertFalse((self.ws1 / ".claude" / "skills").exists())
+        self.assertTrue((self.ws2 / ".claude" / "toolbox" / "bin" / "core.py").is_file())
+
+    def test_core_needs_are_checked_for_every_workspace(self):
+        self.feature("core", needs=["tracker.jira"], files={".claude/toolbox/bin/core.py": "x\n"})
+        code, plan = self.run_install("--apply")
+        self.assertEqual(code, 1)
+        problems = self.section(plan, "Problems")
+        self.assertTrue(all(any(str(ws) in line and "core needs tracker.jira" in line for line in problems)
+                            for ws in (self.ws1, self.ws2)), problems)
+
+    def test_a_need_that_isnt_a_config_key_warns(self):
+        self.feature("lint", needs=["trackr"], files={".claude/skills/lint/SKILL.md": "x\n"})
+        _, plan = self.run_install()
+        self.assertTrue(any("features/lint/feature.yml: needs trackr, which isn't a config key" in line
+                            for line in self.section(plan, "Warnings")))
+
+    def test_a_bad_feature_file_is_a_problem_and_holds_the_toolboxs_features(self):
+        self.run_install("--apply")
+        write(self.lint / "feature.yml", yaml.safe_dump({"name": "lint", "target": "everywhere"}))
+        write(self.repo / "features" / "empty" / ".gitkeep")
+        code, plan = self.run_install("--apply")
+        self.assertEqual(code, 1)
+        problems = self.section(plan, "Problems")
+        self.assertTrue(any("features/lint/feature.yml:" in line and "description is required" in line
+                            and "target must be one of global, workspace" in line
+                            and "features/empty/feature.yml: missing" in line for line in problems), problems)
+        self.assertEqual(self.section(plan, "Remove"), [])
+        self.assertTrue((self.ws1 / ".claude" / "skills" / "lint" / "SKILL.md").is_file())
+        self.assertTrue((self.ws1 / ".claude" / "toolbox" / "bin" / "core.py").is_file())
+
+    def test_a_features_folder_named_core_is_a_problem(self):
+        self.feature("core", files={})
+        write(self.repo / "features" / "core" / "feature.yml", yaml.safe_dump({
+            "name": "core", "description": "d", "target": "workspace"}))
+        code, plan = self.run_install()
+        self.assertEqual(code, 1)
+        self.assertTrue(any("is the name of the always-installed folder" in line
+                            for line in self.section(plan, "Problems")))
+
+    def test_two_features_installing_the_same_file_collide(self):
+        self.feature("locks", files={".claude/skills/lint/SKILL.md": "other\n"})
+        code, plan = self.run_install("--apply")
+        self.assertEqual(code, 1)
+        self.assertTrue(any(line.startswith("[collision]") and "skills/lint/SKILL.md" in line
+                            for line in self.section(plan, "Conflicts, left alone")))
+
+    def test_rules_get_the_note_templates_render_and_vault_files_go_to_the_vault(self):
+        (self.ws1 / "vault").mkdir()
+        self.feature("lint", files={
+            ".claude/rules/lint.md": "# Lint\n\nBe tidy.\n",
+            ".claude/agents/templated.md.tmpl": "name: {{ workspace.name }}\n",
+            ".vault/Notes/lint.md": "# Vault note\n",
+        })
+        code, plan = self.run_install("--apply")
+        self.assertEqual(code, 0, plan)
+        source = self.lint / ".claude" / "rules" / "lint.md"
+        self.assertEqual((self.ws1 / ".claude" / "rules" / "lint.md").read_text(encoding="utf-8"),
+                         install.noted_rule(source.read_text(encoding="utf-8"), source))
+        self.assertEqual((self.ws1 / ".claude" / "agents" / "templated.md").read_text(encoding="utf-8"), "name: one\n")
+        self.assertCopy(self.ws1 / "vault" / "Notes" / "lint.md", self.lint / ".vault" / "Notes" / "lint.md")
+        self.assertFalse((self.ws1 / ".claude" / "Notes").exists())
+
+    def test_a_workspace_with_the_vault_missing_gets_a_problem_not_vault_files(self):
+        write(self.lint / ".vault" / "Notes" / "lint.md", "# Vault note\n")
+        code, plan = self.run_install("--apply")
+        self.assertEqual(code, 1)
+        self.assertTrue(any("no vault" in line or "doesn't exist" in line for line in self.section(plan, "Problems")))
+        self.assertTrue((self.ws1 / ".claude" / "skills" / "lint" / "SKILL.md").is_file())
+
+    def test_the_repos_toolbox_script_tests_are_never_installed(self):
+        write(self.lint / ".claude" / "toolbox" / "tests" / "test_lint.py", "")
+        self.run_install("--apply")
+        self.assertFalse((self.ws1 / ".claude" / "toolbox" / "tests").exists())
+
+    def test_warnings_for_features_nobody_defines_or_that_are_global(self):
+        self.feature("recap", target="global", files={".claude/skills/recap/SKILL.md": "x\n"})
+        write(self.ws2 / CONFIG, workspace_config("two", ["telepathy", "recap"]))
+        self.machine(toolboxes=[self.work], workspaces=[self.ws1, self.ws2], features=["lint", "nope"])
+        _, plan = self.run_install()
+        warnings = self.section(plan, "Warnings")
+        self.assertTrue(any("'telepathy' isn't in any features.yml or feature folder" in line for line in warnings))
+        self.assertTrue(any("'recap' is a global feature, picked in machine.yml" in line for line in warnings))
+        self.assertTrue(any("machine.yml: feature 'lint' isn't a feature of any global" not in line
+                            and "feature 'lint' isn't a workspace feature" not in line
+                            for line in warnings))
+        self.assertTrue(any("machine.yml: feature 'nope'" in line for line in warnings), warnings)
+        self.assertTrue(any("machine.yml: feature 'lint' isn't a workspace feature" in line for line in warnings),
+                        warnings)
+
+    def test_machine_features_must_be_a_list(self):
+        self.machine(toolboxes=[self.work], workspaces=[self.ws1, self.ws2], features="notes")
+        code, plan = self.run_install()
+        self.assertEqual(code, 1)
+        self.assertTrue(any("`features:` must be a list" in line for line in self.section(plan, "Problems")))
+
+    def test_toolbox_and_workspace_options_reach_feature_parts(self):
+        code, plan = self.run_install("--workspace", str(self.ws1), "--apply")
+        self.assertEqual(code, 0, plan)
+        self.assertIn("Toolboxes: claude-toolbox (workspace)", plan)
+        self.assertTrue((self.ws1 / ".claude" / "skills" / "lint" / "SKILL.md").is_file())
+        self.assertFalse((self.ws2 / ".claude" / "skills").exists())
+        self.run_install("--toolbox", str(self.repo), "--teardown", "--apply")
+        self.assertFalse((self.ws1 / ".claude" / "skills" / "lint").exists())
+        self.assertFalse((self.ws1 / ".claude" / "toolbox").exists())
+
+    def test_a_listed_toolbox_with_only_feature_folders_installs_them(self):
+        shutil_rmtree(self.work / "team")
+        write(self.work / "toolbox.yml", "ship: pr\n")
+        self.feature("rm-skills", repo=self.work, files={".claude/skills/rm-one/SKILL.md": "x\n"})
+        self.feature("core", repo=self.work, files={".claude/rules/themis.md": "# Themis\n"})
+        write(self.ws1 / CONFIG, workspace_config("one", ["rm-skills", "lint"]))
+        code, plan = self.run_install("--apply")
+        self.assertEqual(code, 0, plan)
+        self.assertTrue((self.ws1 / ".claude" / "skills" / "rm-one" / "SKILL.md").is_file())
+        self.assertFalse((self.ws2 / ".claude" / "skills" / "rm-one").exists())
+        self.assertTrue((self.ws2 / ".claude" / "rules" / "themis.md").is_file())
+        self.assertIn("Toolboxes: claude-toolbox, work-toolbox", plan)
+        code, _ = self.run_install("--toolbox", "work-toolbox", "--teardown", "--apply")
+        self.assertFalse((self.ws1 / ".claude" / "skills" / "rm-one").exists())
+        self.assertTrue((self.ws1 / ".claude" / "skills" / "lint" / "SKILL.md").is_file())
+
+    def test_a_manifest_with_only_one_of_source_and_target_is_still_a_problem(self):
+        self.feature("rm-skills", repo=self.work, files={".claude/skills/rm-one/SKILL.md": "x\n"})
+        write(self.work / "toolbox.yml", yaml.safe_dump({"source": "team"}))
+        code, plan = self.run_install()
+        self.assertEqual(code, 1)
+        self.assertTrue(any("needs `target`" in line for line in self.section(plan, "Problems")))
+
+    def test_a_repo_of_only_feature_folders_still_writes_the_rule_and_the_pointer(self):
+        shutil_rmtree(self.repo / "global")
+        shutil_rmtree(self.repo / "workspace")
+        self.feature("recap", target="global", files={".claude/skills/recap/SKILL.md": "x\n"})
+        self.machine(toolboxes=[self.work], workspaces=[self.ws1, self.ws2], features=["recap"])
+        code, plan = self.run_install("--apply")
+        self.assertEqual(code, 0, plan)
+        self.assertTrue((self.ws1 / RULE).is_file())
+        self.assertEqual((self.home / "toolbox-repo").read_text(encoding="utf-8"), f"{self.repo}\n")
+        self.assertTrue((self.home / "skills" / "recap" / "SKILL.md").is_file())
+        entry = self.state()["files"][install.norm(self.ws1 / RULE)]
+        self.assertEqual(entry["part"], "claude-toolbox:workspace")
+        self.assertIn("Toolboxes: claude-toolbox, work-toolbox", plan)
+        self.assertEqual(self.run_install("--apply")[0], 0)
+
+    def test_git_excludes_cover_feature_files(self):
+        write(self.ws2 / CONFIG, workspace_config("two", ["lint"]))
+        self.run_install("--apply")
+        text = (self.ws2 / ".git" / "info" / "exclude").read_text(encoding="utf-8")
+        self.assertIn("# >>> claude-toolbox:features-workspace (managed by install.py)", text)
+        self.assertIn("\n/.claude/skills/lint/SKILL.md\n", text)
+        self.assertIn("\n/.claude/toolbox/bin/core.py\n", text)
+
+
 def shutil_rmtree(path: Path) -> None:
     subprocess.run(["rm", "-rf", str(path)], check=True)
 

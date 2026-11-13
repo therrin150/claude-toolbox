@@ -1,7 +1,8 @@
 # Copy to machine.yml (untracked) and list what to install on this machine. This repo's global/ folder always installs
 # into ~/.claude, and its workspace/ folder into every workspace below.
 
-# Other toolbox repos to install, each whole: its toolbox.yml names its source folder and target.
+# Other toolbox repos to install: its toolbox.yml names its source folder and target, and its core/ and features/
+# folders install as feature folders (see README.md).
 toolboxes: []
 #  - ~/path/to/another-claude-toolbox
 
@@ -9,3 +10,9 @@ toolboxes: []
 # adds the workspace here.
 workspaces: []
 #  - ~/path/to/workspace
+
+# Global features to install into ~/.claude: a feature folder with `target: global` installs only when listed here (a
+# workspace feature is listed in the workspace's own .claude/toolbox.local.yml). Each feature's `requires` must be
+# listed too. A toolbox's core/ folder always installs.
+features: []
+#  - discussion
