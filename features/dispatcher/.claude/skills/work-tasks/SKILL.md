@@ -34,15 +34,16 @@ in the toolbox-config rule; anywhere else, say so and stop), since the workspace
 ## Workflow
 
 1. **Load the tools** in one `ToolSearch` call: `select:mcp__ccd_session__start_session,
-   mcp__ccd_session_mgmt__list_sessions`, plus `mcp__ccd_session__dismiss_task` with chips and, under the `jira`
-   tracker, `mcp__<server>__getJiraIssue` (server from the toolbox-config rule). Skip `start_session` with `--dry-run`.
+   mcp__ccd_session_mgmt__list_sessions`, plus `mcp__ccd_session__dismiss_task` with chips. Skip
+   `start_session` with `--dry-run`. Jira is read through the `jira-reader` agent
+   (`.claude/toolbox/references/jira-reads.md`).
 2. **List the sessions.** `list_sessions` with `limit: 100` (archived excluded), and write the result as JSON to the
    session scratchpad as `sessions.json`. `work-task` names its session `<key> <summary>` (just the slug with no
    key) as its first step, so the work id, alone or as a prefix, is how a task's live session is found.
 3. **Plan.** From the workspace root:
    `<bin>/dispatch.py plan [<task> ...] --sessions <scratchpad>/sessions.json`. On an error, report it and stop.
-   - **A named Jira key with no record** comes back with `summary: null`: fetch it (`getJiraIssue`, the rule's cloud
-     id, fields `summary` and `status`), skip and report a key that doesn't exist or whose status category is done,
+   - **A named Jira key with no record** comes back with `summary: null`: read it with `jira-reader` (set `triage`), skip
+     and report a key that doesn't exist or whose status category is Done,
      and run the plan again with `--summary KEY=<summary>` for each one fetched. Don't stop the batch for one bad key.
    - Under the `vault` tracker with no tasks named, also run `<bin>/services_lock.py status` when the workspace has the
      `services-lock` feature, for the report's lock line.

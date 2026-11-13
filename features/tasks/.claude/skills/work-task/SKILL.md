@@ -113,9 +113,10 @@ are, so a resume lands back here. On the user's answer, log it (`tasks.py log <w
    on the default branch (the toolbox-config rule names it). A failure (diverged, or local changes in the way) is a
    STOP; never merge, rebase or stash to get past it. Skip it only in a session resumed at a review stop or a wait.
 1. **Load the tools** in one `ToolSearch` call, `select:` with `PushNotification`, `TaskStop`,
-   `mcp__ccd_session_mgmt__set_session_title` and `mcp__ccd_session_mgmt__get_usage`, plus, under the `jira` tracker,
-   `mcp__<server>__getJiraIssue` and, with `pr.announce`, `mcp__<server>__slack_send_message` and `slack_read_channel`
-   (servers from the toolbox-config rule). A name that doesn't load, search for by its last part.
+   `mcp__ccd_session_mgmt__set_session_title` and `mcp__ccd_session_mgmt__get_usage`, plus, with `pr.announce`,
+   `mcp__<server>__slack_send_message` and `slack_read_channel` (servers from the toolbox-config rule). A name that
+   doesn't load, search for by its last part. Jira is read through the `jira-reader` agent, never loaded here
+   (`.claude/toolbox/references/jira-reads.md`).
 2. **Load the task** with one call, from the workspace root:
    `<bin>/tasks.py context <argument> --session "$CLAUDE_CODE_SESSION_ID"`, plus `--limited-scope "<title>"` for a
    `--limited-scope` start, the title being the scope in 2-6 words (Title Case, no key) that you write from the

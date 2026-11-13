@@ -96,9 +96,9 @@ yourself or file around it.
 
 ### Check and record
 
-After each agent call, fetch what it filed yourself, independently of its report: `searchJiraIssuesUsingJql` with
-`key in (<keys>)` and fields `summary`, `issuetype`, `parent`, `labels` and `issuelinks`. Save the response, exactly as
-returned, to a file in the scratchpad (or the session's temporary folder), then:
+After each agent call, read what it filed yourself, independently of its report: spawn `jira-reader` in save mode
+(`.claude/toolbox/references/jira-reads.md`, set `filed`, `model: sonnet`) with `jql: key in (<keys>)` and
+`save: <scratchpad>/filed.json`. If `tasks.py` then says the file isn't JSON, spawn the reader once more. Then:
 
 ```bash
 .claude/toolbox/bin/tasks.py file <discussion> --keys 00=ABC-20 01=ABC-21 ... --issues <file> --dry-run

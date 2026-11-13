@@ -4,7 +4,8 @@ Read by `propose-tickets` under the `jira` tracker only.
 
 ## Open epics
 
-Search the configured project for open epics with `searchJiraIssuesUsingJql`, requesting only `summary` and `status`:
+Search the configured project for open epics through `jira-reader` (`.claude/toolbox/references/jira-reads.md`, set
+`epics`, the JQL below as its `jql:`):
 
 ```
 project = <PROJECT> AND issuetype = <epic issue type> AND statusCategory != Done ORDER BY updated DESC

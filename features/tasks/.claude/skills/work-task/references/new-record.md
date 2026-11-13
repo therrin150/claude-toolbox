@@ -6,23 +6,13 @@ Criteria") for their layout; fields change only through `<bin>/tasks.py`.
 
 ## `needs_import`
 
-Exit 1, `jira` tracker: no record has this key. Fetch the issue (`getJiraIssue` with the rule's cloud id,
-`responseContentFormat: "markdown"`; fields `summary`, `description`, `issuetype`, `parent`, `issuelinks`, `status`,
-plus the acceptance-criteria field id from `<bin>/toolbox.py config show tracker.jira.fields`, when there is one). If
-it has no acceptance criteria, or its description doesn't say what to change, STOP (there is no record yet, so nothing
-to set). Otherwise write to the session scratchpad, as `<KEY>-issue.json`, only what `import` reads, copying each value
-exactly (a slip here becomes the record):
-
-```json
-{"context": {"cloudId": "<the response's>"}, "key": "<KEY>", "webUrl": "<its URL>", "fields": {
-  "summary": "...", "issuetype": {"name": "..."}, "status": {"statusCategory": {"key": "..."}},
-  "parent": {"key": "...", "fields": {"issuetype": {"name": "..."}}},
-  "issuelinks": [{"type": {"name": "Blocks"}, "inwardIssue": {"key": "..."}}],
-  "description": "<markdown>", "<acceptance-criteria field id>": "<markdown, or the ADF object as returned>"}}
-```
-
-Leave out `parent` with no parent, and keep only `Blocks` links whose `inwardIssue` is set. Then run
-`<bin>/tasks.py import <KEY> --issue <file>`, and run `context` again (with `--limited-scope` again, for a slice).
+Exit 1, `jira` tracker: no record has this key. Read the issue through `jira-reader` in save mode
+(`.claude/toolbox/references/jira-reads.md`, set `import`, `model: sonnet`), with
+`save: <the session scratchpad>/<KEY>-issue.json`. If its report says `ac: missing`, STOP (there is no record yet, so
+nothing to set). Otherwise run `<bin>/tasks.py import <KEY> --issue <file>`. If it says the file isn't JSON, spawn the
+reader once more and import again; a second failure is a STOP. Then run `context` again (with `--limited-scope` again,
+for a slice) and read the new record: if its description doesn't say what to change, STOP (the record stays; the user
+deletes one they don't want).
 
 ## `needs_scope`
 

@@ -398,7 +398,7 @@ class JiraWriteGateTest(GateTest):
 
     WRITES = ("createJiraIssue", "editJiraIssue", "addCommentToJiraIssue", "addOrEditJiraIssueComment",
               "addWorklogToJiraIssue", "createIssueLink", "transitionJiraIssue", "executeWrite")
-    READS = ("getJiraIssue", "searchJiraIssuesUsingJql", "getTransitionsForJiraIssue", "getIssueLinkTypes",
+    READS = ("getTransitionsForJiraIssue", "getIssueLinkTypes",
              "atlassianUserInfo", "getAccessibleAtlassianResources", "discover", "executeRead",
              "getJiraIssueTypeMetaWithFields", "lookupJiraAccountId", "search", "fetch")
 
@@ -431,12 +431,12 @@ class JiraWriteGateTest(GateTest):
     def test_the_servers_name_is_the_workspaces_choice(self) -> None:
         for server in ("atlassian-work", "claude_ai_Atlassian", "a"):
             self.assertIsNotNone(self.jira("transitionJiraIssue", server), server)
-            self.assertIsNone(self.jira("getJiraIssue", server), server)
+            self.assertIsNone(self.jira("getTransitionsForJiraIssue", server), server)
 
     def test_it_needs_no_config(self) -> None:
         (self.ws / ".claude" / "toolbox.local.yml").unlink()
         self.assertIsNotNone(self.jira("createJiraIssue"))
-        self.assertIsNone(self.jira("getJiraIssue"))
+        self.assertIsNone(self.jira("getTransitionsForJiraIssue"))
 
     def test_other_tools_pass(self) -> None:
         self.assertIsNone(self.jira("createConfluencePage"))
@@ -446,6 +446,89 @@ class JiraWriteGateTest(GateTest):
         self.assertIsNone(self.run_gate("createJiraIssue", {}))  # not an MCP tool
         self.assertIsNone(self.run_gate("mcp__createJiraIssue", {}))  # no server segment
         self.assertIsNone(self.run_gate("mcp__atlassian__createJiraIssueDraft", {}))  # a longer name is another tool
+
+
+class JiraReadGateTest(GateTest):
+    """The Jira read gate: an issue read or JQL search is denied in the main session, whatever the server is called."""
+
+    READS = ("getJiraIssue", "searchJiraIssuesUsingJql")
+    OTHERS = ("getTransitionsForJiraIssue", "getIssueLinkTypes", "atlassianUserInfo", "getAccessibleAtlassianResources",
+              "discover", "executeRead", "lookupJiraAccountId", "listJiraIssueComments", "search", "fetch")
+
+    def jira(self, name: str, server: str = "atlassian", **extra) -> str | None:
+        return self.run_gate(f"mcp__{server}__{name}", {"cloudId": "c", "issueIdOrKey": "ABC-1"}, **extra)
+
+    def test_a_main_session_read_is_denied_naming_jira_reader_and_the_doc(self) -> None:
+        for name in self.READS:
+            message = self.jira(name)
+            self.assertIsNotNone(message, name)
+            self.assertIn(f"`{name}`", message)
+            self.assertIn("`jira-reader`", message, name)
+            self.assertIn(".claude/toolbox/references/jira-reads.md", message, name)
+
+    def test_any_subagent_goes_ahead(self) -> None:
+        for name in self.READS:
+            self.assertIsNone(self.jira(name, agent_id="a1", agent_type="jira-reader"), name)
+            self.assertIsNone(self.jira(name, agent_id="a2", agent_type="jira-creator"), name)
+            self.assertIsNone(self.jira(name, agent_id="a3", agent_type="general-purpose"), name)
+
+    def test_the_servers_other_tools_pass(self) -> None:
+        for name in self.OTHERS:
+            self.assertIsNone(self.jira(name), name)
+
+    def test_the_servers_name_is_the_workspaces_choice(self) -> None:
+        for server in ("atlassian-work", "claude_ai_Atlassian", "a"):
+            self.assertIsNotNone(self.jira("getJiraIssue", server), server)
+            self.assertIsNone(self.jira("getTransitionsForJiraIssue", server), server)
+
+    def test_it_needs_no_config(self) -> None:
+        (self.ws / ".claude" / "toolbox.local.yml").unlink()
+        self.assertIsNotNone(self.jira("searchJiraIssuesUsingJql"))
+
+    def test_other_tools_pass(self) -> None:
+        self.assertIsNone(self.run_gate("Bash", {"command": "echo getJiraIssue"}))
+        self.assertIsNone(self.run_gate("getJiraIssue", {}))  # not an MCP tool
+        self.assertIsNone(self.run_gate("mcp__getJiraIssue", {}))  # no server segment
+        self.assertIsNone(self.run_gate("mcp__atlassian__getJiraIssueTypeMetaWithFields", {}))  # a longer name is another tool
+
+
+class JiraReaderWriteGateTest(GateTest):
+    """The jira-reader write gate: the reader writes only a `.json` file in the session's scratchpad."""
+
+    def write(self, path: str, agent_type: str | None = "jira-reader", scratch: str | None = "/s/scratch") -> str | None:
+        extra = {"agent_type": agent_type, "agent_id": "a1"} if agent_type else {}
+        if scratch is not None:
+            extra["scratchpad_dir"] = scratch
+        return self.run_gate("Write", {"file_path": path, "content": "{}"}, **extra)
+
+    def test_a_json_file_in_the_scratchpad_goes_ahead(self) -> None:
+        self.assertIsNone(self.write("/s/scratch/ABC-1-issue.json"))
+        self.assertIsNone(self.write("/s/scratch/sub/x.json"))
+
+    def test_anywhere_else_is_denied_naming_the_scratchpad(self) -> None:
+        for path in ("/s/other/x.json", "/s/scratch/x.txt", "/s/scratch/../other/x.json", "/s/scratch-2/x.json",
+                     str(Path.home() / "x.json"), "relative.json"):
+            message = self.write(path)
+            self.assertIsNotNone(message, path)
+            self.assertIn("scratchpad", message, path)
+
+    def test_a_symlink_out_of_the_scratchpad_is_denied(self) -> None:
+        scratch = self.tmp / "scratch"
+        scratch.mkdir()
+        (scratch / "out").symlink_to(self.tmp / "elsewhere")
+        self.assertIsNotNone(self.write(str(scratch / "out" / "x.json"), scratch=str(scratch)))
+
+    def test_no_scratchpad_or_no_path_is_denied(self) -> None:
+        self.assertIsNotNone(self.write("/s/scratch/x.json", scratch=None))
+        self.assertIsNotNone(self.run_gate("Write", {}, agent_type="jira-reader", agent_id="a1", scratchpad_dir="/s"))
+
+    def test_everyone_else_is_untouched(self) -> None:
+        self.assertIsNone(self.write("/anywhere/x.txt", agent_type=None))
+        self.assertIsNone(self.write("/anywhere/x.txt", agent_type="jira-creator"))
+        self.assertIsNone(self.write("/anywhere/x.txt", agent_type="general-purpose"))
+
+    def test_other_tools_by_the_reader_pass(self) -> None:
+        self.assertIsNone(self.run_gate("Read", {"file_path": "/anywhere/x.md"}, agent_type="jira-reader", agent_id="a1"))
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 name: jira
-description: 'Jira through agents: the jira-creator and jira-reader agent templates and the Jira write gate.'
+description: 'Jira through agents: the jira-creator and jira-reader agent templates, the Jira read and write gates and the jira-reader write gate.'
 target: workspace
 needs:
 - tracker.jira

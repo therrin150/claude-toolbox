@@ -48,6 +48,12 @@ notes: 4 more issues match; narrow the JQL
 NONE = "found: none\nfields: summary\nquery: project = ABC AND labels = nothing\n"
 BLOCKED = "found: blocked: the prompt gave neither issues nor a JQL\n"
 MISSING = ISSUES + "missing: ABC-99: not found\n"
+SAVED = """found: 1 issues
+fields: summary, issuetype, status, description, acceptance criteria
+saved: /tmp/s/ABC-1-issue.json
+issues:
+  - ABC-1 | Story | In Progress | ac: present
+"""
 
 
 def render(text: str) -> str:
@@ -77,15 +83,25 @@ class JiraReaderAgentTest(unittest.TestCase):
         self.assertEqual(self.fields["name"], "jira-reader")
         self.assertEqual(self.fields["model"], "haiku")
 
-    def test_has_only_the_servers_read_tools_and_read(self):
-        self.assertEqual(self.tools[0], "Read")
-        self.assertEqual(sorted(self.tools[1:]), sorted(
-            f"mcp__atlassian-work__{tool}" for tool in ("getJiraIssue", "searchJiraIssuesUsingJql", "discover", "executeRead")))
+    def test_has_only_the_servers_read_tools_read_and_write(self):
+        self.assertEqual(self.tools[:2], ["Read", "Write"])
+        self.assertEqual(sorted(self.tools[2:]), sorted(
+            f"mcp__atlassian-work__{tool}" for tool in ("getJiraIssue", "listJiraIssueComments", "searchJiraIssuesUsingJql", "discover", "executeRead")))
 
-    def test_no_tool_can_write_jira_the_vault_or_spawn_an_agent(self):
+    def test_no_tool_can_write_jira_or_run_a_command_or_spawn_an_agent(self):
         for tool in self.tools:
-            self.assertNotRegex(tool, r"(?i)create|edit|comment|transition|worklog|link|update|executeWrite")
-            self.assertNotIn(tool, {"Bash", "Edit", "Write", "Agent"})
+            self.assertNotRegex(tool, r"(?i)create|edit|transition|worklog|link|update|executeWrite|addComment|addOrEdit")
+            self.assertNotIn(tool, {"Bash", "Edit", "Agent"})
+
+    def test_write_is_for_the_save_file_only(self):
+        self.assertIn("write any file but the one `save` names", " ".join(self.text.split()))
+        self.assertIn("**save**", self.text)
+        procedure = " ".join((DOCS / "procedure.md").read_text().split())
+        for needle in ("## Save", "in the session's scratchpad", "Copy each value exactly", "read the whole file back",
+                       "`model: sonnet`", "on a line of its own", "spawns you once more"):
+            self.assertIn(needle, procedure)
+        self.assertIn("Never write a placeholder for an empty line", procedure)
+        self.assertIn("model sonnet for save", " ".join(self.text.split()))
 
     def test_has_a_turn_limit_and_skips_the_claude_md_files(self):
         self.assertIs(self.fields["omitClaudeMd"], True)
@@ -99,7 +115,8 @@ class JiraReaderAgentTest(unittest.TestCase):
 
     def test_never_list_forbids_writes_pasted_json_and_advice(self):
         text = " ".join(self.text.split())
-        for needle in ("Call a write tool", "paste an issue's JSON", "never spawn another agent", "advise what to do"):
+        for needle in ("Call a write tool", "paste an issue's JSON", "never spawn another agent", "advise what to do",
+                       "shorten or reword a field's content"):
             self.assertIn(needle, text)
 
     def test_the_input_names_issues_or_jql_fields_and_the_root(self):
@@ -119,6 +136,17 @@ class JiraReaderAgentTest(unittest.TestCase):
         for needle in ("`fields` argument", "add no `expand`", "never ask for all fields", "responseContentFormat", "found: none", "`missing`",
                        "every issue line has the same fields in the same order"):
             self.assertIn(needle, procedure)
+
+    def test_the_procedure_renders_status_category_and_sprints(self):
+        procedure = " ".join((DOCS / "procedure.md").read_text().split())
+        self.assertIn("| status category | `statusCategory.name`", procedure)
+        self.assertIn("| sprints (the sprint field's id) | every sprint object", procedure)
+
+    def test_the_procedure_returns_a_requested_field_whole(self):
+        procedure = " ".join((DOCS / "procedure.md").read_text().split())
+        self.assertIn("never shorten, summarize or reword a field's content", procedure)
+        self.assertNotIn("300 characters", procedure)
+        self.assertNotIn("asker's limit", procedure)
 
 
 class JiraReaderReportContractTest(unittest.TestCase):
@@ -151,8 +179,17 @@ class JiraReaderReportContractTest(unittest.TestCase):
     def test_a_bare_key_with_no_values_goes_through(self):
         self.assertIsNone(self.check(ISSUES + "  - ABC-4\n"))
 
-    def test_an_issue_line_that_runs_on_is_denied(self):
-        self.assertIn("issue line over 1500 characters", self.check(ISSUES + "  - ABC-4 | " + "word " * 320 + "\n"))
+    def test_an_issue_line_is_never_cut_for_length(self):
+        self.assertIsNone(self.check(ISSUES + "  - ABC-4 | " + "word " * 4000 + "\n"))
+        self.assertIsNone(self.check(ISSUES + "  - ABC-4 | line one \u00b6 ```java \u00b6 int a; \u00b6 ``` \u00b6 line two\n"))
+
+    def test_save_mode_reports_the_path_and_each_issues_type_status_and_ac(self):
+        self.assertIsNone(self.check(SAVED))
+        self.assertIsNone(self.check(SAVED.replace("saved: /tmp/s/ABC-1-issue.json", "saved: /private/tmp/s/x.json")))
+
+    def test_a_saved_path_that_is_relative_or_not_json_is_denied(self):
+        for path in ("ABC-1-issue.json", "/tmp/s/ABC-1.txt", "~/x.json"):
+            self.assertIn("saved path that isn't absolute", self.check(SAVED.replace("/tmp/s/ABC-1-issue.json", path)), path)
 
     def test_pasted_json_is_denied(self):
         self.assertIn("pasted JSON", self.check(ISSUES + '{"key": "ABC-1"}\n'))

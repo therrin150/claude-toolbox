@@ -8,8 +8,8 @@ whatever the server is called (`mcp__<server>__<tool>`):
   createJiraIssue, editJiraIssue, addCommentToJiraIssue, addOrEditJiraIssueComment, addWorklogToJiraIssue,
   createIssueLink, transitionJiraIssue, executeWrite (the v2 server's generic write, which can do any of them)
 
-Allowed: every other tool of the server (`getJiraIssue`, `searchJiraIssuesUsingJql`, `getTransitionsForJiraIssue`,
-`discover`, `executeRead`, ...), and Confluence's own write tools (`createConfluencePage`, ...), which are not Jira's.
+Allowed: every other tool of the server (`getTransitionsForJiraIssue`, `discover`, `executeRead`, ... and
+`getJiraIssue` and `searchJiraIssuesUsingJql`, which the Jira read gate denies), and Confluence's own write tools (`createConfluencePage`, ...), which are not Jira's.
 The v2 server's generic `executeWrite` is denied whatever product it targets, since the gate can't tell; a Confluence
 write on v2 goes through a subagent too.
 
@@ -48,5 +48,5 @@ def check(event: dict) -> str | None:
         f"`{name}` writes to Jira, and a Jira write goes through `jira-creator`, not a direct call in the main "
         f"session: it converts the markdown, checks the signed-in account and what it wrote, and keeps the request "
         f"out of your context. Spawn `jira-creator` with the issue key (or the filing plan) and the change asked. "
-        f"Reads (`getJiraIssue`, `searchJiraIssuesUsingJql`) are unaffected."
+        f"Reads go through `jira-reader`."
     )

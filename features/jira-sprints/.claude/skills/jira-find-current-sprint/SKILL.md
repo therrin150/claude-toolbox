@@ -28,7 +28,8 @@ The toolbox-config rule names the Jira server and cloud id; `toolbox.py config s
 With no `fields.sprint`, stop: the field's id goes in the config (`/setup-workspace` finds it by name with the
 `discover` tool, or `getJiraIssueTypeMetaWithFields`).
 
-Sprints are read off the issues in them, through `searchJiraIssuesUsingJql`, because the Atlassian connector has no
+Sprints are read off the issues in them, through the `jira-reader` agent
+(`.claude/toolbox/references/jira-reads.md`, set `sprints`), because the Atlassian connector has no
 board or sprint API. So a sprint with no issues in it can't be found.
 
 **Never derive a sprint from its name or from today's date.** A name's date may be its start or its end, its padding
@@ -37,8 +38,9 @@ reliable answer.
 
 ## Procedure
 
-Every query requests only `fields: ["<sprint field>"]`, with the cloud id; the default field set is far larger and
-isn't needed. From the results, collect the distinct sprint objects (only `board`'s, when it's set), then pick by
+Every query goes to `jira-reader` as a `jql:` with `fields: sprints (field id <fields.sprint>)`, and its `max` where
+one is given below; each issue line lists that issue's sprints (`id`, `name`, `state`, `board`, `start`, `end`). From
+the results, collect the distinct sprint objects (only `board`'s, when it's set), then pick by
 `state` as below. Get the current time with `date -u +%Y-%m-%dT%H:%M:%SZ` to compare against `endDate`.
 
 ### Current (the default)
@@ -49,7 +51,7 @@ Check the cache first (see **Cache**). Query Jira only on a miss, or with `refre
 project = <project> AND sprint in openSprints() ORDER BY created DESC
 ```
 
-`maxResults: 10`. Pick the sprint with `state == "active"`.
+`max: 10`. Pick the sprint with `state == "active"`.
 
 - **Exactly one, and now is before its `endDate`:** that's the answer.
 - **Exactly one, but now is past its `endDate`:** it's planning day: the sprint has ended but nobody has closed it, and
@@ -63,7 +65,7 @@ project = <project> AND sprint in openSprints() ORDER BY created DESC
 project = <project> AND sprint in futureSprints() ORDER BY created DESC
 ```
 
-`maxResults: 50`. Of the `state == "future"` sprints, pick the earliest: a future sprint has no dates until it starts,
+`max: 50`. Of the `state == "future"` sprints, pick the earliest: a future sprint has no dates until it starts,
 so order by the date in its name when every name has one (parsed loosely, padded or not), else by id, the lower id
 winning a tie. This is the one place a name is read, and only to order sprints Jira already says are future.
 
@@ -75,7 +77,7 @@ Nothing back means the next sprint holds no issues yet: ask for its name or id. 
 project = <project> AND sprint = "<name>"
 ```
 
-`maxResults: 1`. Take the sprint object whose `name` equals the given name exactly. A name Jira doesn't know fails the
+`max: 1`. Take the sprint object whose `name` equals the given name exactly. A name Jira doesn't know fails the
 query ("does not exist for the field 'sprint'"); a sprint with no issues returns nothing. Either way, report it and ask
 for the id.
 

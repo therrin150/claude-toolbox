@@ -16,8 +16,9 @@ scripts folder (SKILL.md). At each `hook <id>`, follow the extension docs at tha
       Setup wrote from it). A slice's `## Scope` limits it: only that part of the requirement is this run's, and the
       rest of the ticket is out of scope here. A ticket's own record with done slices in `other_runs` covers what
       they didn't: read each one's Scope and PRs to see what's already there.
-2. **Check the tracker** (a task with a Jira key; any other skips this): fetch the issue (`getJiraIssue`, the rule's
-   cloud id), unless Setup just fetched it to import, and check it still matches the record; STOP if not.
+2. **Check the tracker** (a task with a Jira key; any other skips this): read the issue through `jira-reader`
+   (set `tracker-check`, `.claude/toolbox/references/jira-reads.md`), unless Setup just imported it, and check it still
+   matches the record; STOP if not.
 3. **Check the requirement against the code.** Read the code the task names. If it already does what the task asks
    (another change got there first, other than a done slice of this ticket), STOP: say what's there and which change
    made it, and ask whether to close the task, do something else instead, or go on. Never quietly substitute a
@@ -27,7 +28,7 @@ scripts folder (SKILL.md). At each `hook <id>`, follow the extension docs at tha
    `<bin>/tasks.py set-list <work id> depends_on <the keys already there> <the new ones>`. A key that's only mentioned
    (background, a related change) isn't one.
 5. **Check dependencies.** For each `depends_on` key: its record's status (`<bin>/tasks.py get <key> status`), or,
-   under `jira` with no record, the issue's status category. If one isn't done, or the code shows the task needs
+   under `jira` with no record, the issue's status category (`jira-reader`, set `triage`). If one isn't done, or the code shows the task needs
    another that hasn't merged: with `work.dependencies: block` (`<bin>/toolbox.py config show work.dependencies`),
    STOP; with `isolate`, read `other-tasks.md` before planning.
 6. **Plan the cycles** (hook `plan-the-cycles`). List the areas the task changes (in a `nested` workspace, its repos)
