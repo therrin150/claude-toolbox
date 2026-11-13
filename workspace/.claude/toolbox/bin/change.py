@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""The gates of the `start-change`, `check-change`, `review-change` and `publish-change` stage skills, so any session
-gets the same refusals.
+"""The gates of the `start-change`, `check-change`, `review-change`, `publish-change` and `finish-change` stage skills,
+so any session gets the same refusals.
 
 Each stage checks only its own requirements, never that an earlier stage ran. Every command prints one JSON object;
 exit 0 when it went ahead, 1 when it refused or failed (the reason prints as `refused` or `error`), 2 bad arguments.
@@ -34,6 +34,15 @@ exit 0 when it went ahead, 1 when it refused or failed (the reason prints as `re
       same refusals but the message, plus where each message goes. Warns, never refuses, for an area the changes touch
       with no passing build, unit or integration run on the diff as it is now (`run_checks.py` records them). Runs
       nothing itself.
+
+  finish (<work id> | --checkouts a,b) [--no-record]
+      The gate before `publish.py merge` and `cleanup`. Refuses, naming the checkout and the reason, before anything is
+      merged or removed, when there is no worktree to finish, a checkout is on the default branch (or detached), a
+      checkout has uncommitted or untracked files (each named), or a PR isn't ready: not approved (with
+      `pr.review_required`), checks failing or still running (with `pr.wait_for_ci`), not mergeable, behind the
+      default branch, or HEAD not pushed (without `pr.required`: not a fast-forward of origin/<default>). A PR already
+      merged is fine: cleanup alone remains. Reports each PR (number, title, commits, whether its squash collapses
+      several commits, whether it merges with --admin) and the two commands to run. Merges and removes nothing itself.
 """
 
 from __future__ import annotations
@@ -250,6 +259,52 @@ def publish_check(cfg: config.Config, wid: str, checkouts: str | None, draft: bo
 
 
 # ---------------------------------------------------------------------------------------------------------------------
+# finish
+
+
+def finish_check(cfg: config.Config, wid: str, checkouts: str | None, no_record: bool) -> dict:
+    if checkouts:
+        found = gitgh.resolve_all(cfg, [c.strip() for c in checkouts.split(",") if c.strip()])
+    else:
+        gitgh.check_work_id(wid)
+        found = gitgh.task_worktrees(cfg, wid)
+        if not found:
+            raise Refused(f"nothing to finish: {wid} has no worktree under {cfg.worktrees_dir}")
+    for co in found:
+        name = gitgh.branch(co.path)
+        if not name:
+            raise Refused(f"{co.name} ({co.path}) is on a detached HEAD; there is no branch to finish")
+        if name == cfg.default_branch:
+            raise Refused(f"{co.name} ({co.path}) is on {name}, the default branch; there is no change branch to finish")
+    # Before the PR: a stray file is the user's to settle, and cleanup would refuse it after the merge.
+    for co in found:
+        dirty = gitgh.status_lines(co.path)
+        if dirty:
+            raise Refused(f"{co.name} ({co.path}) has uncommitted or untracked files: "
+                          f"{', '.join(line[3:] for line in dirty)}. Commit or remove them first; nothing was merged "
+                          "or removed")
+    ns = argparse.Namespace(checkouts=checkouts, repos=None, dry_run=True, no_record=no_record, publish_dir=None,
+                            message_file=None, message_dir=None, announce_file=None)
+    ctx = publish.Context(cfg, wid, ns)
+    prechecks = [publish.merge_precheck_one(ctx, co) for co in ctx.checkouts]
+    blocked = [c for c in prechecks if c["status"] == "blocked"]
+    if blocked:
+        raise Refused("not ready to finish: " + "; ".join(f"{c['repo']}: {', '.join(c['problems'])}" for c in blocked)
+                      + ". Nothing was merged or removed")
+    flags = f" --checkouts {checkouts}" if checkouts else ""
+    flags += " --no-record" if no_record or checkouts else ""
+    return {"ok": True, "work_id": wid, "pr_required": bool(cfg.pr["required"]), "merge_method": cfg.pr["merge"],
+            "checkouts": [{k: c[k] for k in ("repo", "path", "branch", "status", "number", "url", "title", "commits",
+                                             "squash_collapses", "admin_merge", "merge_commit") if k in c}
+                          for c in prechecks],
+            "merge_needed": any(c["status"] == "ready" for c in prechecks),
+            "confirm_squash": [c["repo"] for c in prechecks if c.get("squash_collapses")],
+            "admin_merge": [c["repo"] for c in prechecks if c.get("admin_merge")],
+            "merge_command": f"publish.py merge {wid}{flags}", "cleanup_command": f"publish.py cleanup {wid}{flags}",
+            "bin": str(HERE)}
+
+
+# ---------------------------------------------------------------------------------------------------------------------
 
 
 def parser() -> argparse.ArgumentParser:
@@ -271,6 +326,10 @@ def parser() -> argparse.ArgumentParser:
     sub.add_argument("id", help="work id")
     sub.add_argument("--checkouts", help="comma-separated repo names or paths, instead of the work id's worktrees")
     sub.add_argument("--draft", action="store_true", help="the check before the commit message exists")
+    sub = commands.add_parser("finish")
+    sub.add_argument("id", help="work id")
+    sub.add_argument("--checkouts", help="comma-separated repo names or paths, instead of the work id's worktrees")
+    sub.add_argument("--no-record", action="store_true", help="the change has no task record")
     return top
 
 
@@ -285,6 +344,8 @@ def main(argv: list[str] | None = None) -> int:
             out, code = review(cfg, args.id, args.checkouts), OK
         elif args.command == "publish":
             out, code = publish_check(cfg, args.id, args.checkouts, args.draft), OK
+        elif args.command == "finish":
+            out, code = finish_check(cfg, args.id, args.checkouts, args.no_record), OK
         else:
             out, code = check(cfg, args.id, args.mode), OK
         print(json.dumps(out, indent=2, default=str))

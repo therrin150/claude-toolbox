@@ -66,11 +66,12 @@ review-ui:
   - .claude/skills/local-review-ui
   - .claude/skills/review-change
 
-# `start-change` is also listed under `tasks` (it makes the task record and the worktrees), and `check-change` under
-# `tests` (its runner): each needs both.
+# `start-change` is also listed under `tasks` (it makes the task record and the worktrees), `check-change` under
+# `tests` (its runner) and `finish-change` under `pr` (the merge): each needs both.
 worktrees:
   - .claude/hooks/gates/pre_tool_use/main_checkout_gate.py
   - .claude/skills/check-change
+  - .claude/skills/finish-change
   - .claude/skills/git-worktrees
   - .claude/skills/publish-change
   - .claude/skills/review-change
@@ -78,6 +79,7 @@ worktrees:
 
 pr:
   - .claude/agents/pr-reporter.md
+  - .claude/skills/finish-change
   - .claude/skills/gh-create-pull-request
   - .claude/skills/gh-merge-pull-request
   - .claude/toolbox/bin/pr_report.py

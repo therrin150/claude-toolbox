@@ -1,5 +1,5 @@
-"""The `start-change`, `check-change`, `review-change` and `publish-change` stage skills: `bin/change.py`'s gates against
-real git worktrees, `run_checks.py`'s record of what was checked, and the skills' text.
+"""The `start-change`, `check-change`, `review-change`, `publish-change` and `finish-change` stage skills:
+`bin/change.py`'s gates against real git worktrees, `run_checks.py`'s record of what was checked, and the skills' text.
 
 Fixtures: a single-repo workspace (vault inside the repo, `vault` tracker) and a nested one (two repos, a vault beside
 them). No services run; the integration gate reads a lock folder the test points TOOLBOX_LOCKS at.
@@ -553,13 +553,173 @@ class NestedPublishStage(Stage):
         self.assertIn("is on main, the default branch", out["refused"])
 
 
+class FinishStage(Stage):
+    """The finish gate, on a single-repo workspace with PRs that need an approving review and green checks. The fake
+    `gh` keeps the PRs in a JSON file the tests edit."""
+
+    def setUp(self):
+        super().setUp()
+        self.make_repo(self.root, "pantry", {"app/src/Shelf.java": "class Shelf {}\n", "vault/README.md": "vault\n"})
+        self.configure({
+            "version": 1, "features": ["tasks", "worktrees", "pr"],
+            "workspace": {"name": "pantry", "layout": "single", "default_branch": "main",
+                          "areas": {"app": {"unit": PASS, "files": ["*.java"]}}},
+            "user": {"handle": "jdoe", "name": "Jordan"}, "vault": {"path": "vault"},
+            "tracker": {"kind": "vault", "key_prefix": "PT"}, "git": {"org": "acme"},
+            "pr": {"required": True, "wait_for_ci": True, "review_required": True},
+        })
+        self.wid = "fix-shelf-rounding"
+        self.tree = self.root / ".worktrees" / self.wid
+        self.gh = self.tmp / "gh.json"
+        self.env["GH_FAKE_GREEN"] = "1"
+
+    def published(self) -> None:
+        """A change with an open PR: started, edited, committed and pushed by publish.py."""
+        self.change("start", "--summary", "Fix Shelf Rounding")
+        (self.tree / "app" / "src" / "Shelf.java").write_text("class Shelf { int count; }\n")
+        folder = self.root / "vault" / "Tasks" / ".publish" / self.wid
+        folder.mkdir(parents=True)
+        (folder / "commit.txt").write_text(MESSAGE)
+        self.script("publish.py", "run", self.wid, "--stop-after", "open-pr", "--no-announce")
+
+    def edit_gh(self, edit) -> None:
+        state = json.loads(self.gh.read_text())
+        edit(state)
+        self.gh.write_text(json.dumps(state))
+
+    def pr(self) -> dict:
+        return json.loads(self.gh.read_text())["prs"][0]
+
+    def approve_pr(self) -> None:
+        self.edit_gh(lambda s: s["prs"][0].update(reviewDecision="APPROVED"))
+
+    def test_an_approved_green_change_is_ready_and_the_scripts_then_finish_it(self):
+        # Scenario "Approved and Green"
+        self.published()
+        self.approve_pr()
+        out = self.change("finish", self.wid)
+        self.assertEqual((out["ok"], out["merge_needed"], out["merge_method"]), (True, True, "squash"))
+        self.assertEqual([(c["repo"], c["status"], c["number"]) for c in out["checkouts"]], [("pantry", "ready", 1)])
+        self.assertEqual(out["merge_command"], f"publish.py merge {self.wid}")
+        self.assertEqual(self.pr()["state"], "OPEN")  # the gate merges nothing
+        self.assertTrue(self.tree.exists())
+        merged = self.script("publish.py", "merge", self.wid)
+        self.assertEqual(merged["merged"][0]["repo"], "pantry")
+        cleaned = self.script("publish.py", "cleanup", self.wid)
+        self.assertEqual([w["status"] for w in cleaned["worktrees"]], ["removed"])
+        self.assertEqual(self.pr()["state"], "MERGED")
+        self.assertFalse(self.tree.exists())
+        self.assertEqual(self.record(self.wid)["status"], "done")
+
+    def test_an_untracked_file_refuses_by_name_and_nothing_is_merged(self):
+        # Scenario "Untracked File in a Worktree"
+        self.published()
+        self.approve_pr()
+        (self.tree / "scratch.txt").write_text("x\n")
+        out = self.change("finish", self.wid, code=1)
+        self.assertFalse(out["ok"])
+        self.assertIn("scratch.txt", out["refused"])
+        self.assertIn("pantry", out["refused"])
+        self.assertEqual(self.pr()["state"], "OPEN")
+        self.assertTrue((self.tree / "scratch.txt").exists())
+        self.assertNotEqual(self.record(self.wid)["status"], "done")
+
+    def test_an_edit_the_pr_lacks_is_refused_even_when_the_pr_is_merged(self):
+        self.published()
+        self.approve_pr()
+        self.script("publish.py", "merge", self.wid)
+        (self.tree / "app" / "src" / "Shelf.java").write_text("class Shelf { int late; }\n")
+        out = self.change("finish", self.wid, code=1)
+        self.assertIn("app/src/Shelf.java", out["refused"])
+
+    def test_a_pr_nobody_approved_is_refused(self):
+        self.published()
+        out = self.change("finish", self.wid, code=1)
+        self.assertIn("review", out["refused"])
+        self.assertIn("Nothing was merged or removed", out["refused"])
+        self.assertEqual(self.pr()["state"], "OPEN")
+
+    def test_without_review_required_approval_is_not_asked_for(self):
+        raw = yaml.safe_load((self.root / ".claude" / "toolbox.local.yml").read_text())
+        raw["pr"]["review_required"] = False
+        (self.root / ".claude" / "toolbox.local.yml").write_text(yaml.safe_dump(raw))
+        self.published()
+        self.assertTrue(self.change("finish", self.wid)["ok"])
+
+    def test_failing_checks_are_refused(self):
+        self.published()
+        self.approve_pr()
+        self.edit_gh(lambda s: s["ci"].update({"1": [[{"name": "build", "status": "COMPLETED",
+                                                        "conclusion": "FAILURE"}]]}))
+        out = self.change("finish", self.wid, code=1)
+        self.assertIn("checks failed: build", out["refused"])
+
+    def test_a_pr_behind_the_default_branch_is_refused_with_the_way_out(self):
+        self.published()
+        self.approve_pr()
+        self.edit_gh(lambda s: s["prs"][0].update(mergeStateStatus="BEHIND"))
+        self.assertIn("run push to rebase", self.change("finish", self.wid, code=1)["refused"])
+
+    def test_a_conflicting_pr_is_refused(self):
+        self.published()
+        self.approve_pr()
+        self.edit_gh(lambda s: s["prs"][0].update(mergeable="CONFLICTING"))
+        self.assertIn("conflicting", self.change("finish", self.wid, code=1)["refused"])
+
+    def test_unpushed_commits_are_refused(self):
+        self.published()
+        self.approve_pr()
+        (self.tree / "late.txt").write_text("x\n")
+        sh(self.tree, "git", "add", "-A")
+        sh(self.tree, "git", "commit", "-m", "late")
+        self.assertIn("isn't pushed", self.change("finish", self.wid, code=1)["refused"])
+
+    def test_a_branch_with_no_pr_is_refused(self):
+        self.change("start", "--summary", "Fix Shelf Rounding")
+        self.assertIn("no PR for the branch", self.change("finish", self.wid, code=1)["refused"])
+
+    def test_a_merged_pr_is_ready_for_cleanup_alone(self):
+        self.published()
+        self.approve_pr()
+        self.script("publish.py", "merge", self.wid)
+        out = self.change("finish", self.wid)
+        self.assertEqual((out["merge_needed"], out["checkouts"][0]["status"]), (False, "already-merged"))
+        self.script("publish.py", "cleanup", self.wid)
+        self.assertEqual(self.record(self.wid)["status"], "done")
+
+    def test_an_id_with_no_worktree_has_nothing_to_finish(self):
+        self.assertIn("nothing to finish", self.change("finish", self.wid, code=1)["refused"])
+
+    def test_the_default_branch_has_no_change_to_finish(self):
+        out = self.change("finish", self.wid, "--checkouts", "pantry", code=1)
+        self.assertIn("main, the default branch", out["refused"])
+
+    def test_a_squash_of_several_commits_is_reported_for_confirmation(self):
+        self.published()
+        self.approve_pr()
+        (self.tree / "second.txt").write_text("x\n")
+        sh(self.tree, "git", "add", "-A")
+        sh(self.tree, "git", "commit", "-m", "second")
+        sh(self.tree, "git", "push")
+        out = self.change("finish", self.wid)
+        self.assertEqual(out["confirm_squash"], ["pantry"])
+        self.assertEqual(out["checkouts"][0]["commits"], ["fix shelf rounding", "second"])
+
+    def test_checkouts_outside_a_task_name_the_commands_without_a_record(self):
+        self.published()
+        self.approve_pr()
+        out = self.change("finish", self.wid, "--checkouts", str(self.tree))
+        self.assertIn(f"--checkouts {self.tree} --no-record", out["merge_command"])
+        self.assertIn("--no-record", out["cleanup_command"])
+
+
 def sh(cwd: Path, *args: str) -> str:
     import subprocess
     return subprocess.run(args, cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
 
 
 class SkillTextTest(unittest.TestCase):
-    NAMES = ("start-change", "check-change", "review-change", "publish-change")
+    NAMES = ("start-change", "check-change", "review-change", "publish-change", "finish-change")
 
     def head(self, name: str) -> dict:
         path = SKILLS / name / "SKILL.md"
@@ -575,7 +735,7 @@ class SkillTextTest(unittest.TestCase):
     def test_the_skills_name_the_script_commands_that_exist(self):
         import subprocess
         for name, command in (("start-change", "start"), ("check-change", "check"), ("review-change", "review"),
-                              ("publish-change", "publish")):
+                              ("publish-change", "publish"), ("finish-change", "finish")):
             text = (SKILLS / name / "SKILL.md").read_text()
             self.assertIn(f".claude/toolbox/bin/change.py {command} ", text)
             proc = subprocess.run([sys.executable, str(TOOLBOX / "bin" / "change.py"), command, "--help"],
@@ -620,6 +780,19 @@ class SkillTextTest(unittest.TestCase):
         for command in ("git commit", "git push", "gh pr create", "gh pr merge"):
             self.assertNotIn(command, text)
 
+    def test_finish_names_its_refusals_and_merges_through_the_scripts(self):
+        text = " ".join((SKILLS / "finish-change" / "SKILL.md").read_text().split())
+        for phrase in ("uncommitted or untracked", "isn't approved", "checks", "mergeable", "publish.py merge",
+                       "publish.py cleanup", "--confirm-squash", "never that review, verification or checks ran",
+                       "`gh-merge-pull-request`"):
+            self.assertIn(phrase, text)
+        self.assertTrue((SKILLS / "gh-merge-pull-request" / "SKILL.md").is_file())
+
+    def test_the_finish_skill_never_runs_git_or_gh_writes_itself(self):
+        text = (SKILLS / "finish-change" / "SKILL.md").read_text()
+        for command in ("git commit", "git push", "git worktree remove", "git branch -D", "gh pr merge"):
+            self.assertNotIn(command, text)
+
     def test_neither_skill_names_a_project_skill(self):
         for name in self.NAMES:
             self.assertNotRegex((SKILLS / name / "SKILL.md").read_text(), r"`rm-[a-z-]+`")
@@ -635,6 +808,8 @@ class SkillTextTest(unittest.TestCase):
             self.assertIn(".claude/skills/review-change", paths[feature])
         for feature in ("git", "worktrees"):  # the message draft, and a task worktree to publish
             self.assertIn(".claude/skills/publish-change", paths[feature])
+        for feature in ("pr", "worktrees"):  # the merge, and a task worktree to remove
+            self.assertIn(".claude/skills/finish-change", paths[feature])
 
 
 if __name__ == "__main__":
