@@ -27,6 +27,7 @@
 # The report contract gates (`pre_tool_use/` and `subagent_stop/report_contract_gate.py`) are unlisted for the same
 # reason: they serve every agent whose report template (under .claude/toolbox/agents/, also unlisted) declares a
 # contract, whichever feature installs the agent, and do nothing for one that declares none.
+# `publish-change` is also listed under `worktrees` (a change's worktrees are what it publishes): it needs both.
 git:
   - .claude/agents/diff-summarizer.md
   - .claude/hooks/gates/pre_tool_use/git_write_gate.py
@@ -34,6 +35,7 @@ git:
   - .claude/skills/git-commit
   - .claude/skills/git-delete-merged-branches
   - .claude/skills/git-draft-commit-message
+  - .claude/skills/publish-change
   - .claude/toolbox/bin/diff_summary.py
 
 verify:
@@ -59,8 +61,10 @@ services-lock:
     - .claude/toolbox/bin/services_lock.py
   needs: [workspace.areas]
 
+# `review-change` is also listed under `worktrees` (a change's worktrees are what it reviews): it needs both.
 review-ui:
   - .claude/skills/local-review-ui
+  - .claude/skills/review-change
 
 # `start-change` is also listed under `tasks` (it makes the task record and the worktrees), and `check-change` under
 # `tests` (its runner): each needs both.
@@ -68,6 +72,8 @@ worktrees:
   - .claude/hooks/gates/pre_tool_use/main_checkout_gate.py
   - .claude/skills/check-change
   - .claude/skills/git-worktrees
+  - .claude/skills/publish-change
+  - .claude/skills/review-change
   - .claude/skills/start-change
 
 pr:

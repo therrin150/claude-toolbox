@@ -1,5 +1,5 @@
-"""The `start-change` and `check-change` stage skills: `bin/change.py`'s gates against real git worktrees, and the
-skills' text.
+"""The `start-change`, `check-change`, `review-change` and `publish-change` stage skills: `bin/change.py`'s gates against
+real git worktrees, `run_checks.py`'s record of what was checked, and the skills' text.
 
 Fixtures: a single-repo workspace (vault inside the repo, `vault` tracker) and a nested one (two repos, a vault beside
 them). No services run; the integration gate reads a lock folder the test points TOOLBOX_LOCKS at.
@@ -245,13 +245,321 @@ class NestedStage(Stage):
         self.assertIn("services lock api is held by task other-task", out["refused"])
 
 
+PASS = "echo 'Tests run: 1, Failures: 0, Errors: 0, Skipped: 0'"
+MESSAGE = "fix shelf rounding\n\nRound counts half up, so a half shelf counts as one.\n"
+
+
+class PublishStage(Stage):
+    """The review and publish gates, on a single-repo workspace whose unit command passes and whose `build` fails."""
+
+    def setUp(self):
+        super().setUp()
+        self.make_repo(self.root, "pantry", {"app/src/Shelf.java": "class Shelf {}\n", "web/index.ts": "export {}\n",
+                                             "vault/README.md": "vault\n"})
+        self.configure({
+            "version": 1, "features": ["tasks", "worktrees", "tests"],
+            "workspace": {"name": "pantry", "layout": "single", "default_branch": "main", "areas": {
+                "app": {"unit": PASS, "build": "false", "files": ["*.java"]},
+                "web": {"unit": PASS, "files": ["*.ts"]}}},
+            "user": {"handle": "jdoe", "name": "Jordan"}, "vault": {"path": "vault"},
+            "tracker": {"kind": "vault", "key_prefix": "PT"}, "pr": {"required": False},
+        })
+        self.wid = "fix-shelf-rounding"
+        self.tree = self.root / ".worktrees" / self.wid
+        self.publish_dir = self.root / "vault" / "Tasks" / ".publish" / self.wid
+
+    def start(self, edit: bool = True) -> None:
+        self.change("start", "--summary", "Fix Shelf Rounding")
+        if edit:
+            (self.tree / "app" / "src" / "Shelf.java").write_text("class Shelf { int count; }\n")
+
+    def approve(self, text: str = MESSAGE) -> None:
+        self.publish_dir.mkdir(parents=True, exist_ok=True)
+        (self.publish_dir / "commit.txt").write_text(text)
+
+    def run_check(self, mode: str, area: str = "app", code: int | None = None) -> dict:
+        return self.script("run_checks.py", mode, f"{area}={self.tree / area}", code=code)
+
+    # review
+
+    def test_a_worktree_with_no_changes_has_nothing_to_review(self):
+        # Scenario "Review With No Diff"
+        self.start(edit=False)
+        out = self.change("review", self.wid, code=1)
+        self.assertFalse(out["ok"])
+        self.assertIn("nothing to review", out["refused"])
+
+    def test_an_id_with_no_worktree_has_nothing_to_review(self):
+        out = self.change("review", self.wid, code=1)
+        self.assertIn("nothing to review", out["refused"])
+        self.assertIn("no worktree", out["refused"])
+
+    def test_a_clean_checkout_has_nothing_to_review(self):
+        out = self.change("review", "--checkouts", str(self.root), code=1)
+        self.assertIn("nothing to review", out["refused"])
+
+    def test_a_change_gives_the_checkouts_for_the_review(self):
+        self.start()
+        for args in ((self.wid,), ("--checkouts", str(self.tree))):
+            out = self.change("review", *args)
+            self.assertEqual(out["ok"], True)
+            self.assertEqual([(c["repo"], c["path"], c["branch"], c["diff"], c["arg"]) for c in out["checkouts"]],
+                             [("pantry", str(self.tree), "jdoe/fix-shelf-rounding", "1 file, +1 −1",
+                               f"pantry={self.tree}")])
+
+    def test_review_needs_a_work_id_or_checkouts(self):
+        self.assertIn("error", self.change("review", code=1))
+
+    def test_review_never_looks_at_checks_or_messages(self):
+        self.start()  # nothing ran, nothing approved
+        self.assertTrue(self.change("review", self.wid)["ok"])
+
+    # publish: refusals
+
+    def test_a_checkout_on_the_default_branch_is_refused_by_name(self):
+        # Scenario "Publish on the Default Branch"
+        (self.root / "app" / "src" / "Shelf.java").write_text("class Shelf { int count; }\n")
+        out = self.change("publish", self.wid, "--checkouts", str(self.root), code=1)
+        self.assertFalse(out["ok"])
+        self.assertIn("is on main, the default branch", out["refused"])
+        # With no diff to blame, and with an approved message, it still names the branch.
+        sh(self.root, "git", "checkout", "--", ".")
+        self.approve()
+        out = self.change("publish", self.wid, "--checkouts", str(self.root), code=1)
+        self.assertIn("is on main, the default branch", out["refused"])
+        self.assertIn("is on main", self.change("publish", self.wid, "--checkouts", str(self.root), "--draft",
+                                                code=1)["refused"])
+
+    def test_a_task_worktree_on_the_default_branch_is_refused(self):
+        self.start()
+        sh(self.root, "git", "checkout", "--detach")  # frees main for the worktree
+        sh(self.tree, "git", "stash", "-u")
+        sh(self.tree, "git", "checkout", "main")
+        sh(self.tree, "git", "stash", "pop")
+        self.assertIn("is on main, the default branch", self.change("publish", self.wid, code=1)["refused"])
+
+    def test_a_detached_head_is_refused(self):
+        self.start()
+        sh(self.tree, "git", "checkout", "--detach")
+        self.assertIn("detached HEAD", self.change("publish", self.wid, "--draft", code=1)["refused"])
+
+    def test_a_worktree_with_no_changes_has_nothing_to_publish(self):
+        self.start(edit=False)
+        self.approve()
+        out = self.change("publish", self.wid, code=1)
+        self.assertIn("nothing to publish", out["refused"])
+
+    def test_an_id_with_no_worktree_has_nothing_to_publish(self):
+        out = self.change("publish", self.wid, code=1)
+        self.assertIn("nothing to publish", out["refused"])
+        self.assertIn("no worktree", out["refused"])
+
+    def test_no_message_is_not_approved(self):
+        self.start()
+        out = self.change("publish", self.wid, code=1)
+        self.assertIn("no approved commit message for pantry", out["refused"])
+        self.assertIn(str(self.publish_dir / "commit.txt"), out["refused"])
+
+    def test_a_message_that_cant_be_committed_is_not_approved(self):
+        self.start()
+        for text, problem in (("fix shelf rounding\n", "no body"),
+                              ("fix shelf rounding\n\nBody.\n\nCo-Authored-By: Claude <noreply@anthropic.com>\n",
+                               "trailer or attribution"),
+                              ("\n\n", "no subject")):
+            self.approve(text)
+            self.assertIn(problem, self.change("publish", self.wid, code=1)["refused"])
+
+    def test_a_draft_check_needs_no_message_and_says_where_it_goes(self):
+        self.start()
+        out = self.change("publish", self.wid, "--draft")
+        self.assertEqual((out["ok"], out["draft"], out["pr_required"], out["announce"]), (True, True, False, False))
+        self.assertEqual(out["messages"], {"pantry": str(self.publish_dir / "commit.txt")})
+        self.assertEqual(out["announce_file"], str(self.publish_dir / "announce.txt"))
+        self.assertEqual(out["checkouts"][0]["diff"], "1 file, +1 −1")
+        self.assertEqual(out["bin"], str(TOOLBOX / "bin"))
+
+    def test_publish_runs_nothing_and_writes_nothing(self):
+        self.start()
+        self.approve()
+        before = sh(self.tree, "git", "status", "--porcelain"), sh(self.tree, "git", "rev-parse", "HEAD")
+        self.change("publish", self.wid)
+        self.assertEqual((sh(self.tree, "git", "status", "--porcelain"), sh(self.tree, "git", "rev-parse", "HEAD")),
+                         before)
+        self.assertEqual(self.record(self.wid)["status"], "in-progress")
+
+    # publish: the checks warning
+
+    def test_changes_nobody_checked_warn_and_still_go_ahead_once_approved(self):
+        # Scenario "Publish Without Checks"
+        self.start()
+        out = self.change("publish", self.wid, "--draft")
+        self.assertEqual(len(out["warnings"]), 1)
+        self.assertIn("checks haven't run on the current diff of pantry's app", out["warnings"][0])
+        self.assertEqual(out["checks"][0]["unchecked"], ["app"])
+        self.approve()
+        out = self.change("publish", self.wid)
+        self.assertTrue(out["ok"])
+        self.assertIn("checks haven't run", out["warnings"][0])
+
+    def test_a_passing_run_on_the_current_diff_clears_the_warning(self):
+        self.start()
+        self.run_check("unit")
+        out = self.change("publish", self.wid, "--draft")
+        self.assertEqual(out["warnings"], [])
+        self.assertEqual(out["checks"][0]["results"], {"app": {"passed": ["unit"], "failed": []}})
+
+    def test_an_edit_after_the_run_makes_it_stale(self):
+        self.start()
+        self.run_check("unit")
+        (self.tree / "app" / "src" / "Shelf.java").write_text("class Shelf { int count = 1; }\n")
+        self.assertEqual(len(self.change("publish", self.wid, "--draft")["warnings"]), 1)
+        self.run_check("unit")
+        self.assertEqual(self.change("publish", self.wid, "--draft")["warnings"], [])
+
+    def test_a_new_untracked_file_after_the_run_makes_it_stale(self):
+        self.start()
+        self.run_check("unit")
+        (self.tree / "app" / "src" / "Bin.java").write_text("class Bin {}\n")
+        self.assertEqual(len(self.change("publish", self.wid, "--draft")["warnings"]), 1)
+
+    def test_committing_the_checked_diff_keeps_the_run_current(self):
+        self.start()
+        self.run_check("unit")
+        sh(self.tree, "git", "add", "-A")
+        sh(self.tree, "git", "commit", "-m", "x")
+        self.assertEqual(self.change("publish", self.wid, "--draft")["warnings"], [])
+
+    def test_a_failed_run_is_not_a_check(self):
+        self.start()
+        self.run_check("build", code=1)
+        out = self.change("publish", self.wid, "--draft")
+        self.assertEqual(len(out["warnings"]), 1)
+        self.assertEqual(out["checks"][0]["results"], {"app": {"passed": [], "failed": ["build"]}})
+
+    def test_a_skipped_run_leaves_no_mark(self):
+        self.start()
+        self.run_check("integration")  # no integration command: skipped
+        self.run_check("format")  # no format command: skipped
+        self.assertEqual(self.change("publish", self.wid, "--draft")["checks"][0]["results"], {})
+
+    def test_only_the_areas_the_change_touches_need_a_run(self):
+        self.start()
+        (self.tree / "web" / "index.ts").write_text("export const a = 1\n")
+        self.run_check("unit", "app")
+        out = self.change("publish", self.wid, "--draft")
+        self.assertEqual(out["checks"][0]["unchecked"], ["web"])
+        self.run_check("unit", "web")
+        self.assertEqual(self.change("publish", self.wid, "--draft")["warnings"], [])
+
+    def test_a_change_no_area_looks_at_has_nothing_to_warn_about(self):
+        self.start(edit=False)
+        (self.tree / "app" / "README.md").write_text("notes\n")
+        out = self.change("publish", self.wid, "--draft")
+        self.assertEqual((out["warnings"], out["checks"][0]["areas"]), ([], []))
+
+    def test_the_marks_live_in_the_git_dir_so_the_diff_never_sees_them(self):
+        self.start()
+        self.run_check("unit")
+        self.assertEqual(sh(self.tree, "git", "status", "--porcelain"), "M app/src/Shelf.java")
+        marks = Path(sh(self.tree, "git", "rev-parse", "--absolute-git-dir")) / "toolbox-checks.json"
+        self.assertEqual(json.loads(marks.read_text())["app"]["unit"]["result"], "pass")
+
+    def test_a_config_problem_is_not_a_failed_check(self):
+        self.start()
+        self.run_check("unit", "app")  # a pass first
+        out = self.script("run_checks.py", "unit", f"app={self.tree / 'nope'}", code=1)
+        self.assertEqual(out["areas"][0]["result"], "fail")
+        self.assertEqual(self.change("publish", self.wid, "--draft")["checks"][0]["results"],
+                         {"app": {"passed": ["unit"], "failed": []}})
+
+    def test_a_non_utf8_change_has_its_own_fingerprint(self):
+        sys.path.insert(0, str(TOOLBOX / "lib"))
+        import checkmarks
+        self.start()
+        data = self.tree / "app" / "src" / "Blob.bin"
+        data.write_bytes(b"\xff\xfe one")
+        first = checkmarks.fingerprint(self.tree, "origin/main")
+        data.write_bytes(b"\xfe\xff one")  # both decode to the same replacement characters
+        self.assertNotEqual(first, checkmarks.fingerprint(self.tree, "origin/main"))
+
+    def test_a_run_outside_a_git_checkout_still_reports(self):
+        folder = self.tmp / "plain"
+        folder.mkdir()
+        out = self.script("run_checks.py", "unit", f"app={folder}", code=0)
+        self.assertEqual(out["result"], "pass")
+
+
+class NestedPublishStage(Stage):
+    def setUp(self):
+        super().setUp()
+        for name in ("api", "web"):
+            self.make_repo(self.root / name, name, {"src/Main.java": "class Main {}\n"})
+        (self.root / "vault").mkdir()
+        self.configure({
+            "version": 1, "features": ["tasks", "worktrees", "tests"],
+            "workspace": {"name": "fleet", "layout": "nested", "default_branch": "main",
+                          "areas": {"*": {"unit": PASS, "files": ["*.java"]}}},
+            "user": {"handle": "jdoe", "name": "Jordan"}, "vault": {"path": "vault"},
+            "tracker": {"kind": "vault", "key_prefix": "PT"}, "pr": {"required": False},
+        })
+        self.change("start", "--summary", "Fix Both", "--repos", "api,web")
+        self.tree = self.root / ".worktrees" / "fix-both"
+        self.publish_dir = self.root / "vault" / "Tasks" / ".publish" / "fix-both"
+
+    def test_each_repo_has_its_own_message_and_checks(self):
+        (self.tree / "api" / "src" / "Main.java").write_text("class Main { int a; }\n")
+        (self.tree / "web" / "src" / "Main.java").write_text("class Main { int w; }\n")
+        self.script("run_checks.py", "unit", f"api={self.tree / 'api'}")
+        out = self.change("publish", "fix-both", "--draft")
+        self.assertEqual(out["messages"], {"api": str(self.publish_dir / "api.txt"),
+                                           "web": str(self.publish_dir / "web.txt")})
+        self.assertEqual([(c["repo"], c["unchecked"]) for c in out["checks"]], [("api", []), ("web", ["web"])])
+        self.assertEqual(len(out["warnings"]), 1)
+        self.publish_dir.mkdir(parents=True)
+        (self.publish_dir / "api.txt").write_text(MESSAGE)
+        out = self.change("publish", "fix-both", code=1)
+        self.assertIn("no approved commit message for web", out["refused"])
+        (self.publish_dir / "web.txt").write_text(MESSAGE)
+        self.assertTrue(self.change("publish", "fix-both")["ok"])
+
+    def test_only_the_changed_repos_are_reviewed(self):
+        (self.tree / "web" / "src" / "Main.java").write_text("class Main { int w; }\n")
+        out = self.change("review", "fix-both")
+        self.assertEqual([c["repo"] for c in out["checkouts"]], ["web"])
+        self.assertEqual(out["checkouts"][0]["arg"], f"web={self.tree / 'web'}")
+
+    def test_a_repo_without_changes_needs_no_message_and_is_left_out(self):
+        (self.tree / "web" / "src" / "Main.java").write_text("class Main { int w; }\n")
+        self.publish_dir.mkdir(parents=True)
+        (self.publish_dir / "web.txt").write_text(MESSAGE)  # api has no message and no changes
+        out = self.change("publish", "fix-both")
+        self.assertEqual([c["repo"] for c in out["checkouts"]], ["web"])
+        self.assertEqual(list(out["messages"]), ["web"])
+        self.assertEqual([c["repo"] for c in out["checks"]], ["web"])
+        self.assertEqual(list(self.change("publish", "fix-both", "--draft")["messages"]), ["web"])
+
+    def test_an_untouched_repo_on_the_default_branch_doesnt_block_the_other(self):
+        (self.tree / "web" / "src" / "Main.java").write_text("class Main { int w; }\n")
+        self.publish_dir.mkdir(parents=True)
+        (self.publish_dir / "web.txt").write_text(MESSAGE)
+        sh(self.tree / "api", "git", "checkout", "--detach")
+        self.assertTrue(self.change("publish", "fix-both")["ok"])
+        # A repo with changes on the default branch still refuses, naming it.
+        sh(self.root / "api", "git", "checkout", "--detach")
+        sh(self.tree / "api", "git", "checkout", "main")
+        (self.tree / "api" / "src" / "Main.java").write_text("class Main { int a; }\n")
+        out = self.change("publish", "fix-both", code=1)
+        self.assertIn("api", out["refused"])
+        self.assertIn("is on main, the default branch", out["refused"])
+
+
 def sh(cwd: Path, *args: str) -> str:
     import subprocess
     return subprocess.run(args, cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
 
 
 class SkillTextTest(unittest.TestCase):
-    NAMES = ("start-change", "check-change")
+    NAMES = ("start-change", "check-change", "review-change", "publish-change")
 
     def head(self, name: str) -> dict:
         path = SKILLS / name / "SKILL.md"
@@ -266,7 +574,8 @@ class SkillTextTest(unittest.TestCase):
 
     def test_the_skills_name_the_script_commands_that_exist(self):
         import subprocess
-        for name, command in (("start-change", "start"), ("check-change", "check")):
+        for name, command in (("start-change", "start"), ("check-change", "check"), ("review-change", "review"),
+                              ("publish-change", "publish")):
             text = (SKILLS / name / "SKILL.md").read_text()
             self.assertIn(f".claude/toolbox/bin/change.py {command} ", text)
             proc = subprocess.run([sys.executable, str(TOOLBOX / "bin" / "change.py"), command, "--help"],
@@ -288,6 +597,29 @@ class SkillTextTest(unittest.TestCase):
         self.assertIn("Agent", self.head("check-change")["allowed-tools"])
         self.assertTrue((CLAUDE / "agents" / "check-runner.md").is_file())
 
+    def test_review_names_its_refusal_and_opens_the_review_page(self):
+        text = " ".join((SKILLS / "review-change" / "SKILL.md").read_text().split())
+        self.assertIn("nothing to review", text)
+        self.assertIn("`local-review-ui`", text)
+        self.assertIn("Finishing Is Not Approval", text)
+        self.assertIn("Skill", self.head("review-change")["allowed-tools"])
+        self.assertTrue((SKILLS / "local-review-ui" / "SKILL.md").is_file())
+
+    def test_publish_names_its_gates_and_drafts_through_the_skill(self):
+        text = " ".join((SKILLS / "publish-change" / "SKILL.md").read_text().split())
+        for phrase in ("on the default branch", "nothing to publish", "checks haven't run",
+                       "`git-draft-commit-message`", "`diff-summarizer`", "publish.py run", "--stop-after open-pr",
+                       "never that review, verification or checks ran", "It never merges", "--draft"):
+            self.assertIn(phrase, text)
+        self.assertIn("Skill", self.head("publish-change")["allowed-tools"])
+        self.assertTrue((SKILLS / "git-draft-commit-message" / "SKILL.md").is_file())
+        self.assertIn("--stop-after", (TOOLBOX / "bin" / "publish.py").read_text())
+
+    def test_the_publish_skill_never_runs_git_writes_itself(self):
+        text = (SKILLS / "publish-change" / "SKILL.md").read_text()
+        for command in ("git commit", "git push", "gh pr create", "gh pr merge"):
+            self.assertNotIn(command, text)
+
     def test_neither_skill_names_a_project_skill(self):
         for name in self.NAMES:
             self.assertNotRegex((SKILLS / name / "SKILL.md").read_text(), r"`rm-[a-z-]+`")
@@ -299,6 +631,10 @@ class SkillTextTest(unittest.TestCase):
             self.assertIn(".claude/skills/start-change", paths[feature])
         for feature in ("tests", "worktrees"):  # the runner, and a task worktree to check
             self.assertIn(".claude/skills/check-change", paths[feature])
+        for feature in ("review-ui", "worktrees"):  # the review page, and a task worktree to review
+            self.assertIn(".claude/skills/review-change", paths[feature])
+        for feature in ("git", "worktrees"):  # the message draft, and a task worktree to publish
+            self.assertIn(".claude/skills/publish-change", paths[feature])
 
 
 if __name__ == "__main__":

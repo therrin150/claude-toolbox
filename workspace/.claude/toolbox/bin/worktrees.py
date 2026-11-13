@@ -215,8 +215,9 @@ def area_hits(cfg: config.Config, co: gitgh.Checkout, files: list[dict]) -> tupl
     return applies, skipped
 
 
-def changes(cfg: config.Config, wid: str) -> dict:
-    checkouts = gitgh.task_worktrees(cfg, wid)
+def changes(cfg: config.Config, wid: str, checkouts: list[gitgh.Checkout] | None = None) -> dict:
+    """What `wid`'s worktrees changed, or, given `checkouts`, what those (any repos or worktrees) changed."""
+    checkouts = checkouts or gitgh.task_worktrees(cfg, wid)
     if not checkouts:
         raise Failed(f"no worktrees for {wid} under {cfg.worktrees_dir}")
     out = {"id": wid, "checkouts": [], "areas": [], "skipped": []}

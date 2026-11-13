@@ -28,6 +28,10 @@ integration run that ran no tests is a `fail`: a run that never reached its test
 A stack trace keeps its first frame, every `Caused by` line, and the frames that start with one of the config's
 checks.own_code_prefixes (such as `org.familysearch.`); with none configured, every frame stays.
 
+Each area that passes or fails in a git checkout is also recorded (lib/checkmarks.py, in the checkout's git dir) against
+the diff the run started on, so `change.py publish` can warn when a change was never checked as it now stands. A
+checkout with no `origin/<default>`, or a folder that isn't one, records nothing; nothing here can fail a run.
+
 Prints one JSON object: mode, result (pass, fail, blocked or skipped), areas (each with its own result, counts and
 failures), and for integration the services started and stopped and whether the lock is released. Exit 0 when every
 area passed or was skipped, 1 on a failure, 3 when blocked.
@@ -51,6 +55,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path[:0] = [str(HERE), str(HERE.parent / "lib")]
 
+import checkmarks  # noqa: E402
 import config  # noqa: E402
 import summarize_reports  # noqa: E402
 
@@ -420,6 +425,34 @@ def overall(results: list[dict]) -> str:
     return "skipped"
 
 
+def fingerprints(areas: list[tuple[str, Path]], cfg: config.Config) -> dict[str, tuple[Path, str] | None]:
+    """Per area, its checkout and the checkout's diff against the default branch, or None when it has none (not a git
+    checkout, no origin/<default>). Best effort: nothing here fails a run."""
+    out: dict[str, tuple[Path, str] | None] = {}
+    for name, path in areas:
+        try:
+            top = checkmarks.toplevel(path) if path.is_dir() else None
+            print_ = checkmarks.fingerprint(top, f"origin/{cfg.default_branch}") if top else None
+            out[name] = (top, print_) if top and print_ else None
+        except Exception:  # noqa: BLE001
+            out[name] = None
+    return out
+
+
+def mark_results(areas: list[tuple[str, Path]], results: list[dict], before: dict, cfg: config.Config,
+                 mode: str) -> None:
+    """Record each area's pass or fail against the diff it ran on, for the publish stage's checks warning."""
+    for result in results:
+        found = before.get(result.get("area"))
+        # A fail with no `exit` is a config problem (no such folder, a flag the command can't take), not an outcome.
+        if found and (result.get("result") == "pass" or (result.get("result") == "fail" and "exit" in result)):
+            try:
+                checkmarks.record(found[0], f"origin/{cfg.default_branch}", mode, result["area"], result["result"],
+                                  found[1])
+            except Exception:  # noqa: BLE001
+                pass
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("mode", choices=MODES)
@@ -443,11 +476,13 @@ def main(argv: list[str] | None = None) -> int:
     # A terminated run still stops its services and releases the lock: SIGTERM unwinds through the bracket's finally.
     signal.signal(signal.SIGTERM, terminate)
     areas = [area_folder(spec, cfg) for spec in args.areas]
+    before = fingerprints(areas, cfg)  # the diff the run starts on; an edit during the run makes its mark stale
     if args.mode == "integration":
         report = integration(areas, cfg, args)
     else:
         with ThreadPoolExecutor(max_workers=args.jobs or len(areas)) as pool:
             report = {"areas": list(pool.map(lambda area: run_area(area[0], area[1], cfg, args), areas))}
+    mark_results(areas, report["areas"], before, cfg, args.mode)
     report = {"mode": args.mode, "result": overall(report["areas"]), **report}
     if report["result"] == "blocked" and "reason" not in report:
         report["reason"] = next((a["reason"] for a in report["areas"] if a["result"] == "blocked"), None)

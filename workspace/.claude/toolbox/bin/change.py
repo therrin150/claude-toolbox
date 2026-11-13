@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""The gates of the `start-change` and `check-change` stage skills, so any session gets the same refusals.
+"""The gates of the `start-change`, `check-change`, `review-change` and `publish-change` stage skills, so any session
+gets the same refusals.
 
 Each stage checks only its own requirements, never that an earlier stage ran. Every command prints one JSON object;
 exit 0 when it went ahead, 1 when it refused or failed (the reason prints as `refused` or `error`), 2 bad arguments.
@@ -19,6 +20,20 @@ exit 0 when it went ahead, 1 when it refused or failed (the reason prints as `re
       no change to check: no worktree, no changed file, or changes only in areas whose `files` globs the checks
       ignore. For integration, also refuses while the services lock is held, by another task or this change's own
       earlier run (the runner would be blocked either way; an expired lock is taken over by the run), naming the holder. Runs nothing itself.
+
+  review (<work id> | --checkouts a,b)
+      The checkouts to hand `local-review-ui`. Refuses when there is nothing to review: no worktree, or no changed file
+      against origin/<default>. Opens nothing itself.
+
+  publish <work id> [--checkouts a,b] [--draft]
+      The gate before `publish.py`. Looks only at the checkouts that changed (a nested change's untouched repo is
+      neither published nor drafted for). Refuses, naming the checkout, when one is on the default branch (or detached;
+      with no changes anywhere, any checkout on it), when there is nothing to publish (no worktree, no changed file),
+      and, without --draft, when a changed checkout has no approved
+      commit message (the file `publish.py` reads, a valid one). --draft is the check before the message exists: the
+      same refusals but the message, plus where each message goes. Warns, never refuses, for an area the changes touch
+      with no passing build, unit or integration run on the diff as it is now (`run_checks.py` records them). Runs
+      nothing itself.
 """
 
 from __future__ import annotations
@@ -34,8 +49,10 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
 sys.path.insert(0, str(HERE))
 
+import checkmarks  # noqa: E402
 import config  # noqa: E402
 import gitgh  # noqa: E402
+import publish  # noqa: E402
 import records  # noqa: E402
 import worktrees  # noqa: E402
 from gitgh import Failed  # noqa: E402
@@ -159,6 +176,80 @@ def check(cfg: config.Config, wid: str, mode: str) -> dict:
 
 
 # ---------------------------------------------------------------------------------------------------------------------
+# review and publish
+
+
+def resolve(cfg: config.Config, wid: str | None, checkouts: str | None, stage: str) -> tuple[list[gitgh.Checkout], dict]:
+    """The change's checkouts (a task's worktrees, or `--checkouts`) and what they changed; refuses when it has none."""
+    if checkouts:
+        names = [c.strip() for c in checkouts.split(",") if c.strip()]
+        found = gitgh.resolve_all(cfg, names)
+    else:
+        if not wid:
+            raise Failed("name the change by a work id or --checkouts")
+        gitgh.check_work_id(wid)
+        found = gitgh.task_worktrees(cfg, wid)
+        if not found:
+            raise Refused(f"nothing to {stage}: {wid} has no worktree under {cfg.worktrees_dir}")
+    return found, worktrees.changes(cfg, wid or "", found)
+
+
+def review(cfg: config.Config, wid: str | None, checkouts: str | None) -> dict:
+    found, changed = resolve(cfg, wid, checkouts, "review")
+    if not any(co["files"] for co in changed["checkouts"]):
+        where = f"{wid}'s worktree" if wid and not checkouts else "the checkout"
+        raise Refused(f"nothing to review: {where} has no changes against origin/{cfg.default_branch}")
+    return {"ok": True, "work_id": wid, "checkouts": [
+        {"repo": co["repo"], "path": co["path"], "branch": co["branch"], "diff": co["diff"],
+         "arg": f"{co['repo']}={co['path']}"} for co in changed["checkouts"] if co["files"]]}
+
+
+def publish_check(cfg: config.Config, wid: str, checkouts: str | None, draft: bool) -> dict:
+    found, changed = resolve(cfg, wid, checkouts, "publish")
+    dirty = [co for co in changed["checkouts"] if co["files"]]
+    # The branch first: a checkout on the default branch may have no diff to blame. Only a repo with changes is
+    # published, so an untouched repo of a nested change never blocks the others; with no changes anywhere, every
+    # checkout is looked at, so the refusal still names the branch.
+    for co in dirty or changed["checkouts"]:
+        if not co["branch"]:
+            raise Refused(f"{co['repo']} ({co['path']}) is on a detached HEAD; publish from a branch (start-change)")
+        if co["branch"] == cfg.default_branch:
+            raise Refused(f"{co['repo']} ({co['path']}) is on {co['branch']}, the default branch; a change publishes "
+                          "from its own branch (start-change)")
+    if not dirty:
+        raise Refused(f"nothing to publish: {wid}'s changes against origin/{cfg.default_branch} are empty")
+    ns = argparse.Namespace(checkouts=checkouts, repos=",".join(co["repo"] for co in dirty), dry_run=True,
+                            no_record=False, publish_dir=None, message_file=None, message_dir=None,
+                            announce_file=None)
+    ctx = publish.Context(cfg, wid, ns)
+    messages = {}
+    for co in ctx.checkouts:
+        path = ctx.message_path(co)
+        messages[co.name] = str(path)
+        if not draft:
+            _, problems = publish.check_message(path)
+            if problems:
+                raise Refused(f"no approved commit message for {co.name}: {'; '.join(problems)}. Draft it with "
+                              "git-draft-commit-message, show it to the user and, once approved, save it at that path")
+    base = f"origin/{cfg.default_branch}"
+    warnings, checks = [], []
+    for co in dirty:
+        path = Path(co["path"])
+        stale = checkmarks.unchecked(path, base, co["areas"])
+        checks.append({"repo": co["repo"], "areas": co["areas"], "unchecked": stale,
+                       "results": checkmarks.status(path, base)})
+        for area in stale:
+            warnings.append(f"checks haven't run on the current diff of {co['repo']}'s {area}: no passing build, unit "
+                            "or integration run since its last change")
+    return {"ok": True, "work_id": wid, "draft": draft, "pr_required": bool(cfg.pr["required"]),
+            "announce": bool(cfg.pr["required"] and cfg.announce),
+            "checkouts": [{"repo": co["repo"], "path": co["path"], "branch": co["branch"], "diff": co["diff"]}
+                          for co in dirty],
+            "messages": messages, "announce_file": str(ctx.announce_path()), "checks": checks, "warnings": warnings,
+            "bin": str(HERE)}
+
+
+# ---------------------------------------------------------------------------------------------------------------------
 
 
 def parser() -> argparse.ArgumentParser:
@@ -173,6 +264,13 @@ def parser() -> argparse.ArgumentParser:
     sub = commands.add_parser("check")
     sub.add_argument("id", help="work id")
     sub.add_argument("mode", choices=MODES)
+    sub = commands.add_parser("review")
+    sub.add_argument("id", nargs="?", help="work id")
+    sub.add_argument("--checkouts", help="comma-separated repo names or paths, instead of the work id's worktrees")
+    sub = commands.add_parser("publish")
+    sub.add_argument("id", help="work id")
+    sub.add_argument("--checkouts", help="comma-separated repo names or paths, instead of the work id's worktrees")
+    sub.add_argument("--draft", action="store_true", help="the check before the commit message exists")
     return top
 
 
@@ -183,6 +281,10 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "start":
             out = start(cfg, records.Store(cfg), args)
             code = REFUSED if any(r["status"] in ("refused", "failed") for r in out["results"]) else OK
+        elif args.command == "review":
+            out, code = review(cfg, args.id, args.checkouts), OK
+        elif args.command == "publish":
+            out, code = publish_check(cfg, args.id, args.checkouts, args.draft), OK
         else:
             out, code = check(cfg, args.id, args.mode), OK
         print(json.dumps(out, indent=2, default=str))

@@ -41,17 +41,17 @@ dropping the feature and keeping a project-owned copy.
 
 | Feature | Installs | Needs |
 |---|---|---|
-| `git` | `git-commit`, `git-draft-commit-message`, `git-delete-merged-branches`, the `git-conventions.md` rule, the `diff-summarizer` agent (a read-only Haiku summary of a diff, grouped by change, with its out-of-place lines) and its `diff_summary.py` | |
+| `git` | `git-commit`, `git-draft-commit-message`, `publish-change` (the publish stage, also under `worktrees`: drafts the commit message for approval, then commits, pushes and opens the PR through `publish.py`, refusing a checkout on the default branch and warning when checks haven't run on the current diff), `git-delete-merged-branches`, the `git-conventions.md` rule, the `diff-summarizer` agent (a read-only Haiku summary of a diff, grouped by change, with its out-of-place lines) and its `diff_summary.py` | |
 | `verify` | `verify-change`, the `change-verifier` agent | |
 | `tests` | `run-unit-tests`, `check-change` (the check stage: gates a change's `build`, `unit`, `format` or `integration` check through `change.py check`, then runs it in a `check-runner`), the `check-runner` agent, the checks and raw output gates (deny builds, tests, `services_lock.py` and build or test logs in the main session) | `workspace.areas` |
-| `worktrees` | `git-worktrees`, `check-change` (also under `tests`), `start-change` (the start stage, also under `tasks`: makes or finds a change's record and gives it a branch and worktrees through `change.py start`, refusing a repo that already has one), the main checkout gate (denies `Edit` and `Write` in a repo's main checkout while a task worktree of it exists) | |
+| `worktrees` | `git-worktrees`, `check-change` (also under `tests`), `review-change` (the review stage, also under `review-ui`: gates a change through `change.py review`, then opens `local-review-ui`), `publish-change` (also under `git`), `start-change` (the start stage, also under `tasks`: makes or finds a change's record and gives it a branch and worktrees through `change.py start`, refusing a repo that already has one), the main checkout gate (denies `Edit` and `Write` in a repo's main checkout while a task worktree of it exists) | |
 | `pr` | `gh-create-pull-request`, `gh-merge-pull-request`, the `pr-reporter` agent (a read-only Haiku report of a PR's review comments, sorted, and its failed checks' error lines) and its `pr_report.py` | |
 | `tasks` | `work-task`, `start-change` (also under `worktrees`), `investigate` (a read-only production investigation, recorded in a discussion, ending in a defect when there is a fix), `propose-tickets`, `create-tickets`, `create-defect`, the `ticket-docs.md` and `session-types.md` rules (the latter says which entry skill a session starts from how it's opened) | `tracker`, `vault` |
 | `jira` | the `jira-creator` agent (a template; a Haiku agent that files drafts as Jira issues, after `draft_to_jira.py` converts their markdown), the `jira-reader` agent (a template; a read-only Haiku lookup of issues or a JQL that returns only the fields asked for), the Jira write gate (denies the Jira MCP server's create, edit, comment, link, worklog and transition tools in the main session, so a write goes through `jira-creator`) | `tracker.jira` |
 | `jira-sprints` | `jira-find-current-sprint` | `tracker.jira` |
 | `dispatcher` | `work-tasks`, `dispatch.py` | |
 | `services-lock` | `start-`, `stop-local-services` (user-invoked), `services_lock.py` | `workspace.areas` |
-| `review-ui` | `local-review-ui` | |
+| `review-ui` | `local-review-ui`, `review-change` (also under `worktrees`) | |
 | `intellij` | `intellij-open-worktree` | |
 | `obsidian` | the vault's Templater templates (`.vault/`), the `vault-researcher` agent (a read-only Haiku search of the vault's discussions and tasks, reported per item as its wikilink, status, and the decisions and open questions that bear on a topic) | `vault`, `tracker` |
 | `java` | `java-conventions`, `java-testing-conventions` (knowledge) | |
