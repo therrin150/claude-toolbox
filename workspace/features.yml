@@ -6,8 +6,8 @@
 # Format: {<feature>: [paths relative to workspace/]}, or {<feature>: {paths: [...], needs: [...]}}. A path names a
 # file, or a folder and everything under it (a skill folder, say: .claude/skills/start-local-services). A path listed
 # under more than one feature needs all of them. Dropping a feature from a workspace's config and re-syncing removes
-# those links, like any stale link. A template (a .tmpl file, rendered rather than linked) is listed by its own name,
-# suffix included. Paths under .vault/ (files written into the workspace's vault, not linked into the workspace) are
+# those files, like any stale file. A template (a .tmpl file, rendered rather than copied as it is) is listed by its own
+# name, suffix included. Paths under .vault/ (files written into the workspace's vault, not into the workspace) are
 # listed from .vault/ too.
 #
 # `needs` are dotted config keys or sections (tracker, tracker.jira, workspace.areas) the feature's items read. A

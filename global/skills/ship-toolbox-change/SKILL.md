@@ -36,7 +36,7 @@ ask which one: `claude-toolbox` itself, or one of the other toolboxes listed und
 **From a worktree.** Pass `--repo-dir <worktree>` to every command, and run that worktree's own `ship.py` when the
 change is to `ship.py` itself. The branch is the worktree's. Cleanup removes the worktree (refused while it holds
 uncommitted or untracked files) instead of switching branches, fast-forwards the main checkout's default branch when
-it's on it, and runs the install preview in the main checkout, which is what the installed links point at.
+it's on it, and runs the install preview in the main checkout, which is where the installer reads from.
 
 ## 1. Precheck
 
@@ -107,5 +107,5 @@ Finish by hand, or with `ship.py cleanup --branch <branch>` once the PR shows me
 - The branch, the PR URL and title, and the merge commit (`pr`), or the commit pushed (`direct`)
 - What cleanup did
 - The install preview: when it has pending changes (new or renamed skills, removed files), list them and ask whether to
-  apply (`/sync-toolbox`, or `python3 install.py --apply` in the repo). When it's empty, say the links are already in
-  sync.
+  apply (`/sync-toolbox`, or `python3 install.py --apply` in the repo). When it's empty, say the installed files are
+  already in sync.

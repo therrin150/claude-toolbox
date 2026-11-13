@@ -69,10 +69,9 @@ class Templates(InstallerTest):
     def test_renders_each_workspaces_server(self):
         code, plan = self.run_install()
         self.assertEqual(code, 0, plan)
-        written = self.section(plan, "Write generated rules")
+        written = self.written(plan)
         self.assertIn(f"{self.ws1 / AGENT} (new, rendered from filer.md.tmpl)", written)
         self.assertIn(f"{self.ws2 / AGENT} (new, rendered from filer.md.tmpl)", written)
-        self.assertFalse(any("filer.md" in line for line in self.section(plan, "Create links")))
         self.assertFalse((self.ws1 / AGENT).exists())
 
         code, plan = self.run_install("--apply")
@@ -82,8 +81,9 @@ class Templates(InstallerTest):
         self.assertIn("tools: Read, mcp__atlassian-personal__getJiraIssue\n", self.text(self.ws2))
         self.assertIn("Files in ABC.", self.text(self.ws1))
         self.assertFalse((self.ws1 / ".claude" / "agents" / "filer.md.tmpl").exists())
-        record = self.state()["generated"][install.norm(self.ws1 / AGENT)]
-        self.assertEqual(record["template"], str(self.source / ".claude" / "agents" / "filer.md.tmpl"))
+        record = self.state()["files"][install.norm(self.ws1 / AGENT)]
+        self.assertEqual(record["source"], str(self.source / ".claude" / "agents" / "filer.md.tmpl"))
+        self.assertEqual(record["hash"], install.digest(self.text(self.ws1).encode()))
 
         exclude = (self.ws2 / ".git" / "info" / "exclude").read_text(encoding="utf-8")
         self.assertIn("\n/.claude/agents/filer.md\n", exclude)
@@ -93,15 +93,15 @@ class Templates(InstallerTest):
         self.assertEqual(status, "")
 
         _, plan = self.run_install()
-        self.assertEqual(self.section(plan, "Write generated rules"), [])
-        self.assertIn(f"{self.ws1 / AGENT} (rendered)", self.section(plan, "Already in place"))
+        self.assertEqual(self.written(plan), [])
+        self.assertIn(f"{self.ws1 / AGENT} (rendered)", self.section(plan, "Unchanged"))
 
     def test_config_change_rewrites(self):
         self.run_install("--apply")
         write(self.ws1 / CONFIG, jira_config("one", "jira-work", ["jira"]))
         _, plan = self.run_install()
         self.assertIn(f"{self.ws1 / AGENT} (changed, rendered from filer.md.tmpl)",
-                      self.section(plan, "Write generated rules"))
+                      self.written(plan))
         self.assertEqual(self.preview_json("--workspace", str(self.ws1))["rendered"], [{
             "path": str(self.ws1 / AGENT), "template": str(self.source / ".claude/agents/filer.md.tmpl"),
             "status": "changed"}])
@@ -116,7 +116,7 @@ class Templates(InstallerTest):
 
         write(self.ws2 / CONFIG, jira_config("two", "atlassian-personal", []))
         _, plan = self.run_install()
-        self.assertEqual(self.section(plan, "Remove generated rules"), [str(self.ws2 / AGENT)])
+        self.assertEqual(self.section(plan, "Remove"), [str(self.ws2 / AGENT)])
         self.assertEqual(self.preview_json("--workspace", str(self.ws2))["rendered"][0]["status"], "stale")
         self.run_install("--apply")
         self.assertFalse((self.ws2 / AGENT).exists())
@@ -127,7 +127,7 @@ class Templates(InstallerTest):
         self.run_install("--apply")
         (self.source / ".claude" / "agents" / "filer.md.tmpl").unlink()
         _, plan = self.run_install()
-        self.assertEqual(sorted(self.section(plan, "Remove generated rules")),
+        self.assertEqual(sorted(self.section(plan, "Remove")),
                          sorted([str(self.ws1 / AGENT), str(self.ws2 / AGENT)]))
         self.run_install("--apply")
         self.assertFalse((self.ws1 / AGENT).exists())
@@ -138,7 +138,7 @@ class Templates(InstallerTest):
         self.run_install("--teardown", "--apply")
         self.assertFalse((self.ws1 / AGENT).exists())
         self.assertFalse((self.ws2 / AGENT).exists())
-        self.assertEqual(self.state()["generated"], {})
+        self.assertEqual(self.state()["files"], {})
 
     def test_unknown_placeholder_fails_the_preview_and_keeps_the_file(self):
         self.run_install("--apply")
@@ -150,9 +150,9 @@ class Templates(InstallerTest):
         problems = self.section(plan, "Problems")
         self.assertTrue(any("can't render" in line and "unknown config key 'tracker.jira.nope'" in line
                             and "isn't a placeholder" in line for line in problems), problems)
-        self.assertEqual(self.section(plan, "Remove generated rules"), [])
+        self.assertEqual(self.section(plan, "Remove"), [])
         self.assertEqual(self.text(self.ws1), before)
-        self.assertIn(install.norm(self.ws1 / AGENT), self.state()["generated"])
+        self.assertIn(install.norm(self.ws1 / AGENT), self.state()["files"])
         self.assertIn("\n/.claude/agents/filer.md\n", (self.ws2 / ".git" / "info" / "exclude").read_text())
 
     def test_a_feature_without_its_config_section_is_a_problem(self):
@@ -165,37 +165,45 @@ class Templates(InstallerTest):
                             for line in self.section(plan, "Problems")))
 
     def test_a_previously_linked_file_is_replaced(self):
-        # Before templates, the agent was linked; that link goes and the rendered file takes its place.
+        # Before copies, the agent was a link; the next install replaces it with the rendered file.
         plain = write(self.source / ".claude" / "agents" / "filer.md", "---\nname: filer\n---\n")
         (self.source / ".claude" / "agents" / "filer.md.tmpl").rename(self.tmp / "filer.md.tmpl")
         self.run_install("--apply")
-        self.assertTrue((self.ws1 / AGENT).is_symlink())
+        state = self.state()
+        state["links"] = {}
+        for ws in (self.ws1, self.ws2):
+            path = ws / AGENT
+            path.unlink()
+            os.symlink(plain, path)
+            del state["files"][install.norm(path)]
+            state["links"][install.norm(path)] = {"target": str(path), "source": str(plain), "part": "workspace",
+                                                  "workspace": install.norm(ws)}
+        (self.repo / ".install-state.json").write_text(json.dumps(state), encoding="utf-8")
 
         plain.unlink()
         (self.tmp / "filer.md.tmpl").rename(self.source / ".claude" / "agents" / "filer.md.tmpl")
         _, plan = self.run_install()
-        self.assertIn(str(self.ws1 / AGENT), self.section(plan, "Remove stale links"))
-        self.assertIn(f"{self.ws1 / AGENT} (replaces a link, rendered from filer.md.tmpl)",
-                      self.section(plan, "Write generated rules"))
+        self.assertIn(f"{self.ws1 / AGENT} (replaces a link, rendered from filer.md.tmpl)", self.written(plan))
+        self.assertEqual(self.section(plan, "Remove"), [])
         code, plan = self.run_install("--apply")
         self.assertEqual(code, 0, plan)
         self.assertFalse((self.ws1 / AGENT).is_symlink())
         self.assertIn("mcp__atlassian__getJiraIssue", self.text(self.ws1))
-        self.assertNotIn(install.norm(self.ws1 / AGENT), self.state()["links"])
+        self.assertFalse(any(entry.get("link") for entry in self.state()["files"].values()))
 
     def test_a_file_the_installer_didnt_write_is_a_conflict_unless_identical(self):
         write(self.ws1 / AGENT, "# Mine\n")
         code, plan = self.run_install("--apply")
         self.assertEqual(code, 1)
-        self.assertIn(f"[not-generated] {self.ws1 / AGENT}: a file the installer didn't generate is where a "
-                      "generated file goes", self.section(plan, "Conflicts, left alone"))
+        self.assertTrue(any(line.startswith(f"[unmanaged] {self.ws1 / AGENT}: a file the installer didn't write")
+                            for line in self.section(plan, "Conflicts, left alone")), plan)
         self.assertEqual(self.text(self.ws1), "# Mine\n")
 
         rendered = self.text(self.ws2)
         write(self.ws1 / AGENT, rendered.replace("atlassian-personal", "atlassian"))
         code, plan = self.run_install("--apply")
         self.assertEqual(code, 0, plan)
-        self.assertIn(install.norm(self.ws1 / AGENT), self.state()["generated"])
+        self.assertIn(install.norm(self.ws1 / AGENT), self.state()["files"])
 
     def test_a_link_conflict_is_reported_in_json(self):
         os.makedirs(self.ws1 / AGENT.parent, exist_ok=True)

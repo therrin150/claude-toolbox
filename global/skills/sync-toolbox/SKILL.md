@@ -1,6 +1,6 @@
 ---
 name: sync-toolbox
-description: Sync the Claude toolboxes on this machine: after pulling or editing a toolbox, adding or removing a toolbox or workspace in machine.yml, or tearing it all down. Previews, then applies on approval. Use for "sync my toolbox", "re-link my skills".
+description: Sync the Claude toolboxes on this machine: after pulling or editing a toolbox, adding or removing a toolbox or workspace in machine.yml, or tearing it all down. Previews, then applies on approval. Use for "sync my toolbox", "refresh my skills".
 ---
 
 # Sync Toolbox
@@ -9,9 +9,10 @@ Wraps `install.py` in `claude-toolbox`, the one installer. It always installs `c
 `global/` into `~/.claude` and `workspace/` into every workspace its `machine.yml` lists under `workspaces:`, and
 installs every other toolbox repo listed under `toolboxes:` whole: each holds a `toolbox.yml` naming its one `source`
 folder and the `target` folder it mirrors. It previews by default and changes nothing until `--apply`. Removing a
-toolbox or workspace from `machine.yml` and syncing removes what the installer put there: its links, generated files,
-the folders it created for them, and its git-exclude entries. Real files and links the installer didn't make are never
-touched, and neither is a workspace's `.claude/toolbox.local.yml`.
+toolbox or workspace from `machine.yml` and syncing removes what the installer put there: its copies, the folders it
+created for them, and its git-exclude entries. Every installed file is a copy recorded in a manifest with the hash
+written, so a file edited on disk is a conflict and left alone, and so is any file the installer didn't write. A
+workspace's `.claude/toolbox.local.yml` is never touched.
 
 ## Arguments
 
@@ -30,9 +31,11 @@ touched, and neither is a workspace's `.claude/toolbox.local.yml`.
 
 ### 1. Find the installer
 
-The installer is the `claude-toolbox` folder this skill is linked from: resolve `~/.claude/skills/sync-toolbox` and go
-up three levels (today `~/_personal/claude-toolbox`). Use `python3` to run it, or `py -3` on Windows. If `import yaml`
-fails, show `python3 -m pip install -r requirements.txt` and stop.
+The installer is the `claude-toolbox` folder named in `~/.claude/toolbox-repo` (today `~/_personal/claude-toolbox`);
+the installer writes that file on every sync. If it's missing (a machine not yet synced since copies), resolve
+`~/.claude/skills/sync-toolbox`: while it is still a link, go up three levels from where it leads; otherwise ask where
+the toolbox is cloned. Use `python3` to run it, or `py -3` on Windows. If `import yaml` fails, show
+`python3 -m pip install -r requirements.txt` and stop.
 
 If there's no `machine.yml`, create it from `machine.example.yml`. Keep `machine.yml`'s original text to restore on
 decline.
@@ -44,7 +47,7 @@ Edit the text, keeping its comments.
 - **Add a toolbox**: the folder must hold a `toolbox.yml` with `source` and `target` (the header of `claude-toolbox`'s
   `toolbox.yml` lists every key). If it has a `domains.yml` instead, say it must be renamed and reshaped first and
   stop. Add the path, written with `~`, under `toolboxes:`.
-- **Remove a toolbox or a workspace**: delete its line. If it isn't listed, still run the preview: links from an
+- **Remove a toolbox or a workspace**: delete its line. If it isn't listed, still run the preview: files from an
   earlier install may remain.
 
 To act on one toolbox or workspace without editing `machine.yml`, `install.py --toolbox <name or path>` and
@@ -58,12 +61,13 @@ Run `install.py` from the installer's folder, or `install.py --teardown` for a t
 
 ### 4. Present the preview
 
-Show the counts, then every generated-rule change, conflict, warning and problem verbatim, plus the full plan's path
-(`install-plan.txt`). Don't list the individual links unless asked.
+Show the counts, then every conflict, warning and problem verbatim (and the Create, Update and Remove items when the
+summary lists them), plus the full plan's path (`install-plan.txt`). Don't list the individual files unless asked.
 
-- **Conflicts** are left alone by the installer. Explain each: a real file in the way usually means content not yet
-  moved into the toolbox; a link pointing elsewhere is usually an old link from before the toolbox. Never delete or move
-  either without the user saying so.
+- **Conflicts** are left alone by the installer. Explain each: `edited` is a copy changed in place, whose edit belongs
+  in the toolbox (or is thrown away by deleting the file, which the next sync recreates); `unmanaged` is a file the
+  installer never wrote, usually content not yet moved into the toolbox; `foreign` is a link pointing elsewhere. Never
+  delete or move any of them without the user saying so.
 - **Problems** include a workspace with no `.claude/toolbox.local.yml` or an invalid one (nothing there is installed or
   removed until `/setup-workspace` runs there or the config is fixed), a toolbox whose manifest is missing or still
   `domains.yml` (nothing of it is installed or removed until it's renamed), and a `machine.yml` that still has

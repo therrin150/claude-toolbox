@@ -34,7 +34,20 @@ from pathlib import Path
 
 import yaml
 
-REPO = Path(__file__).resolve().parents[4]
+
+def toolbox_repo() -> Path:
+    """The claude-toolbox repo this skill comes from: found from this file when it runs inside the repo, else from the
+    pointer the installer writes (`~/.claude/toolbox-repo`), since an installed copy sits outside it."""
+    here = Path(__file__).resolve().parents[4]
+    if (here / "install.py").is_file():
+        return here
+    try:
+        return Path((Path.home() / ".claude" / "toolbox-repo").read_text(encoding="utf-8").strip())
+    except OSError:
+        return here
+
+
+REPO = toolbox_repo()
 sys.path.insert(0, str(REPO / "workspace" / ".claude" / "toolbox" / "lib"))
 
 import config  # noqa: E402

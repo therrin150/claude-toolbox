@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import site
 import subprocess
 import sys
 import tempfile
@@ -25,8 +26,8 @@ CONFIG = Path(".claude/toolbox.local.yml")
 
 
 class DoctorTest(unittest.TestCase):
-    """A toolbox (install.py copied, its workspace folder linked to this repo's) and one single-repo workspace with a
-    `none` tracker, installed and clean."""
+    """A toolbox (install.py copied, its workspace folder linked to this repo's; what it installs is copies) and one
+    single-repo workspace with a `none` tracker, installed and clean."""
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp()).resolve()
@@ -77,7 +78,7 @@ class DoctorTest(unittest.TestCase):
 
     def doctor(self, **env) -> tuple[int, dict, str]:
         script = self.ws / ".claude" / "toolbox" / "bin" / "toolbox.py"
-        self.assertTrue(script.is_symlink())
+        self.assertTrue(script.is_file() and not script.is_symlink())  # an installed copy
         proc = subprocess.run([sys.executable, str(script), "doctor"], cwd=self.ws, capture_output=True, text=True,
                               env={**self.env, **env})
         out = json.loads(proc.stdout)
@@ -95,6 +96,17 @@ class DoctorTest(unittest.TestCase):
         self.assertTrue(all(line.startswith('{"check": ') for line in lines[1:8]))  # one line per check
         self.assertFalse((self.toolbox / "install-plan.txt").exists())  # --json writes no plan file
 
+    def test_an_installed_copy_finds_the_installer_through_the_pointer(self):
+        home = self.tmp / "home"
+        (home / ".claude").mkdir(parents=True)
+        (home / ".claude" / "toolbox-repo").write_text(f"{self.toolbox}\n")
+        env = {"TOOLBOX_INSTALLER": "", "PYTHONUSERBASE": site.getuserbase()}  # a new HOME must still find PyYAML
+        _, checks, text = self.doctor(HOME=str(home), **env)
+        self.assertEqual(checks["install"]["status"], "ok", text)
+        _, checks, _ = self.doctor(HOME=str(self.tmp / "nowhere"), **env)
+        self.assertEqual(checks["install"]["status"], "fail")
+        self.assertIn("no installer at", checks["install"]["detail"])
+
     def test_stale_generated_rule(self):
         self.config["workspace"]["name"] = "renamed"
         self.write_config()
@@ -103,7 +115,7 @@ class DoctorTest(unittest.TestCase):
         self.assertEqual(checks["rule"]["status"], "fail")
         self.assertIn("stale", checks["rule"]["detail"])
         self.assertEqual(checks["install"]["status"], "fail")
-        self.assertIn("Write generated rules", checks["install"]["detail"]["pending"])
+        self.assertIn("Update", checks["install"]["detail"]["pending"])
         self.install()
         code, checks, _ = self.doctor()
         self.assertEqual(code, 0)
@@ -129,8 +141,9 @@ class DoctorTest(unittest.TestCase):
 
     def test_readme_is_installed_and_never_a_doc(self):
         readme = self.ws / ".claude" / "extensions" / "README.md"
-        self.assertTrue(readme.is_symlink())
-        self.assertEqual(readme.resolve(), REPO / "workspace" / ".claude" / "extensions" / "README.md")
+        self.assertTrue(readme.is_file() and not readme.is_symlink())
+        source = REPO / "workspace" / ".claude" / "extensions" / "README.md"
+        self.assertEqual(readme.read_bytes(), source.read_bytes())
         self.assertIn(str(readme), (self.toolbox / "install-plan.txt").read_text())
         self.assertIn("/.claude/extensions/README.md", (self.ws / ".git" / "info" / "exclude").read_text())
         self.assertLess(len(readme.read_text().splitlines()), 100)  # a one-screen guide

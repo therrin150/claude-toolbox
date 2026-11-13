@@ -14,7 +14,7 @@ Each check returns {"check", "status", "detail"}, status `ok`, `fail` or `skip` 
 
 What needs an MCP tool (the Jira account and cloud id, the Slack channel) is the toolbox-doctor skill's: `mcp_checks()`
 lists what it should check. The installer is the claude-toolbox repo's install.py, found from this file's resolved
-location; TOOLBOX_INSTALLER names another (for tests).
+location, or from the pointer the installer writes when this is a copy; TOOLBOX_INSTALLER names another (for tests).
 """
 
 from __future__ import annotations
@@ -38,9 +38,21 @@ def result(check: str, status: str, detail) -> dict:
     return {"check": check, "status": status, "detail": detail}
 
 
+def toolbox_repo() -> Path:
+    """The claude-toolbox repo: found from this file when it runs inside the repo, else from the pointer the installer
+    writes (`~/.claude/toolbox-repo`), since the copy installed in a workspace sits outside the repo."""
+    here = Path(__file__).resolve().parents[4]
+    if (here / "install.py").is_file():
+        return here
+    try:
+        return Path((Path.home() / ".claude" / "toolbox-repo").read_text(encoding="utf-8").strip())
+    except OSError:
+        return here
+
+
 def installer() -> Path:
     override = os.environ.get(ENV_INSTALLER)
-    return Path(override) if override else Path(__file__).resolve().parents[4] / "install.py"
+    return Path(override) if override else toolbox_repo() / "install.py"
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -73,7 +85,7 @@ def check_install(cfg: config.Config) -> dict:
     if isinstance(preview, str):
         return result("install", "fail", preview)
     pending = {title: items for title, items in preview["sections"].items()
-               if items and title not in ("Already in place", "Warnings")}
+               if items and title not in ("Unchanged", "Warnings")}
     problems = []
     if not preview["listed"]:
         problems.append(f"machine.yml doesn't list {cfg.root}, so the next full sync removes what's installed here")
@@ -81,7 +93,7 @@ def check_install(cfg: config.Config) -> dict:
         problems.append(f"preview isn't clean; run {script} --workspace {cfg.root} to see it")
     if problems:
         return result("install", "fail", {"problems": problems, "pending": pending})
-    in_place = len(preview["sections"].get("Already in place", []))
+    in_place = len(preview["sections"].get("Unchanged", []))
     return result("install", "ok", f"{in_place} item(s) in place, nothing to change")
 
 

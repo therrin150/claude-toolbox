@@ -147,9 +147,10 @@ rest of the file. On a later decline, remove that line again.
 python3 <installer> --workspace <workspace>
 ```
 
-Present it as `/sync-toolbox` does: the counts, every generated-rule change, conflict, warning and problem verbatim,
-and `install-plan.txt`'s path. A real file where a link goes is usually a copy from before the toolbox: never delete or
-move it without the user saying so. On approval, run it again with `--apply` and report the counts and any errors.
+Present it as `/sync-toolbox` does: the counts, every conflict, warning and problem verbatim,
+and `install-plan.txt`'s path. A conflict is a file edited since the installer wrote it, or one it never wrote (often a
+copy from before the toolbox): never delete or move it without the user saying so. On approval, run it again with
+`--apply` and report the counts and any errors.
 
 ### 9. Toolbox doctor
 

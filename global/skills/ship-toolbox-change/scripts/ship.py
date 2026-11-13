@@ -46,9 +46,22 @@ import yaml
 GH_TIMEOUT = 90
 ENV = {"GIT_TERMINAL_PROMPT": "0", "GH_PROMPT_DISABLED": "1", "GH_NO_UPDATE_NOTIFIER": "1"}
 TRAILER = re.compile(r"^(co-authored-by|signed-off-by):|🤖", re.IGNORECASE | re.MULTILINE)
-# The claude-toolbox this script ships from (global/skills/ship-toolbox-change/scripts/), whose installer also installs
-# the glue toolboxes its machine.yml lists, which have no installer of their own.
-CLAUDE_TOOLBOX = Path(__file__).resolve().parents[4]
+
+def toolbox_repo() -> Path:
+    """The claude-toolbox repo this script comes from (global/skills/ship-toolbox-change/scripts/): found from this
+    file when it runs inside the repo, else from the pointer the installer writes (`~/.claude/toolbox-repo`), since an
+    installed copy sits outside it."""
+    here = Path(__file__).resolve().parents[4]
+    if (here / "install.py").is_file():
+        return here
+    try:
+        return Path((Path.home() / ".claude" / "toolbox-repo").read_text(encoding="utf-8").strip())
+    except OSError:
+        return here
+
+
+# Its installer also installs the glue toolboxes its machine.yml lists, which have no installer of their own.
+CLAUDE_TOOLBOX = toolbox_repo()
 # Every toolbox repo holds one; the retired name gets a message saying to rename it.
 MANIFEST = "toolbox.yml"
 OLD_MANIFEST = "domains.yml"
@@ -320,7 +333,7 @@ class Ship:
             if line.startswith("== "):
                 section = line[3:].rsplit(" (", 1)[0]
                 continue
-            if section and section != "Already in place" and line.strip():
+            if section and section != "Unchanged" and line.strip():
                 pending.setdefault(section, []).append(line.strip())
         return pending
 

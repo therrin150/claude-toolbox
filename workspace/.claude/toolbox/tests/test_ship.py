@@ -28,7 +28,7 @@ import ship  # noqa: E402
 INSTALL = """\
 import pathlib
 pathlib.Path("install-plan.txt").write_text("== Create links (1)\\n  ~/.claude/skills/new-skill\\n\\n"
-                                            "== Already in place (3)\\n  ~/.claude/CLAUDE.md\\n")
+                                            "== Unchanged (3)\\n  ~/.claude/CLAUDE.md\\n")
 """
 MESSAGE = "add a skill\n\nThe toolbox lacked it.\n"
 

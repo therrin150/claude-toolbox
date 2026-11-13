@@ -1,24 +1,28 @@
 #!/usr/bin/env python3
-"""Link every toolbox's Claude Code files into place on this machine.
+"""Copy every toolbox's Claude Code files into place on this machine.
 
 This repo installs two folders of its own: global/ into ~/.claude, and workspace/ into every workspace machine.yml
 lists, gated by each workspace's features, with the workspace's generated config rule. Every other toolbox repo
 machine.yml lists installs whole: its toolbox.yml names one source folder and the folder it mirrors. Each source folder
-mirrors its target: folders are created, files are linked one at a time, and skill folders (anything containing
-SKILL.md) are linked whole. The workspace folder's rules are written into each workspace instead, since Claude Code
-skips a project rule that links outside the project. Previews by default and changes nothing; pass --apply to make the
-changes. See README.md.
+mirrors its target. Every file is installed as a copy (never a link), so each lands inside the project that uses it;
+templates are rendered and rules get a generated note. A manifest (.install-state.json) records each file's source and
+the hash written, and every target is classified: create, update (still what was written, source changed), unchanged,
+remove (no longer wanted, unedited) or conflict (edited on disk, or a file the installer didn't write). Previews by
+default and changes nothing; pass --apply to make the changes, each file written atomically. See README.md.
 """
 
 from __future__ import annotations
 
 import argparse
 import fnmatch
+import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -54,31 +58,42 @@ TOOLBOX_KEYS = {"source", "target", "prefix", "ignore", "external", "ship", "bra
 FEATURES_FILE = "features.yml"
 # The per-workspace part that writes each workspace's generated rule.
 RULE_PART = "workspace"
+# The part whose install also writes the pointer to this repo, so a script installed as a copy can find the installer.
+POINTER_PART = "global"
+POINTER_NAME = "toolbox-repo"
 # The feature whose workspaces get their vault's tasks and discussions folders made, when the vault exists. Like any
 # folder the installer makes, they are removed only once empty, so a task record is never touched.
 TASKS_FEATURE = "tasks"
 # The folder in a per-workspace part that mirrors each workspace's vault (its config's `vault.path`) instead of the
-# workspace root. Its files are written, never linked, since Obsidian and synced vaults handle links poorly: rendered
-# when they end .tmpl, copied as they are otherwise.
+# workspace root: rendered when a file ends .tmpl, copied as it is otherwise.
 VAULT_DIR = ".vault"
-# The rules folder in a per-workspace part. Its rules are written into each workspace, never linked: Claude Code never
-# loads a project rule whose link resolves outside the project, and a per-workspace part's source always lies outside.
-# Each copy carries a generated note, after any frontmatter so `paths:` still works.
+# The rules folder in a per-workspace part. Each rule is written with a generated note, after any frontmatter so
+# `paths:` still works.
 RULES_DIR = ".claude/rules"
 RULE_FRONTMATTER = re.compile(r"\A---\n(?:.*?\n)?---[ \t]*(?:\n|\Z)", re.DOTALL)
+
+# Running an installed script writes __pycache__ beside it, where it used to land in the toolbox repo.
+PYCACHE_EXCLUDE = "__pycache__/"
 
 ALWAYS_SKIP = {".DS_Store", "Thumbs.db", "__pycache__", ".gitkeep"}
 SKILL_FILES = ("SKILL.md", "skill.md")
 FRONTMATTER_NAME = re.compile(r"^name:\s*['\"]?(.+?)['\"]?\s*$", re.MULTILINE)
 
+# How an item was made: copied as it is, copied with a rule's note, copied into a vault, rendered from a template, or
+# generated from the config.
+COPY, RULE, VAULT, RENDERED, GENERATED = "copy", "rule", "vault", "rendered", "generated"
+
 CONFLICT_REASONS = {
-    "real": "a real file or folder is in the way",
+    "edited": "edited on disk since the installer wrote it",
+    "unmanaged": "a file the installer didn't write is there",
+    "unreadable": "can't be read",
+    "folder": "a folder is where a file goes",
     "foreign": "a link to somewhere else is in the way",
     "collision": "more than one source wants this location",
     "missing-source": "the outside source doesn't exist",
     "blocked": "inside a folder that is in conflict",
     "dir-conflict": "a file or link is where a folder should be",
-    "not-generated": "a file the installer didn't generate is where a generated file goes",
+    "edited-stale": "edited on disk, and no longer wanted",
 }
 
 
@@ -114,21 +129,22 @@ class Workspace:
 
 
 @dataclass
-class Link:
+class Item:
+    """One file to install: the bytes it should hold at `target`."""
+
     part: str
-    source: Path
+    workspace: str | None  # norm path, for a per-workspace part's files
     target: Path
-    external: bool = False
-    workspace: str | None = None  # norm path, for a per-workspace part's links
+    data: bytes
+    source: Path | None = None  # the file copied or the template rendered; None for a generated file
+    kind: str = COPY
+    executable: bool = False
+    in_skill: bool = False  # inside a skill folder, whose name is checked once for the folder
 
-
-@dataclass
-class Generated:
-    part: str
-    workspace: str
-    path: Path
-    text: str
-    template: Path | None = None  # the source of a rendered or copied file; None for the generated rule
+    @property
+    def special(self) -> bool:
+        """Whether it is a rule, vault, rendered or generated file: what `toolbox.py doctor` reports as rendered."""
+        return self.kind != COPY
 
 
 @dataclass
@@ -150,17 +166,15 @@ class Scope:
 
 @dataclass
 class Plan:
-    create_dirs: list
-    create: list
-    relink: list
-    stale: list
-    forget: list
-    write_rules: list
-    stale_rules: list
-    forget_rules: list
+    create_dirs: list  # (part, workspace, folder)
+    replace_dirs: list  # (part, workspace, folder): a link to one of our folders, replaced by a real folder
+    create: list  # Items with nothing on disk
+    update: list  # (Item, detail): still what was written, or a link of ours; rewritten
+    unchanged: list  # Items already what they should be
+    edited: list  # Items edited on disk: conflicts that are ours
+    remove: list  # (key, manifest entry): no longer wanted, unedited
+    forget: list  # manifest keys whose file is gone or no longer ours
     excludes: list
-    ok: list
-    rules_ok: list
     conflicts: list
     warnings: list
     problems: list
@@ -170,12 +184,12 @@ class Plan:
     known: set  # every part name a toolbox has, held ones included
     workspaces: list
     scope: Scope
-    held_generated: list = field(default_factory=list)  # (part, workspace, path) of templates that failed to render
-    rendered: list = field(default_factory=list)  # each rendered file's {path, template, status}, for --json
+    held_generated: list = field(default_factory=list)  # (part, workspace, path) of files that failed to read or render
+    rendered: list = field(default_factory=list)  # each special file's {path, template, status}, for --json
 
 
 # ---------------------------------------------------------------------------------------------------------------------
-# Paths
+# Paths and files
 
 
 def norm(path) -> str:
@@ -207,6 +221,37 @@ def show(path) -> str:
     """Path for display, with the home folder shortened to ~."""
     text, home = str(path), str(Path.home())
     return "~" + text[len(home):] if text == home or text.startswith(home + os.sep) else text
+
+
+def digest(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def disk_digest(path: Path) -> str | None:
+    try:
+        return digest(path.read_bytes())
+    except OSError:
+        return None
+
+
+def is_executable(path: Path) -> bool:
+    """Whether the file has an executable bit. Never on Windows, where there is none to keep."""
+    return os.name != "nt" and path.stat().st_mode & 0o111 != 0
+
+
+def write_atomic(path: Path, data: bytes, executable: bool) -> None:
+    """Write a file so it is never seen half-written: a temp file beside it, then a rename over it (which replaces a
+    link at the path rather than following it)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle, temp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".install")
+    try:
+        with os.fdopen(handle, "wb") as out:
+            out.write(data)
+        os.chmod(temp, 0o755 if executable else 0o644)
+        os.replace(temp, path)
+    except BaseException:
+        Path(temp).unlink(missing_ok=True)
+        raise
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -368,22 +413,41 @@ def load_workspaces(paths: list, problems: list):
 
 
 def load_state() -> dict:
+    """The manifest: `files` (each installed file's source and the hash written) and `dirs` (the folders made). State
+    from before the manifest had `links` and `generated` sections; they become `files` entries without a hash, which
+    the next apply replaces by copies and records."""
     state = {}
     if STATE.exists():
         with open(STATE, encoding="utf-8") as handle:
             state = json.load(handle)
-    for section in ("links", "dirs", "generated"):
+    for section in ("files", "dirs", "links", "generated"):
         state.setdefault(section, {})
         for entry in state[section].values():
             if "domain" in entry:  # recorded before toolboxes replaced domains
                 entry["part"] = entry.pop("domain")
+    for key, entry in state.pop("links").items():
+        state["files"].setdefault(key, {
+            **{name: entry[name] for name in ("part", "workspace") if name in entry},
+            "path": entry["target"], "source": entry["source"], "hash": None, "link": True,
+        })
+    for key, entry in state.pop("generated").items():
+        state["files"].setdefault(key, {
+            **{name: entry[name] for name in ("part", "workspace") if name in entry},
+            "path": entry["path"], "source": entry.get("template"), "hash": None, "special": True,
+        })
     return state
 
 
 def save_state(state: dict) -> None:
-    with open(STATE, "w", encoding="utf-8") as handle:
-        json.dump(state, handle, indent=2, sort_keys=True)
-        handle.write("\n")
+    handle, temp = tempfile.mkstemp(dir=STATE.parent, prefix=f".{STATE.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as out:
+            json.dump({"dirs": state["dirs"], "files": state["files"]}, out, indent=2, sort_keys=True)
+            out.write("\n")
+        os.replace(temp, STATE)
+    except BaseException:
+        Path(temp).unlink(missing_ok=True)
+        raise
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -410,14 +474,27 @@ def skipper(per_workspace: bool, features: dict, have: list):
     return lambda relpath: relpath in (FEATURES_FILE, VAULT_DIR) or gated(relpath, features, have)
 
 
-def walk(part: str, src_root: Path, tgt_root: Path, ignore: list, skip, workspace, links: list, dirs: list,
-         templates: list | None = None, rules: list | None = None) -> None:
-    """Collect a part's links and folders. With `templates` and `rules` (a per-workspace part), each .tmpl file goes in
-    `templates` as (source, target without the suffix), and each other rule in its rules folder goes in `rules` as
-    (source, target), instead of being linked."""
+def read_source(part: str, workspace: str | None, source: Path, target: Path, items: list, held: list,
+                problems: list, **fields) -> None:
+    """Add the file at `source` as an item for `target`, or report why it can't be read."""
+    try:
+        data = source.read_bytes()
+        executable = is_executable(source)
+    except OSError as error:
+        problems.append(f"{show(source)}: can't read, so {show(target)} is left as it is: {error}")
+        held.append((part, workspace, target))
+        return
+    items.append(Item(part, workspace, target, data, source, executable=executable, **fields))
+
+
+def walk(part: str, src_root: Path, tgt_root: Path, ignore: list, skip, workspace, items: list, dirs: list,
+         skills: list, held: list, problems: list, templates: list | None = None, rules: list | None = None) -> None:
+    """Collect a part's files, folders and skill folders. With `templates` and `rules` (a per-workspace part), each
+    .tmpl file goes in `templates` as (source, target without the suffix), and each other rule in its rules folder goes
+    in `rules` as (source, target), to be rendered or noted instead of copied as they are."""
     suffix = import_templates().SUFFIX if templates is not None else None
 
-    def visit(src: Path, tgt: Path, rel: str) -> None:
+    def visit(src: Path, tgt: Path, rel: str, in_skill: bool) -> None:
         for entry in sorted(src.iterdir()):
             relpath = f"{rel}/{entry.name}" if rel else entry.name
             if entry.name in ALWAYS_SKIP or any(fnmatch.fnmatch(relpath, pattern) for pattern in ignore):
@@ -425,18 +502,21 @@ def walk(part: str, src_root: Path, tgt_root: Path, ignore: list, skip, workspac
             if skip(relpath):
                 continue
             target = tgt / entry.name
-            if entry.is_dir() and not is_skill_dir(entry):
+            if entry.is_dir():
                 dirs.append((part, workspace, target))
-                visit(entry, target, relpath)
+                skill = in_skill or is_skill_dir(entry)
+                if skill and not in_skill:
+                    skills.append((part, entry))
+                visit(entry, target, relpath, skill)
             elif suffix and entry.is_file() and entry.name.endswith(suffix) and entry.name != suffix:
                 templates.append((entry, tgt / entry.name[: -len(suffix)]))
             elif rules is not None and entry.is_file() and entry.suffix == ".md" \
                     and relpath.startswith(RULES_DIR + "/"):
                 rules.append((entry, target))
             else:
-                links.append(Link(part, entry, target, workspace=workspace))
+                read_source(part, workspace, entry, target, items, held, problems, in_skill=in_skill)
 
-    visit(src_root, tgt_root, "")
+    visit(src_root, tgt_root, "", False)
 
 
 def parents_within(path: Path, root: Path) -> list:
@@ -448,12 +528,13 @@ def parents_within(path: Path, root: Path) -> list:
     return list(reversed(chain))
 
 
-def render_template(part: str, ws: Workspace, template: Path, path: Path, generated: list, held: list,
+def render_template(part: str, ws: Workspace, template: Path, path: Path, items: list, held: list,
                     problems: list) -> None:
-    """Render one template with a workspace's config into `generated`, or report why it can't be."""
+    """Render one template with a workspace's config into `items`, or report why it can't be."""
     templates = import_templates()
     try:
         text = templates.render(template.read_text(encoding="utf-8"), ws.config)
+        executable = is_executable(template)
     except (OSError, UnicodeDecodeError, templates.TemplateError) as error:
         reasons = error.errors if isinstance(error, templates.TemplateError) else [str(error)]
         problems.append(
@@ -462,7 +543,7 @@ def render_template(part: str, ws: Workspace, template: Path, path: Path, genera
         )
         held.append((part, ws.key, path))
         return
-    generated.append(Generated(part, ws.key, path, text, template))
+    items.append(Item(part, ws.key, path, text.encode("utf-8"), template, RENDERED, executable))
 
 
 def noted_rule(text: str, source: Path) -> str:
@@ -478,20 +559,20 @@ def noted_rule(text: str, source: Path) -> str:
     return head + title + note + "\n" + ("\n" + body if body else "")
 
 
-def copy_rule(part: str, ws: Workspace, source: Path, path: Path, generated: list, held: list,
-              problems: list) -> None:
-    """Copy one rule, with its generated note, into `generated`, or report why it can't be."""
+def copy_rule(part: str, ws: Workspace, source: Path, path: Path, items: list, held: list, problems: list) -> None:
+    """Copy one rule, with its generated note, into `items`, or report why it can't be."""
     try:
         text = source.read_text(encoding="utf-8")
+        executable = is_executable(source)
     except (OSError, UnicodeDecodeError) as error:
         problems.append(f"workspace {show(ws.path)}: can't copy {show(path)} from {source.name}, so it is left as it "
                         f"is: {error}")
         held.append((part, ws.key, path))
         return
-    generated.append(Generated(part, ws.key, path, noted_rule(text, source), source))
+    items.append(Item(part, ws.key, path, noted_rule(text, source).encode("utf-8"), source, RULE, executable))
 
 
-def vault_files(part: str, src_root: Path, ws: Workspace, ignore: list, skip, dirs: list, generated: list,
+def vault_files(part: str, src_root: Path, ws: Workspace, ignore: list, skip, dirs: list, items: list,
                 held: list, problems: list) -> None:
     """Collect the part's vault folder for one workspace: each file rendered or copied into the workspace's vault, at
     its path below the folder. A vault that doesn't exist is a problem, and nothing is written there."""
@@ -525,22 +606,19 @@ def vault_files(part: str, src_root: Path, ws: Workspace, ignore: list, skip, di
         target = vault / rel
         dirs.extend((part, ws.key, folder) for folder in parents_within(target, vault))
         if entry.name.endswith(suffix) and entry.name != suffix:
-            render_template(part, ws, entry, target.with_name(entry.name[: -len(suffix)]), generated, held, problems)
+            render_template(part, ws, entry, target.with_name(entry.name[: -len(suffix)]), items, held, problems)
             continue
-        try:
-            text = entry.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError) as error:
-            problems.append(f"workspace {show(ws.path)}: can't copy {entry.name} into the vault: {error}")
-            held.append((part, ws.key, target))
-            continue
-        generated.append(Generated(part, ws.key, target, text, entry))
+        read_source(part, ws.key, entry, target, items, held, problems, kind=VAULT)
 
 
-def desired(parts: dict, names: list, workspaces: list, problems: list, warnings: list, held: list | None = None):
-    """(links, folders, generated files). A template that fails to render is a problem, and its target goes in `held`
-    as (part, workspace, path): neither written nor removed."""
-    links, dirs, generated = [], [], []
+def desired(parts: dict, names: list, workspaces: list, problems: list, warnings: list, held: list | None = None,
+            missing: list | None = None):
+    """(items, folders, skill folders). A file that can't be read or a template that fails to render is a problem, and
+    its target goes in `held` as (part, workspace, path): neither written nor removed. An outside source that doesn't
+    exist goes in `missing` as (part, workspace, target, source)."""
+    items, dirs, skills = [], [], []
     held = [] if held is None else held
+    missing = [] if missing is None else missing
     by_key = {ws.key: ws for ws in workspaces}
     for name in names:
         part = parts[name]
@@ -576,27 +654,37 @@ def desired(parts: dict, names: list, workspaces: list, problems: list, warnings
             skip = skipper(part.per_workspace, features, have)
             found = [] if part.per_workspace else None
             rules = [] if part.per_workspace else None
-            walk(name, src_root, tgt_root, spec.get("ignore") or [], skip, workspace, links, dirs, found, rules)
+            walk(name, src_root, tgt_root, spec.get("ignore") or [], skip, workspace, items, dirs, skills, held,
+                 problems, found, rules)
             for template, path in found or []:
-                render_template(name, by_key[workspace], template, path, generated, held, problems)
+                render_template(name, by_key[workspace], template, path, items, held, problems)
             for source, path in rules or []:
-                copy_rule(name, by_key[workspace], source, path, generated, held, problems)
+                copy_rule(name, by_key[workspace], source, path, items, held, problems)
             if part.per_workspace:
-                vault_files(name, src_root, by_key[workspace], spec.get("ignore") or [], skip, dirs, generated, held,
+                vault_files(name, src_root, by_key[workspace], spec.get("ignore") or [], skip, dirs, items, held,
                             problems)
             for external in spec.get("external") or []:
                 if skip(external["target"]):
                     continue
                 target = tgt_root / external["target"]
+                source = expand(external["source"])
                 dirs.extend((name, workspace, folder) for folder in parents_within(target, tgt_root))
-                links.append(Link(name, expand(external["source"]), target, external=True, workspace=workspace))
+                if source.is_dir():
+                    dirs.append((name, workspace, target))
+                    walk(name, source, target, [], lambda relpath: False, workspace, items, dirs, skills, held,
+                         problems)
+                elif source.exists():
+                    read_source(name, workspace, source, target, items, held, problems)
+                else:
+                    missing.append((name, workspace, target, source))
+                    held.append((name, workspace, target))
 
     if RULE_PART in names and parts[RULE_PART].per_workspace and workspaces:
         config = import_config()
         for ws in workspaces:
             path = ws.path / config.RULE_PATH
             dirs.extend((RULE_PART, ws.key, folder) for folder in parents_within(path, ws.path))
-            generated.append(Generated(RULE_PART, ws.key, path, config.render_rule(ws.config)))
+            items.append(Item(RULE_PART, ws.key, path, config.render_rule(ws.config).encode("utf-8"), None, GENERATED))
             if TASKS_FEATURE in ws.config.features and ws.config.vault_dir is not None:
                 vault = ws.config.vault_dir
                 if not vault.is_dir():
@@ -608,10 +696,16 @@ def desired(parts: dict, names: list, workspaces: list, problems: list, warnings
                 for folder in (ws.config.tasks_dir, ws.config.discussions_dir):
                     dirs.extend((RULE_PART, ws.key, d) for d in [*parents_within(folder, vault), folder])
 
+    if POINTER_PART in names:
+        target = expand(parts[POINTER_PART].spec["target"])
+        if target.is_dir():
+            items.append(Item(POINTER_PART, None, target / POINTER_NAME, f"{REPO}\n".encode("utf-8"), None,
+                              GENERATED))
+
     unique_dirs = {}
     for part, workspace, folder in dirs:
         unique_dirs.setdefault(norm(folder), (part, workspace, folder))
-    return links, list(unique_dirs.values()), generated
+    return items, list(unique_dirs.values()), skills
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -627,10 +721,10 @@ def frontmatter_name(markdown: Path) -> str | None:
     return match.group(1).strip() if match else None
 
 
-def name_warnings(link: Link, part: Part) -> list:
-    if link.external:
+def name_warnings(source: Path, part: Part) -> list:
+    """Warnings for one skill folder, agent or rule file of a toolbox: its frontmatter name and the toolbox's prefix."""
+    if not source.is_relative_to(part.repo):
         return []
-    source = link.source
     parts = source.relative_to(part.repo).parts
     if source.is_dir():
         kind, name = "skill", source.name
@@ -666,11 +760,6 @@ def feature_warnings(parts: dict, names: list, workspaces: list) -> list:
     ]
 
 
-def is_generated(text: str, expected: str) -> bool:
-    """Whether a file on disk is a generated rule: its title and note paragraphs match the rendered text's."""
-    return text.split("\n\n", 2)[:2] == expected.split("\n\n", 2)[:2]
-
-
 def git_exclude(root: Path):
     """(repo top level, exclude file) when root is inside a git work tree, else None."""
     def git(*args):
@@ -701,114 +790,136 @@ def render_exclude(text: str, marker: str, entries: list) -> str:
 # Planning
 
 
-def own_link(path: Path, state: dict, scope: Scope) -> bool:
-    """Whether a link is one this installer made, still pointing where it did, and in this run's scope."""
-    entry = state["links"].get(norm(path))
-    return bool(entry) and scope.covers(entry["part"], entry.get("workspace")) \
-        and link_dest(path) == norm(entry["source"])
+def own_link(path: Path, key: str, source: Path | None, state: dict, owned: set) -> bool:
+    """Whether a link at `path` is one of ours: into a toolbox repo, to the source this file would be copied from, or
+    recorded in the manifest as a link this installer made."""
+    dest = link_dest(path)
+    entry = state["files"].get(key)
+    return inside(dest, owned) or (source is not None and dest == norm(source)) \
+        or bool(entry and entry.get("link") and dest == norm(entry["source"]))
 
 
-def generated_status(gen: Generated, counts: dict, blocked: list, state: dict, scope: Scope) -> str:
-    """`ok`, a write status (`new`, `changed`, `replaces a link`), or a conflict kind."""
-    key = norm(gen.path)
+def classify(item: Item, counts: dict, blocked: list, replacing: list, state: dict, owned: set) -> tuple[str, str]:
+    """(status, detail): `create`, `update`, `unchanged`, or a conflict kind. The detail says why an update happens
+    (`replaces a link`, `changed`), and where a foreign link points."""
+    key = norm(item.target)
+    path = item.target
     if counts[key] > 1:
-        return "collision"
+        return "collision", ""
     if any(key.startswith(folder + os.sep) for folder in blocked):
-        return "blocked"
-    if gen.path.is_file() and not gen.path.is_symlink():
-        current = gen.path.read_text(encoding="utf-8", errors="replace")
-        # An unrecorded rendered file is adopted only when it is exactly what this sync would write.
-        adoptable = current == gen.text if gen.template else is_generated(current, gen.text)
-        if key not in state["generated"] and not adoptable:
-            return "not-generated"
-        return "ok" if current == gen.text else "changed"
-    if gen.path.is_symlink() and own_link(gen.path, state, scope):
-        return "replaces a link"  # a file that used to be linked: the link goes as stale before the write
-    if gen.path.is_symlink() or gen.path.exists():
-        return "not-generated"
-    return "new"
+        return "blocked", ""
+    if any(key.startswith(folder + os.sep) for folder in replacing):
+        return "create", ""  # its folder is one of our links, and becomes a real folder before this is written
+    if path.is_symlink():
+        if own_link(path, key, item.source, state, owned):
+            return "update", "replaces a link"
+        return "foreign", link_dest(path)
+    if not path.exists():
+        return "create", ""
+    if not path.is_file():
+        return "folder", ""
+    disk = disk_digest(path)
+    if disk is None:
+        return "unreadable", ""
+    entry = state["files"].get(key)
+    if disk == digest(item.data):
+        return ("unchanged", "") if is_executable(path) == item.executable or os.name == "nt" else ("update", "changed")
+    if entry is None or entry.get("link"):  # never written by this installer: a real file replaced a link of ours
+        return "unmanaged", ""
+    if entry.get("hash") in (None, disk):  # still what was written (or written before hashes were kept)
+        return "update", "changed"
+    return "edited", ""
 
 
 def build_plan(parts: dict, names: list, scope: Scope, state: dict, workspaces: list, problems: list,
                known: set = frozenset()) -> Plan:
-    warnings, held = [], []
-    links, dirs, generated = desired(parts, names, workspaces, problems, warnings, held)
+    warnings, held, missing = [], [], []
+    items, dirs, skills = desired(parts, names, workspaces, problems, warnings, held, missing)
     plan = Plan(
-        [], [], [], [], [], [], [], [], [], [], [], [], warnings, problems, set(), names, dirs, set(parts) | known,
+        [], [], [], [], [], [], [], [], [], [], warnings, problems, set(), names, dirs, set(parts) | known,
         [ws.path for ws in workspaces], scope, held,
     )
     owned = {norm(REPO)} | {norm(part.repo) for part in parts.values()}
 
-    blocked = []
+    blocked, replacing = [], []
     for part, workspace, folder in dirs:
-        if folder.is_symlink() or (folder.exists() and not folder.is_dir()):
+        key = norm(folder)
+        if any(key.startswith(link + os.sep) for link in replacing):
+            plan.create_dirs.append((part, workspace, folder))  # beneath a link that is replaced first
+        elif folder.is_symlink():
+            entry = state["files"].get(key)
+            dest = link_dest(folder)
+            if inside(dest, owned) or (entry and entry.get("link") and dest == norm(entry["source"])):
+                plan.create_dirs.append((part, workspace, folder))
+                plan.replace_dirs.append((part, workspace, folder))
+                replacing.append(key)
+            else:
+                plan.conflicts.append(("dir-conflict", folder, None))
+                blocked.append(key)
+        elif folder.exists() and not folder.is_dir():
             plan.conflicts.append(("dir-conflict", folder, None))
-            blocked.append(norm(folder))
+            blocked.append(key)
         elif not folder.exists():
             plan.create_dirs.append((part, workspace, folder))
-        plan.keep_dirs.add(norm(folder))
+        plan.keep_dirs.add(key)
 
     counts = {}
-    for target in [link.target for link in links] + [gen.path for gen in generated] + [path for _, _, path in held]:
+    for target in [item.target for item in items] + [path for _, _, path in held]:
         counts[norm(target)] = counts.get(norm(target), 0) + 1
 
-    for link in links:
-        key = norm(link.target)
-        plan.warnings += name_warnings(link, parts[link.part])
-        if counts[key] > 1:
-            plan.conflicts.append(("collision", link.target, link.source))
-        elif any(key.startswith(folder + os.sep) for folder in blocked):
-            plan.conflicts.append(("blocked", link.target, link.source))
-        elif link.target.is_symlink():
-            dest = link_dest(link.target)
-            if dest == norm(link.source):
-                plan.ok.append(link)
-            elif inside(dest, owned):
-                plan.relink.append(link)
-            else:
-                plan.conflicts.append(("foreign", link.target, Path(dest)))
-        elif link.target.exists():
-            plan.conflicts.append(("real", link.target, link.source))
-        elif not link.source.exists():
-            plan.conflicts.append(("missing-source", link.target, link.source))
+    for part_name, folder in skills:
+        plan.warnings += name_warnings(folder, parts[part_name])
+    for item in items:
+        if item.part in parts and not item.special and not item.in_skill and item.source is not None:
+            plan.warnings += name_warnings(item.source, parts[item.part])
+        status, detail = classify(item, counts, blocked, replacing, state, owned)
+        shown = status
+        if status == "unchanged":
+            plan.unchanged.append(item)
+            shown = "ok"
+        elif status == "create":
+            plan.create.append(item)
+            shown = "new"
+        elif status == "update":
+            plan.update.append((item, detail))
+            shown = detail
         else:
-            plan.create.append(link)
-
-    for gen in generated:
-        status = generated_status(gen, counts, blocked, state, scope)
-        if status == "ok":
-            plan.rules_ok.append(gen)
-        elif status in CONFLICT_REASONS:
-            plan.conflicts.append((status, gen.path, None))
-        else:
-            plan.write_rules.append((gen, status))
-        if gen.template:
-            shown = f"conflict: {CONFLICT_REASONS[status]}" if status in CONFLICT_REASONS else status
-            plan.rendered.append({"path": str(gen.path), "template": str(gen.template), "status": shown})
+            if status == "edited":
+                plan.edited.append(item)
+            other = Path(detail) if status == "foreign" else item.source
+            plan.conflicts.append((status, item.target, other))
+            shown = f"conflict: {CONFLICT_REASONS[status]}"
+        if item.special and item.source is not None:
+            plan.rendered.append({"path": str(item.target), "template": str(item.source), "status": shown})
+    for part, workspace, target, source in missing:
+        plan.conflicts.append(("missing-source", target, source))
     for _, _, path in held:
-        plan.rendered.append({"path": str(path), "template": None, "status": "can't render; see Problems"})
+        if not any(path == target for _, _, target, _ in missing):
+            plan.rendered.append({"path": str(path), "template": None, "status": "can't render; see Problems"})
 
-    wanted = {norm(link.target) for link in links}
-    for key, record in state["links"].items():
-        if not scope.covers(record["part"], record.get("workspace")) or key in wanted:
+    wanted = {norm(item.target) for item in items} | {norm(path) for _, _, path in held} \
+        | {norm(folder) for _, _, folder in dirs}
+    for key, entry in state["files"].items():
+        if not scope.covers(entry["part"], entry.get("workspace")) or key in wanted:
             continue
-        target = Path(record["target"])
-        if target.is_symlink() and link_dest(target) == norm(record["source"]):
-            plan.stale.append((key, record))
+        path = Path(entry["path"])
+        if path.is_symlink():
+            if entry.get("link") and link_dest(path) == norm(entry["source"]):
+                plan.remove.append((key, entry))
+            else:
+                plan.forget.append(key)
+        elif path.is_file() and entry.get("link"):
+            plan.forget.append(key)  # a real file replaced the link; it was never ours to remove
+        elif path.is_file():
+            disk = disk_digest(path)
+            if entry["hash"] is None or disk == entry["hash"]:
+                plan.remove.append((key, entry))
+                if entry.get("special") and entry.get("source"):
+                    plan.rendered.append({"path": entry["path"], "template": entry["source"], "status": "stale"})
+            else:
+                plan.conflicts.append(("edited-stale", path, None))
         else:
             plan.forget.append(key)
-
-    wanted_rules = {norm(gen.path) for gen in generated} | {norm(path) for _, _, path in held}
-    for key, record in state["generated"].items():
-        if not scope.covers(record["part"], record["workspace"]) or key in wanted_rules:
-            continue
-        path = Path(record["path"])
-        if path.is_file() and not path.is_symlink():
-            plan.stale_rules.append((key, record))
-            if record.get("template"):
-                plan.rendered.append({"path": record["path"], "template": record["template"], "status": "stale"})
-        else:
-            plan.forget_rules.append(key)
 
     plan.excludes = plan_excludes(parts, scope, state, workspaces, plan)
     plan.warnings += feature_warnings(parts, names, workspaces)
@@ -817,12 +928,11 @@ def build_plan(parts: dict, names: list, scope: Scope, state: dict, workspaces: 
 
 
 def plan_excludes(parts: dict, scope: Scope, state: dict, workspaces: list, plan: Plan) -> list:
-    """One managed block per toolbox, part and git target: the part's links and generated files (the rule and
-    rendered templates, including any left in place because they failed to render), plus, for the rule part, each
-    workspace's config file."""
-    installed = plan.ok + plan.relink + plan.create
-    written = [(gen.part, gen.workspace, gen.path) for gen in plan.rules_ok + [gen for gen, _ in plan.write_rules]]
-    written += [(part, workspace, path) for part, workspace, path in plan.held_generated if path.is_file()]
+    """One managed block per toolbox, part and git target: the part's installed files (including any left in place
+    because they were edited or failed to render), plus, for the rule part, each workspace's config file."""
+    installed = [(item.part, item.workspace, item.target)
+                 for item in plan.unchanged + plan.create + [item for item, _ in plan.update] + plan.edited]
+    installed += [(part, workspace, path) for part, workspace, path in plan.held_generated if path.is_file()]
     active = {ws.key: ws for ws in workspaces}
 
     roots = []  # (part, workspace key or None, root folder)
@@ -833,8 +943,7 @@ def plan_excludes(parts: dict, scope: Scope, state: dict, workspaces: list, plan
             continue
         keys = set(active) | {
             record["workspace"]
-            for section in ("links", "generated")
-            for record in state[section].values()
+            for record in state["files"].values()
             if record["part"] == name and record.get("workspace") and scope.covers(name, record["workspace"])
         }
         roots += [(name, key, active[key].path if key in active else Path(key)) for key in sorted(keys)]
@@ -851,11 +960,12 @@ def plan_excludes(parts: dict, scope: Scope, state: dict, workspaces: list, plan
             return "/" + Path(os.path.relpath(norm(path), norm(top))).as_posix()
 
         # A vault outside the workspace's repo (work's lives elsewhere on disk) has nothing to exclude here.
-        entries = {entry(link.target) for link in installed if link.part == name and link.workspace == workspace}
-        entries |= {entry(path) for part, key, path in written
-                    if part == name and key == workspace and inside(norm(path), {norm(top)})}
+        entries = {entry(path) for part, key, path in installed
+                   if part == name and key == workspace and inside(norm(path), {norm(top)})}
         if name == RULE_PART and workspace in active:
             entries.add(entry(root / config.CONFIG_PATH))
+        if entries:
+            entries.add(PYCACHE_EXCLUDE)
         current = exclude_file.read_text(encoding="utf-8") if exclude_file.exists() else ""
         updated = render_exclude(current, parts[name].marker, sorted(entries))
         if updated != current:
@@ -873,51 +983,48 @@ def record(fields: dict, workspace: str | None) -> dict:
 
 def apply_plan(plan: Plan, state: dict) -> list:
     errors = []
+    replaced = {norm(folder) for _, _, folder in plan.replace_dirs}
+    failed = []  # folders that couldn't be made: nothing is written beneath them, or through a link still there
     for part, workspace, folder in plan.create_dirs:
-        folder.mkdir(parents=True, exist_ok=True)
+        if any(norm(folder).startswith(bad + os.sep) for bad in failed):
+            continue
+        try:
+            if norm(folder) in replaced:
+                folder.unlink()  # the link goes before its folder is made, so nothing is ever written through it
+                state["files"].pop(norm(folder), None)
+            folder.mkdir(parents=True, exist_ok=True)
+        except OSError as error:
+            errors.append(f"{show(folder)}: {error}")
+            failed.append(norm(folder))
+            continue
         state["dirs"][norm(folder)] = record({"path": str(folder), "part": part}, workspace)
     # A folder recorded under a name no toolbox has any more (a retired domain's) belongs to the part that wants it now.
     for part, workspace, folder in plan.dirs:
         entry = state["dirs"].get(norm(folder))
         if entry and entry["part"] not in plan.known:
             state["dirs"][norm(folder)] = record({"path": entry["path"], "part": part}, workspace)
-    for key, entry in plan.stale:
-        Path(entry["target"]).unlink()
-        del state["links"][key]
+    for key, entry in plan.remove:
+        try:
+            Path(entry["path"]).unlink()
+        except OSError as error:
+            errors.append(f"{show(entry['path'])}: {error}")
+            continue
+        del state["files"][key]
     for key in plan.forget:
-        del state["links"][key]
-    for key, entry in plan.stale_rules:
-        Path(entry["path"]).unlink()
-        del state["generated"][key]
-    for key in plan.forget_rules:
-        del state["generated"][key]
-    for link in plan.relink + plan.create:
-        try:
-            if link.target.is_symlink():
-                link.target.unlink()
-            os.symlink(link.source, link.target, target_is_directory=link.source.is_dir())
-        except OSError as error:
-            hint = " (on Windows, turn on Developer Mode)" if os.name == "nt" else ""
-            errors.append(f"{show(link.target)}: {error}{hint}")
+        del state["files"][key]
+    for item in plan.create + [item for item, _ in plan.update]:
+        if any(norm(item.target).startswith(bad + os.sep) for bad in failed):
             continue
-    for link in plan.ok + plan.relink + plan.create:
-        if link.target.is_symlink():
-            state["links"][norm(link.target)] = record(
-                {"target": str(link.target), "source": str(link.source), "part": link.part}, link.workspace
-            )
-    for gen, _ in plan.write_rules:
         try:
-            gen.path.parent.mkdir(parents=True, exist_ok=True)
-            gen.path.write_text(gen.text, encoding="utf-8")
+            write_atomic(item.target, item.data, item.executable)
         except OSError as error:
-            errors.append(f"{show(gen.path)}: {error}")
-            continue
-    for gen in plan.rules_ok + [gen for gen, _ in plan.write_rules]:
-        if gen.path.is_file():
-            state["generated"][norm(gen.path)] = {
-                "path": str(gen.path), "part": gen.part, "workspace": gen.workspace,
-                **({"template": str(gen.template)} if gen.template else {}),
-            }
+            errors.append(f"{show(item.target)}: {error}")
+    for item in plan.unchanged + plan.create + [item for item, _ in plan.update]:
+        if item.target.is_file() and not item.target.is_symlink() and disk_digest(item.target) == digest(item.data):
+            state["files"][norm(item.target)] = record({
+                "path": str(item.target), "part": item.part, "source": str(item.source) if item.source else None,
+                "hash": digest(item.data), **({"special": True} if item.special else {}),
+            }, item.workspace)
     for exclude_file, text, _ in plan.excludes:
         exclude_file.parent.mkdir(parents=True, exist_ok=True)
         exclude_file.write_text(text, encoding="utf-8")
@@ -927,6 +1034,10 @@ def apply_plan(plan: Plan, state: dict) -> list:
         folder = Path(entry["path"])
         if not plan.scope.covers(entry["part"], entry.get("workspace")) or key in plan.keep_dirs:
             continue
+        if folder.is_dir() and not folder.is_symlink():
+            for cache in folder.glob("__pycache__"):  # left by running an installed script; never ours to keep
+                if cache.is_dir() and not cache.is_symlink():
+                    shutil.rmtree(cache, ignore_errors=True)
         if folder.is_dir() and not folder.is_symlink() and not any(folder.iterdir()):
             folder.rmdir()
         if not folder.exists():
@@ -939,15 +1050,13 @@ def apply_plan(plan: Plan, state: dict) -> list:
 # Reporting
 
 
-def made_by(gen: Generated) -> str:
-    """`generated` (the config rule), `rendered` (from a template) or `copied` (a vault file or a rule)."""
-    if not gen.template:
-        return "generated"
-    return "rendered" if gen.template.name.endswith(import_templates().SUFFIX) else "copied"
+def made_by(item: Item) -> str:
+    """`generated` (from the config), `rendered` (from a template) or `copied`."""
+    return item.kind if item.kind in (GENERATED, RENDERED) else "copied"
 
 
-def rendered_from(gen: Generated) -> str:
-    return f", {made_by(gen)} from {gen.template.name}" if gen.template else ""
+def made_from(item: Item) -> str:
+    return f", {made_by(item)} from {item.source.name}" if item.source else ""
 
 
 def describe_toolboxes(names: list) -> str:
@@ -958,22 +1067,15 @@ def describe_toolboxes(names: list) -> str:
 
 
 def plan_sections(plan: Plan, errors: list) -> list:
+    replaced = {norm(folder) for _, _, folder in plan.replace_dirs}
     return [
-        ("Create folders", [show(folder) for _, _, folder in plan.create_dirs]),
-        ("Create links", [f"{show(link.target)} -> {show(link.source)}" for link in plan.create]),
-        ("Replace links", [f"{show(link.target)} -> {show(link.source)}" for link in plan.relink]),
-        ("Remove stale links", [f"{show(entry['target'])}" for _, entry in plan.stale]),
-        (
-            "Write generated rules",
-            [f"{show(gen.path)} ({status}{rendered_from(gen)})" for gen, status in plan.write_rules],
-        ),
-        ("Remove generated rules", [show(entry["path"]) for _, entry in plan.stale_rules]),
+        ("Create folders", [show(folder) for _, _, folder in plan.create_dirs if norm(folder) not in replaced]),
+        ("Replace links", [show(folder) for _, _, folder in plan.replace_dirs]),
+        ("Create", [f"{show(item.target)} (new{made_from(item)})" for item in plan.create]),
+        ("Update", [f"{show(item.target)} ({detail}{made_from(item)})" for item, detail in plan.update]),
+        ("Remove", [show(entry["path"]) for _, entry in plan.remove]),
         ("Update git excludes", [f"{show(path)} ({count} entries)" for path, _, count in plan.excludes]),
-        (
-            "Already in place",
-            [show(link.target) for link in plan.ok]
-            + [f"{show(gen.path)} ({made_by(gen)})" for gen in plan.rules_ok],
-        ),
+        ("Unchanged", [f"{show(item.target)} ({made_by(item)})" for item in plan.unchanged]),
         (
             "Conflicts, left alone",
             [
@@ -989,14 +1091,17 @@ def plan_sections(plan: Plan, errors: list) -> list:
 
 
 # Sections that mean the preview would change something, or can't.
-PENDING = ("Create folders", "Create links", "Replace links", "Remove stale links", "Write generated rules",
-           "Remove generated rules", "Update git excludes", "Conflicts, left alone", "Problems", "Errors")
+PENDING = ("Create folders", "Replace links", "Create", "Update", "Remove", "Update git excludes",
+           "Conflicts, left alone", "Problems", "Errors")
+# Sections the summary on screen lists item by item when they are short; the plan file always lists every one.
+LISTED = ("Create", "Update", "Remove", "Conflicts, left alone", "Warnings", "Problems", "Errors")
+LISTED_MOST = 20
 
 
 def report_json(plan: Plan, listed: bool) -> None:
     """The preview as JSON, for `toolbox.py doctor`: each section's items, whether anything is pending, whether
-    machine.yml lists every workspace acted on, and each rendered file's status (`ok`, `new`, `changed`, `replaces a
-    link`, `stale`, a conflict, or can't render). Writes no plan file."""
+    machine.yml lists every workspace acted on, and each rendered, vault-copied or rule file's status (`ok`, `new`,
+    `changed`, `replaces a link`, `stale`, a conflict, or can't render). Writes no plan file."""
     sections = dict(plan_sections(plan, []))
     print(json.dumps({
         "clean": not any(sections[title] for title in PENDING),
@@ -1023,11 +1128,11 @@ def report(plan: Plan, applied: bool, rerun: str, errors: list) -> None:
 
     print("\n".join(header) + "\n")
     for title, items in sections:
-        if items or title in ("Create links", "Conflicts, left alone"):
+        if items or title in ("Create", "Conflicts, left alone"):
             print(f"  {title}: {len(items)}")
-    for title in ("Write generated rules", "Conflicts, left alone", "Warnings", "Problems", "Errors"):
+    for title in LISTED:
         items = dict(sections)[title]
-        if items:
+        if items and (len(items) <= LISTED_MOST or title not in ("Create", "Update", "Remove")):
             print(f"\n{title}:")
             print("\n".join(f"  {item}" for item in items))
 
@@ -1106,9 +1211,7 @@ def main(argv: list | None = None) -> int:
     if chosen is not None:
         scope_parts = set(chosen)
     else:
-        scope_parts = set(parts) | {
-            entry["part"] for section in ("links", "dirs", "generated") for entry in state[section].values()
-        }
+        scope_parts = set(parts) | {entry["part"] for section in ("files", "dirs") for entry in state[section].values()}
     scope_parts -= held_parts
     if args.teardown:
         names = []

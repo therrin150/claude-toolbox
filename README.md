@@ -71,9 +71,9 @@ with neither asks no vault or tracker questions.
 ## Layout
 
 This repo installs two folders, both always: `global/` mirrors `~/.claude`, and `workspace/` mirrors a workspace root
-and installs into every workspace `machine.yml` lists. The installer creates folders, links files one at a time, and
-links skill folders (anything containing `SKILL.md`) whole, so edits here take effect immediately. The workspace
-folder's rules are the exception: they are copied, and an edit takes effect on the next sync.
+and installs into every workspace `machine.yml` lists. The installer creates folders and copies every file, so each
+lands inside the project that uses it (skill folders, anything containing `SKILL.md`, included). An edit here takes
+effect on the next sync, which `ship-toolbox-change` and `/sync-toolbox` run.
 
 ```
 global/                          → ~/.claude
@@ -92,7 +92,7 @@ workspace/                       → every listed workspace (per-workspace)
   features.yml                   which paths need which feature, and which config each feature needs (not installed)
   .claude/toolbox/               scripts (bin/), their library (lib/), references and templates
   .vault/Templates/              Templater templates written into each workspace's vault (feature obsidian)
-  .claude/rules/                 workspace rules, copied into each workspace (not linked)
+  .claude/rules/                 workspace rules, copied with a generated note
   .claude/skills/, agents/       generic workflow skills and agents, and the stacks' knowledge skills
 install.py                       the installer; its two folders are fixed there
 toolbox.yml                      this repo's manifest (how changes ship), and the reference for other toolboxes' keys
@@ -125,55 +125,69 @@ installer warns about names that break these rules.
    python3 install.py --apply
    ```
 
-On Windows, turn on Developer Mode first so Python can create symlinks without admin rights.
-
 ## Installer
 
 | Command | Effect |
 |---|---|
 | `install.py` | Preview: writes the full plan to `install-plan.txt` and changes nothing |
-| `install.py --apply` | Creates missing links, writes generated rules, removes stale ones, updates git excludes |
+| `install.py --apply` | Creates and updates copies, removes stale ones, updates the manifest and git excludes |
 | `install.py --toolbox <name or path>` | Acts on one toolbox only (`claude-toolbox` means both its folders), ignoring the others `machine.yml` lists (repeatable) |
 | `install.py --workspace <path>` | Acts on one workspace only, ignoring `machine.yml`'s workspaces (repeatable) |
 | `install.py --teardown` | Removes everything this installer installed (add `--apply`); combines with the two above |
 
-- **Running it syncs.** A renamed or deleted file's old link is removed on the next run, and a toolbox or workspace
+- **Copies and a manifest.** Every installed file is a copy, written atomically (a temp file beside it, then a
+  rename), with the source's executable bit. `.install-state.json` (untracked) is the manifest: for each file, its
+  source and the hash written. Every target is classified against it:
+
+  | Class | Meaning |
+  |---|---|
+  | `create` | nothing there |
+  | `update` | on disk is what was written (or a link of this installer's), and the source changed |
+  | `unchanged` | on disk is what the source gives |
+  | `remove` | no longer wanted (the source is gone, the feature dropped, the toolbox unlisted), and unedited |
+  | `conflict` | edited on disk, no longer wanted but edited, a file the installer didn't write, a link to somewhere else, or a folder in the way: left alone |
+
+  A second `--apply` reports every target `unchanged`. A conflict is resolved by hand: copy the edit into the toolbox,
+  or delete the file so the next sync writes the toolbox's copy. A file that is already exactly what would be written
+  is adopted, not a conflict. The first apply replaces links an earlier installer made into a toolbox (file links and
+  skill-folder links) with copies; state from before the manifest has no hashes, so its generated files are rewritten
+  as they always were.
+- **Running it syncs.** A renamed or deleted file's old copy is removed on the next run, and a toolbox or workspace
   dropped from `machine.yml` is uninstalled.
+- **Finding the repo.** A script installed as a copy sits outside the repo, so the installer also writes the repo's
+  path to `~/.claude/toolbox-repo`; `ship.py`, `/setup-workspace` and `toolbox.py doctor` read it to find `install.py`
+  and `machine.yml`.
 - **Other toolboxes.** Each repo under `toolboxes:` installs whole, as its `toolbox.yml` says: one `source` folder in
-  that repo mirroring one `target` folder, with an optional `prefix`, `ignore` and `external` links (this repo's
+  that repo mirroring one `target` folder, with an optional `prefix`, `ignore` and `external` files (this repo's
   `toolbox.yml` describes each key). It is known by its folder's name; a name taken twice is a problem, and the first
-  wins. Links into any listed toolbox count as this installer's own. A toolbox still holding the retired `domains.yml`,
-  or a `toolbox.yml` with `domains:` in it, is a problem, and nothing it installed is touched until it's reshaped. A
-  `machine.yml` that still has `domains:` is a problem too: the key is no longer read.
+  wins. Links into any listed toolbox count as this installer's own, and are replaced by copies. A toolbox still
+  holding the retired `domains.yml`, or a `toolbox.yml` with `domains:` in it, is a problem, and nothing it installed
+  is touched until it's reshaped. A `machine.yml` that still has `domains:` is a problem too: the key is no longer
+  read.
 - **The workspace folder** installs into every listed workspace. A workspace with no `.claude/toolbox.local.yml`, or an
   invalid one, is a problem line naming `/setup-workspace`, and nothing there is installed or removed. Otherwise its
   `features` gate what installs: `workspace/features.yml` maps each feature to paths, a path needs every feature that
-  lists it, and anything unlisted always installs. Dropping a feature removes its links on the next sync. A feature
+  lists it, and anything unlisted always installs. Dropping a feature removes its files on the next sync. A feature
   may also list the config it `needs` (`tasks` needs `tracker` and `vault`); a workspace that picks it without that
   config is a problem, and nothing there is installed or removed until the config gains it or drops the feature.
 - **Generated rule.** Each workspace gets `.claude/rules/toolbox-config.md`, rendered from its config on every sync. It
-  is a real file, recorded as generated, so stale cleanup and teardown remove it; a file there the installer didn't
+  is recorded in the manifest like any file, so stale cleanup and teardown remove it; a file there the installer didn't
   write is a conflict.
-- **Workspace rules.** Claude Code never loads a project rule whose link resolves outside the project, so each rule in
-  `workspace/.claude/rules/` is copied into the workspace instead of linked, with a note after its title (and after
-  any frontmatter, so `paths:` keeps working) that it is generated and edits are lost. Like the generated rule, it is
-  recorded as generated: a changed source rewrites it, a removed one or a dropped feature removes it, and the link an
-  earlier sync made there is replaced. Other toolboxes' rules are still linked.
+- **Workspace rules.** Each rule in `workspace/.claude/rules/` is copied into the workspace with a note after its
+  title (and after any frontmatter, so `paths:` keeps working) that it is generated. Like any file, a changed source
+  rewrites it, a removed one or a dropped feature removes it, and an edit made in the workspace is a conflict.
 - **Templates.** In the workspace folder, a file whose name ends `.tmpl` is rendered into each workspace at the same
-  path without the suffix, instead of being linked: each `{{ dotted.config.key }}` becomes that key's value from the
-  workspace's config. It is recorded as generated, like the rule, and `features.yml` gates it by its `.tmpl` name. A
-  key the config doesn't have, or one that isn't a single value, is a problem, and the file there is left as it is.
-  This is for what a link can't do, such as an agent whose `tools:` names the workspace's MCP server (`jira-creator`,
-  `jira-reader`).
+  path without the suffix, instead of being copied as it is: each `{{ dotted.config.key }}` becomes that key's value
+  from the workspace's config. `features.yml` gates it by its `.tmpl` name. A key the config doesn't have, or one that
+  isn't a single value, is a problem, and the file there is left as it is. This is for what a plain copy can't do, such
+  as an agent whose `tools:` names the workspace's MCP server (`jira-creator`, `jira-reader`).
 - **Vault files.** The workspace folder's `.vault/` folder mirrors each workspace's vault (its config's
-  `vault.path`, inside the workspace or anywhere on disk) instead of the workspace root. Its files are written, never
-  linked, since Obsidian and synced vaults handle links poorly: a `.tmpl` file is rendered as above, any other file is
-  copied as it is. They are recorded as generated, so a changed source rewrites them, stale cleanup and teardown remove
-  them, and an edit made in the vault is overwritten on the next sync. `features.yml` gates them by their `.vault/`
+  `vault.path`, inside the workspace or anywhere on disk) instead of the workspace root. A `.tmpl` file is rendered as
+  above, any other file is copied as it is. A changed source rewrites them, stale cleanup and teardown remove them, and
+  an edit made in the vault is a conflict, left alone. `features.yml` gates them by their `.vault/`
   paths (the `obsidian` feature gates the whole folder). A vault that doesn't exist is a problem. Inside the
   workspace's git repo they are excluded from git like the rest; a vault outside it gets no exclude.
-- **It never touches what isn't its own.** A real file, or a link pointing somewhere else, is reported as a conflict and
-  left alone.
-- **Git targets.** When a target folder or workspace is a git repo, the links (and a workspace's config file and
-  generated files) go in that repo's `.git/info/exclude`, so they never show up as untracked files.
-- **State.** `.install-state.json` (untracked) records what this machine installed, for stale cleanup and teardown.
+- **It never touches what isn't its own.** A file it didn't write, or a link pointing somewhere else, is reported as a
+  conflict and left alone.
+- **Git targets.** When a target folder or workspace is a git repo, the installed files (and a workspace's config file)
+  go in that repo's `.git/info/exclude`, so they never show up as untracked files.

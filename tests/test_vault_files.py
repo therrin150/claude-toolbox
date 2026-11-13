@@ -69,12 +69,12 @@ class VaultFiles(InstallerTest):
     def test_written_into_each_vault(self):
         code, plan = self.run_install()
         self.assertEqual(code, 0, plan)
-        written = self.section(plan, "Write generated rules")
+        written = self.written(plan)
         self.assertIn(f"{self.vault1 / TEMPLATE} (new, rendered from discussion-plan.md.tmpl)", written)
         self.assertIn(f"{self.vault1 / SCRIPT} (new, copied from picker.js)", written)
         self.assertIn(f"{self.vault2 / TEMPLATE} (new, rendered from discussion-plan.md.tmpl)", written)
         self.assertIn(str(self.vault1 / "Templates"), self.section(plan, "Create folders"))
-        self.assertFalse(any(".vault" in line for line in self.section(plan, "Create links")))
+        self.assertFalse(any(".vault" in line for line in self.section(plan, "Create")))
 
         code, plan = self.run_install("--apply")
         self.assertEqual(code, 0, plan)
@@ -83,8 +83,9 @@ class VaultFiles(InstallerTest):
         self.assertEqual((self.vault1 / SCRIPT).read_text(), "module.exports = () => 1;\n")
         self.assertFalse((self.ws1 / ".vault").exists())
         self.assertFalse((self.ws1 / "Templates").exists())
-        record = self.state()["generated"][install.norm(self.vault1 / SCRIPT)]
-        self.assertEqual(record["template"], str(self.source / ".vault" / "Templates" / "scripts" / "picker.js"))
+        record = self.state()["files"][install.norm(self.vault1 / SCRIPT)]
+        self.assertEqual(record["source"], str(self.source / ".vault" / "Templates" / "scripts" / "picker.js"))
+        self.assertEqual(record["hash"], install.digest(b"module.exports = () => 1;\n"))
 
         exclude = (self.ws2 / ".git" / "info" / "exclude").read_text(encoding="utf-8")
         self.assertIn("\n/vault/Templates/discussion-plan.md\n", exclude)
@@ -95,25 +96,29 @@ class VaultFiles(InstallerTest):
         self.assertEqual(status, "")
 
         _, plan = self.run_install()
-        self.assertEqual(self.section(plan, "Write generated rules"), [])
+        self.assertEqual(self.written(plan), [])
 
-    def test_a_changed_source_or_vault_edit_is_rewritten(self):
+    def test_a_changed_source_is_rewritten_and_a_vault_edit_is_left_alone(self):
         self.run_install("--apply")
         write(self.source / ".vault" / "Templates" / "scripts" / "picker.js", "module.exports = () => 2;\n")
         write(self.vault2 / TEMPLATE, "edited in the vault\n")
-        _, plan = self.run_install()
-        written = self.section(plan, "Write generated rules")
+        code, plan = self.run_install()
+        written = self.written(plan)
         self.assertIn(f"{self.vault1 / SCRIPT} (changed, copied from picker.js)", written)
-        self.assertIn(f"{self.vault2 / TEMPLATE} (changed, rendered from discussion-plan.md.tmpl)", written)
+        self.assertFalse(any(str(self.vault2 / TEMPLATE) in line for line in written))
+        conflicts = self.section(plan, "Conflicts, left alone")
+        self.assertEqual(len(conflicts), 1)
+        self.assertTrue(conflicts[0].startswith(f"[edited] {self.vault2 / TEMPLATE}"), conflicts)
+        self.assertEqual(code, 1)
         self.run_install("--apply")
         self.assertEqual((self.vault1 / SCRIPT).read_text(), "module.exports = () => 2;\n")
-        self.assertEqual((self.vault2 / TEMPLATE).read_text(), 'const DIR = "Notes/Discussions";\n')
+        self.assertEqual((self.vault2 / TEMPLATE).read_text(), "edited in the vault\n")
 
     def test_feature_gate_and_teardown(self):
         self.run_install("--apply")
         write(self.ws1 / CONFIG, vault_config("one", [], str(self.vault1)))
         _, plan = self.run_install()
-        self.assertEqual(sorted(self.section(plan, "Remove generated rules")),
+        self.assertEqual(sorted(self.section(plan, "Remove")),
                          sorted([str(self.vault1 / TEMPLATE), str(self.vault1 / SCRIPT)]))
         self.run_install("--apply")
         self.assertFalse((self.vault1 / "Templates").exists())  # folders the installer made go when empty
@@ -123,7 +128,7 @@ class VaultFiles(InstallerTest):
         self.run_install("--teardown", "--apply")
         self.assertFalse((self.vault2 / "Templates").exists())
         self.assertTrue(self.vault2.is_dir())
-        self.assertEqual(self.state()["generated"], {})
+        self.assertEqual(self.state()["files"], {})
 
     def test_existing_vault_folders_are_kept(self):
         write(self.vault1 / "Templates" / "Mine.md", "# Mine\n")
@@ -138,17 +143,18 @@ class VaultFiles(InstallerTest):
         self.assertIn(f"workspace {self.ws1}: vault {self.vault1} doesn't exist, so nothing is written there",
                       self.section(plan, "Problems"))
         self.assertIn(f"{self.vault2 / TEMPLATE} (new, rendered from discussion-plan.md.tmpl)",
-                      self.section(plan, "Write generated rules"))
+                      self.written(plan))
 
     def test_a_file_already_there_is_adopted_only_when_identical(self):
         write(self.vault1 / SCRIPT, "module.exports = () => 1;\n")
         write(self.vault1 / TEMPLATE, "# A hand-made template\n")
         code, plan = self.run_install("--apply")
         self.assertEqual(code, 1)
-        self.assertEqual(self.section(plan, "Conflicts, left alone"), [
-            f"[not-generated] {self.vault1 / TEMPLATE}: a file the installer didn't generate is where a generated "
-            "file goes"])
-        self.assertIn(install.norm(self.vault1 / SCRIPT), self.state()["generated"])
+        conflicts = self.section(plan, "Conflicts, left alone")
+        self.assertEqual(len(conflicts), 1)
+        self.assertTrue(conflicts[0].startswith(
+            f"[unmanaged] {self.vault1 / TEMPLATE}: a file the installer didn't write is there"), conflicts)
+        self.assertIn(install.norm(self.vault1 / SCRIPT), self.state()["files"])
         self.assertEqual((self.vault1 / TEMPLATE).read_text(), "# A hand-made template\n")
 
     def test_tasks_feature_makes_the_tasks_and_discussions_folders(self):
