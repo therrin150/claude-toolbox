@@ -1,0 +1,3 @@
+name: intellij
+description: Open a task's worktree in IntelliJ (the intellij-open-worktree skill).
+target: workspace

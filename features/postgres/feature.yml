@@ -1,0 +1,3 @@
+name: postgres
+description: Postgres and Flyway conventions (knowledge skill).
+target: workspace

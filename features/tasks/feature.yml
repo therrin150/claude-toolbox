@@ -1,0 +1,9 @@
+name: tasks
+description: 'Task records and the flows around them: work-task, start-change, investigate, propose-tickets, create-tickets,
+  create-defect and the ticket-docs and session-types rules.'
+target: workspace
+needs:
+- tracker
+- vault
+requires:
+- worktrees

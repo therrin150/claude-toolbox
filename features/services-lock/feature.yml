@@ -1,0 +1,5 @@
+name: services-lock
+description: 'Local services under a lock: start-local-services, stop-local-services and services_lock.py.'
+target: workspace
+needs:
+- workspace.areas

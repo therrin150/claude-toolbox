@@ -1,0 +1,5 @@
+name: review-ui
+description: 'The local review page: local-review-ui and review-change.'
+target: workspace
+requires:
+- worktrees

@@ -1,0 +1,3 @@
+name: rule-shell
+description: 'The global shell rule: zsh pitfalls.'
+target: global

@@ -1,0 +1,6 @@
+name: obsidian
+description: The vault's Templater templates and the vault-researcher agent.
+target: workspace
+needs:
+- vault
+- tracker

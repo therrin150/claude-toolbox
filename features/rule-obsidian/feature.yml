@@ -1,0 +1,3 @@
+name: rule-obsidian
+description: 'The global Obsidian rule: the Personal vault, note formatting and discussions.'
+target: global

@@ -1,0 +1,3 @@
+name: rule-git
+description: 'The global git rule: Git writes need an explicit instruction, no commit trailers, commit voice.'
+target: global

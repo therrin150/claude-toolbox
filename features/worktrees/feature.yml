@@ -1,0 +1,3 @@
+name: worktrees
+description: 'A change''s branch and worktrees: git-worktrees and the main checkout gate.'
+target: workspace

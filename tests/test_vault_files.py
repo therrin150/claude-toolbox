@@ -27,10 +27,10 @@ from test_install import CONFIG, REPO, InstallerTest, install, write  # noqa: E4
 
 TEMPLATE = Path("Templates/discussion-plan.md")
 SCRIPT = Path("Templates/scripts/picker.js")
-TOOLBOX = REPO / "workspace" / ".claude" / "toolbox"
+TOOLBOX = REPO / "core" / "workspace" / ".claude" / "toolbox"
 TASKS = TOOLBOX / "bin" / "tasks.py"
 FAKE_TEMPLATER = Path(__file__).resolve().parent / "fake_templater.js"
-VAULT_SOURCE = REPO / "workspace" / ".vault"
+VAULT_SOURCE = REPO / "features" / "obsidian" / ".vault"
 TODAY = datetime.date.today().isoformat()
 
 
@@ -51,14 +51,10 @@ class VaultFiles(InstallerTest):
 
     def setUp(self):
         super().setUp()
-        self.source = self.repo / "workspace"
-        write(self.source / ".vault" / "Templates" / "discussion-plan.md.tmpl",
-              'const DIR = "{{ vault.discussions }}";\n')
-        write(self.source / ".vault" / "Templates" / "scripts" / "picker.js", "module.exports = () => 1;\n")
-        write(self.source / "features.yml", yaml.safe_dump({
-            "services-lock": [".claude/skills/lock-local-services"],
-            "obsidian": [".vault"],
-        }))
+        self.source = self.feature("obsidian", files={
+            ".vault/Templates/discussion-plan.md.tmpl": 'const DIR = "{{ vault.discussions }}";\n',
+            ".vault/Templates/scripts/picker.js": "module.exports = () => 1;\n",
+        })
         self.vault1 = self.tmp / "elsewhere" / "Notes"
         self.vault1.mkdir(parents=True)
         self.vault2 = self.ws2 / "vault"

@@ -16,7 +16,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-BIN = Path(__file__).resolve().parents[1] / "workspace" / ".claude" / "toolbox" / "bin"
+BIN = Path(__file__).resolve().parents[1] / "core" / "workspace" / ".claude" / "toolbox" / "bin"
 sys.path.insert(0, str(BIN))
 
 import branches  # noqa: E402

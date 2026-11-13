@@ -1,8 +1,7 @@
 # This toolbox's manifest. install.py and ship-toolbox-change find a toolbox repo by it.
 #
-# This repo installs two folders of its own, fixed in install.py and always installed: global/ into ~/.claude, and
-# workspace/ into every workspace machine.yml lists (gated by the workspace's features; see README.md). So its
-# manifest has only the ship key.
+# This repo installs its own feature folders (core/ and features/<name>/, see README.md), found by install.py without
+# a manifest key. So its manifest has only the ship key.
 #
 # Another toolbox repo, listed under `toolboxes:` in this repo's machine.yml, installs whole. Its toolbox.yml says what
 # and where, with these keys at the top level:

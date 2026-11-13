@@ -52,9 +52,10 @@ def workspace_config(name: str, features: list) -> str:
 
 
 class InstallerTest(unittest.TestCase):
-    """This toolbox, its `global` folder installing into a fake ~/.claude and its `workspace` folder into each
-    workspace; another toolbox, work-toolbox, installing its `team` folder; and two workspaces: ws1 with the
-    `services-lock` feature, ws2 (a git repo) without."""
+    """This toolbox, laid out as feature folders: a global `style` feature installing into a fake ~/.claude (machine.yml
+    picks it), a core and a `services-lock` feature installing into each workspace that picks it; another toolbox,
+    work-toolbox, installing its `team` folder; and two workspaces: ws1 with the `services-lock` feature, ws2 (a git
+    repo) without."""
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp()).resolve()
@@ -64,13 +65,12 @@ class InstallerTest(unittest.TestCase):
         self.home = self.tmp / "home" / ".claude"
         self.home.mkdir(parents=True)
         write(self.repo / "toolbox.yml", "ship: direct\n")
-        write(self.repo / "global" / "rules" / "style.md", "# Style\n")
-        source = self.repo / "workspace"
-        skill(source / ".claude" / "skills", "always")
-        skill(source / ".claude" / "skills", "lock-local-services")
-        write(source / ".claude" / "toolbox" / "bin" / "tool.py", "print('hi')\n")
-        write(source / ".claude" / "toolbox" / "tests" / "test_tool.py", "")
-        write(source / "features.yml", yaml.safe_dump({"services-lock": [".claude/skills/lock-local-services"]}))
+        self.feature("style", target="global", files={".claude/rules/style.md": "# Style\n"})
+        core = self.feature("core", files={".claude/toolbox/bin/tool.py": "print('hi')\n",
+                                           ".claude/toolbox/tests/test_tool.py": ""})
+        skill(core / ".claude" / "skills", "always")
+        locks = self.feature("services-lock")
+        skill(locks / ".claude" / "skills", "lock-local-services")
 
         self.work = self.tmp / "work-toolbox"
         self.team_target = self.tmp / "team-workspace"
@@ -85,11 +85,10 @@ class InstallerTest(unittest.TestCase):
         subprocess.run(["git", "init", "-q", str(self.ws2)], check=True)
 
         self.machine(toolboxes=[self.work], workspaces=[self.ws1, self.ws2])
-        own = {**install.OWN_PARTS, "global": {"source": "global", "target": str(self.home)}}
         patcher = mock.patch.multiple(
             install,
             REPO=self.repo,
-            OWN_PARTS=own,
+            GLOBAL_TARGET=str(self.home),
             MACHINE=self.repo / "machine.yml",
             MACHINE_EXAMPLE=self.repo / "machine.example.yml",
             STATE=self.repo / ".install-state.json",
@@ -101,6 +100,9 @@ class InstallerTest(unittest.TestCase):
     # Helpers
 
     def machine(self, toolboxes=(), workspaces=(), **extra):
+        """Write machine.yml, which always picks the global `style` feature besides any `features` given."""
+        if isinstance(extra.get("features", []), list):
+            extra["features"] = ["style", *extra.get("features", [])]
         write(self.repo / "machine.yml", yaml.safe_dump({
             "toolboxes": [str(path) for path in toolboxes],
             "workspaces": [str(path) for path in workspaces],
@@ -161,7 +163,7 @@ class OtherToolboxes(InstallerTest):
             self.team_target / ".claude" / "rules" / "tm-conventions.md",
             self.work / "team" / ".claude" / "rules" / "tm-conventions.md",
         )
-        self.assertCopy(self.home / "rules" / "style.md", self.repo / "global" / "rules" / "style.md")
+        self.assertCopy(self.home / "rules" / "style.md", self.repo / "features/style/.claude/rules/style.md")
         self.assertIn("Toolboxes: claude-toolbox, work-toolbox", plan)
         self.assertFalse((self.team_target / "toolbox.yml").exists())
 
@@ -292,7 +294,7 @@ class RetiredDomains(InstallerTest):
         self.run_install("--apply")
         self.assertEqual(self.exclude(), before)
         parts = {entry["part"] for section in self.state().values() for entry in section.values()}
-        self.assertEqual(parts, {"global", "workspace", "work-toolbox"})
+        self.assertEqual(parts, {"claude-toolbox:global", "claude-toolbox:workspace", "work-toolbox"})
         self.run_install("--toolbox", "work-toolbox", "--teardown", "--apply")
         self.assertFalse((self.team_target / ".claude").exists())
 
@@ -301,16 +303,16 @@ class PerWorkspace(InstallerTest):
     def test_each_workspace_gets_what_its_features_allow(self):
         code, plan = self.run_install("--apply")
         self.assertEqual(code, 0, plan)
-        source = self.repo / "workspace" / ".claude"
+        source = self.repo / "core" / ".claude"
         for ws in (self.ws1, self.ws2):
             self.assertCopy(ws / ".claude" / "skills" / "always" / "SKILL.md",
                             source / "skills" / "always" / "SKILL.md")
             self.assertCopy(ws / ".claude" / "toolbox" / "bin" / "tool.py", source / "toolbox" / "bin" / "tool.py")
             self.assertFalse((ws / ".claude" / "toolbox" / "tests").exists())
-            self.assertFalse((ws / "features.yml").exists())
+            self.assertFalse((ws / "feature.yml").exists())
             self.assertEqual([path for path in ws.rglob("*") if path.is_symlink()], [])
         self.assertCopy(self.ws1 / ".claude" / "skills" / "lock-local-services" / "SKILL.md",
-                        source / "skills" / "lock-local-services" / "SKILL.md")
+                        self.repo / "features/services-lock/.claude/skills/lock-local-services/SKILL.md")
         self.assertFalse((self.ws2 / ".claude" / "skills" / "lock-local-services").exists())
         record = self.state()["files"][install.norm(self.ws1 / ".claude/skills/always/SKILL.md")]
         self.assertEqual(record["workspace"], install.norm(self.ws1))
@@ -326,20 +328,14 @@ class PerWorkspace(InstallerTest):
         self.assertFalse((self.ws1 / ".claude" / "skills" / "lock-local-services").exists())
         self.assertTrue((self.ws1 / ".claude" / "skills" / "always" / "SKILL.md").is_file())
 
-    def test_unknown_features_and_missing_feature_paths_warn(self):
+    def test_a_feature_nobody_defines_warns(self):
         write(self.ws2 / CONFIG, workspace_config("two", ["telepathy"]))
-        write(self.repo / "workspace" / "features.yml", yaml.safe_dump({
-            "services-lock": [".claude/skills/lock-local-services", ".claude/skills/not-yet"],
-        }))
         _, plan = self.run_install()
         warnings = self.section(plan, "Warnings")
-        self.assertTrue(any("'telepathy' isn't in any features.yml" in line for line in warnings), warnings)
-        self.assertTrue(any(".claude/skills/not-yet doesn't exist" in line for line in warnings), warnings)
+        self.assertTrue(any("'telepathy' isn't a feature folder of any toolbox" in line for line in warnings), warnings)
 
     def test_a_feature_with_unmet_needs_holds_the_workspace(self):
-        write(self.repo / "workspace" / "features.yml", yaml.safe_dump({
-            "services-lock": {"paths": [".claude/skills/lock-local-services"], "needs": ["workspace.areas"]},
-        }))
+        self.feature("services-lock", needs=["workspace.areas"])
         code, plan = self.run_install("--apply")
         self.assertEqual(code, 1)
         problems = self.section(plan, "Problems")
@@ -358,27 +354,17 @@ class PerWorkspace(InstallerTest):
 
     def test_unmet_needs_keep_what_a_workspace_had(self):
         self.run_install("--apply")
-        write(self.repo / "workspace" / "features.yml", yaml.safe_dump({
-            "services-lock": {"paths": [".claude/skills/lock-local-services"], "needs": ["tracker.jira"]},
-        }))
+        self.feature("services-lock", needs=["tracker.jira"])
         code, plan = self.run_install("--apply")
         self.assertEqual(code, 1)
         self.assertEqual(self.section(plan, "Remove"), [])
         self.assertTrue((self.ws1 / ".claude" / "skills" / "lock-local-services" / "SKILL.md").is_file())
 
     def test_a_need_that_isnt_a_config_key_warns(self):
-        write(self.repo / "workspace" / "features.yml", yaml.safe_dump({
-            "services-lock": {"paths": [".claude/skills/lock-local-services"], "needs": ["trackr"]},
-        }))
+        self.feature("services-lock", needs=["trackr"])
         _, plan = self.run_install()
-        self.assertTrue(any("services-lock: needs trackr, which isn't a config key" in line
+        self.assertTrue(any("features/services-lock/feature.yml: needs trackr, which isn't a config key" in line
                             for line in self.section(plan, "Warnings")))
-
-    def test_a_malformed_features_file_exits(self):
-        write(self.repo / "workspace" / "features.yml", yaml.safe_dump({"services-lock": {"path": []}}))
-        with self.assertRaises(SystemExit) as caught:
-            self.run_install()
-        self.assertIn("services-lock: unknown key path", str(caught.exception))
 
     def test_a_workspace_without_vault_or_tracker_installs(self):
         write(self.ws2 / CONFIG, yaml.safe_dump({
@@ -464,15 +450,12 @@ class GeneratedRule(InstallerTest):
 
 
 class WorkspaceRules(InstallerTest):
-    """The workspace folder's rules are written into each workspace with a generated note."""
+    """A workspace feature's rules are written into each workspace with a generated note."""
 
     def setUp(self):
         super().setUp()
-        self.source = write(self.repo / "workspace" / ".claude" / "rules" / "house.md", "# House\n\nBe kind.\n")
-        self.gated = write(self.repo / "workspace" / ".claude" / "rules" / "locks.md", "# Locks\n")
-        write(self.repo / "workspace" / "features.yml", yaml.safe_dump({
-            "services-lock": [".claude/skills/lock-local-services", ".claude/rules/locks.md"],
-        }))
+        self.source = write(self.repo / "core" / ".claude" / "rules" / "house.md", "# House\n\nBe kind.\n")
+        self.gated = write(self.repo / "features" / "services-lock" / ".claude" / "rules" / "locks.md", "# Locks\n")
         self.target = self.ws1 / ".claude" / "rules" / "house.md"
         self.note = f"Generated from `{self.source}` on every toolbox sync; edits here are lost."
 
@@ -546,7 +529,7 @@ class GitExcludes(InstallerTest):
     def test_a_repo_workspace_excludes_files_config_and_rule(self):
         self.run_install("--apply")
         text = self.exclude()
-        self.assertIn("# >>> claude-toolbox:workspace (managed by install.py)", text)
+        self.assertIn("# >>> claude-toolbox:features-workspace (managed by install.py)", text)
         for entry in ("/.claude/toolbox.local.yml", "/.claude/rules/toolbox-config.md",
                       "/.claude/skills/always/SKILL.md", "/.claude/toolbox/bin/tool.py"):
             self.assertIn(f"\n{entry}\n", text)
@@ -559,7 +542,7 @@ class GitExcludes(InstallerTest):
         self.assertFalse((self.ws1 / ".git").exists())
 
         self.run_install("--teardown", "--apply")
-        self.assertNotIn("claude-toolbox:workspace", self.exclude())
+        self.assertNotIn("claude-toolbox:features-workspace", self.exclude())
 
 
 class AdoptedState(InstallerTest):
@@ -644,13 +627,13 @@ class CopiesWithManifest(InstallerTest):
         return (ws or self.ws1) / ".claude" / "skills" / "always" / "SKILL.md"
 
     def source_file(self) -> Path:
-        return self.repo / "workspace" / ".claude" / "skills" / "always" / "SKILL.md"
+        return self.repo / "core" / ".claude" / "skills" / "always" / "SKILL.md"
 
     def link_like_today(self) -> dict:
         """The install as the old installer left it: the `always` skill folder and the tool script linked into the
         repo, recorded in state's `links`; everything else installed as it is now."""
         self.run_install("--apply")
-        source = self.repo / "workspace" / ".claude"
+        source = self.repo / "core" / ".claude"
         state = self.state()
         legacy = {"dirs": state["dirs"], "links": {}, "generated": {}}
         for ws in (self.ws1, self.ws2):
@@ -679,7 +662,7 @@ class CopiesWithManifest(InstallerTest):
 
     def test_first_apply_over_links(self):
         self.link_like_today()
-        source = self.repo / "workspace" / ".claude"
+        source = self.repo / "core" / ".claude"
         _, plan = self.run_install()
         self.assertEqual(sorted(self.section(plan, "Replace links")),
                          sorted(str(ws / ".claude" / "skills" / "always") for ws in (self.ws1, self.ws2)))
@@ -752,7 +735,7 @@ class CopiesWithManifest(InstallerTest):
 
     def test_a_file_no_longer_wanted_is_removed_unless_edited(self):
         self.run_install("--apply")
-        tool = self.repo / "workspace" / ".claude" / "toolbox" / "bin" / "tool.py"
+        tool = self.repo / "core" / ".claude" / "toolbox" / "bin" / "tool.py"
         write(self.ws1 / ".claude" / "toolbox" / "bin" / "tool.py", "print('mine')\n")
         tool.unlink()
         code, plan = self.run_install()
@@ -834,7 +817,7 @@ class CopiesWithManifest(InstallerTest):
         self.assertFalse((self.ws2 / ".claude" / "toolbox").exists())
 
     def test_the_executable_bit_is_kept(self):
-        tool = self.repo / "workspace" / ".claude" / "toolbox" / "bin" / "tool.py"
+        tool = self.repo / "core" / ".claude" / "toolbox" / "bin" / "tool.py"
         tool.chmod(0o755)
         self.run_install("--apply")
         self.assertTrue(os.access(self.ws1 / ".claude" / "toolbox" / "bin" / "tool.py", os.X_OK))
@@ -1010,7 +993,7 @@ class FeatureFolders(InstallerTest):
         self.machine(toolboxes=[self.work], workspaces=[self.ws1, self.ws2])
         self.run_install("--apply")
         self.assertFalse((self.home / "skills" / "notes").exists())
-        self.assertTrue((self.home / "rules" / "style.md").is_file())  # the legacy global folder is untouched
+        self.assertTrue((self.home / "rules" / "style.md").is_file())  # the style feature stays picked
 
     def test_a_global_feature_with_a_missing_requirement_holds_the_global_features(self):
         self.feature("notes", target="global", requires=["recap"], files={".claude/skills/notes/SKILL.md": "x\n"})
@@ -1126,7 +1109,7 @@ class FeatureFolders(InstallerTest):
         self.machine(toolboxes=[self.work], workspaces=[self.ws1, self.ws2], features=["lint", "nope"])
         _, plan = self.run_install()
         warnings = self.section(plan, "Warnings")
-        self.assertTrue(any("'telepathy' isn't in any features.yml or feature folder" in line for line in warnings))
+        self.assertTrue(any("'telepathy' isn't a feature folder of any toolbox" in line for line in warnings))
         self.assertTrue(any("'recap' is a global feature, picked in machine.yml" in line for line in warnings))
         self.assertTrue(any("machine.yml: feature 'lint' isn't a feature of any global" not in line
                             and "feature 'lint' isn't a workspace feature" not in line
@@ -1174,9 +1157,7 @@ class FeatureFolders(InstallerTest):
         self.assertEqual(code, 1)
         self.assertTrue(any("needs `target`" in line for line in self.section(plan, "Problems")))
 
-    def test_a_repo_of_only_feature_folders_still_writes_the_rule_and_the_pointer(self):
-        shutil_rmtree(self.repo / "global")
-        shutil_rmtree(self.repo / "workspace")
+    def test_this_repos_parts_write_the_rule_and_the_pointer(self):
         self.feature("recap", target="global", files={".claude/skills/recap/SKILL.md": "x\n"})
         self.machine(toolboxes=[self.work], workspaces=[self.ws1, self.ws2], features=["recap"])
         code, plan = self.run_install("--apply")
@@ -1188,6 +1169,63 @@ class FeatureFolders(InstallerTest):
         self.assertEqual(entry["part"], "claude-toolbox:workspace")
         self.assertIn("Toolboxes: claude-toolbox, work-toolbox", plan)
         self.assertEqual(self.run_install("--apply")[0], 0)
+
+    def split_core(self) -> None:
+        """Replace the test core with this repo's shape: a `core/global` and a `core/workspace`, each its own folder."""
+        shutil_rmtree(self.repo / "core")
+        for scope, files in (("workspace", {".claude/toolbox/bin/core.py": "print('core')\n"}),
+                             ("global", {".claude/rules/always-on.md": "# Always on\n"})):
+            folder = self.repo / "core" / scope
+            write(folder / "feature.yml", yaml.safe_dump({"name": "core", "description": "The core.",
+                                                          "target": scope}))
+            for path, text in files.items():
+                write(folder / path, text)
+
+    def test_a_global_and_a_workspace_core_each_install_without_being_picked(self):
+        self.split_core()
+        code, plan = self.run_install("--apply")
+        self.assertEqual(code, 0, plan)
+        self.assertCopy(self.home / "rules" / "always-on.md", self.repo / "core/global/.claude/rules/always-on.md")
+        for ws in (self.ws1, self.ws2):
+            self.assertCopy(ws / ".claude" / "toolbox" / "bin" / "core.py",
+                            self.repo / "core/workspace/.claude/toolbox/bin/core.py")
+            self.assertFalse((ws / ".claude" / "rules" / "always-on.md").exists())
+        files = self.state()["files"]
+        self.assertEqual(files[install.norm(self.home / "rules/always-on.md")]["part"], "claude-toolbox:global")
+        self.assertEqual(files[install.norm(self.ws1 / ".claude/toolbox/bin/core.py")]["part"],
+                         "claude-toolbox:workspace")
+        self.assertEqual(self.run_install("--apply")[0], 0)
+
+    def test_a_core_folder_whose_target_isnt_its_scope_is_a_problem(self):
+        self.split_core()
+        write(self.repo / "core" / "global" / "feature.yml", yaml.safe_dump({
+            "name": "core", "description": "The core.", "target": "workspace"}))
+        code, plan = self.run_install()
+        self.assertEqual(code, 1)
+        self.assertTrue(any("core/global/feature.yml: a feature in core/global/ must have `target: global`" in line
+                            for line in self.section(plan, "Problems")), plan)
+
+    def test_the_exclude_blocks_of_the_retired_folders_are_emptied(self):
+        write(self.ws2 / CONFIG, workspace_config("two", ["lint"]))
+        self.run_install("--apply")
+        exclude = self.ws2 / ".git" / "info" / "exclude"
+        old = ("# >>> claude-toolbox:workspace (managed by install.py)\n/.claude/old.md\n"
+               "# <<< claude-toolbox:workspace\n")
+        exclude.write_text(exclude.read_text(encoding="utf-8") + old, encoding="utf-8")
+        state = self.state()
+        for entry in state["files"].values():
+            if entry.get("workspace") == install.norm(self.ws2):
+                entry["part"] = "workspace"
+        (self.repo / ".install-state.json").write_text(json.dumps(state), encoding="utf-8")
+        _, plan = self.run_install()
+        self.assertEqual(self.section(plan, "Remove"), [])
+        self.assertEqual(len(self.section(plan, "Update git excludes")), 1)
+        self.run_install("--apply")
+        text = exclude.read_text(encoding="utf-8")
+        self.assertNotIn("# >>> claude-toolbox:workspace (", text)
+        self.assertIn("# >>> claude-toolbox:features-workspace (", text)
+        self.assertEqual({entry["part"] for entry in self.state()["files"].values()
+                          if entry.get("workspace") == install.norm(self.ws2)}, {"claude-toolbox:workspace"})
 
     def test_git_excludes_cover_feature_files(self):
         write(self.ws2 / CONFIG, workspace_config("two", ["lint"]))
@@ -1202,6 +1240,11 @@ class SettingsFragments(InstallerTest):
     """A feature folder's settings.json fragment: the picked workspace features' merge into the workspace's
     installer-owned .claude/settings.json, and the picked global features' into ~/.claude/settings.json, where the
     installer owns only the entries it recorded adding. ws1 picks `lint` and `locks`; ws2 picks nothing."""
+
+    def real_core(self) -> None:
+        """This repo's real global core in place of the test core."""
+        shutil.rmtree(self.repo / "core")
+        shutil.copytree(REPO / "core" / "global", self.repo / "core" / "global")
 
     def fragment(self, name: str, doc: dict, target: str = "workspace", **extra) -> Path:
         return self.feature(name, target, files={"settings.json": json.dumps(doc)}, **extra)
@@ -1491,7 +1534,7 @@ class SettingsFragments(InstallerTest):
         self.assertEqual(merged["permissions"]["allow"], ["Bash(mine)", "Bash(a)"])
 
     def test_a_missing_home_folder_is_the_existing_problem_and_nothing_is_registered_half_way(self):
-        shutil.copytree(REPO / "core", self.repo / "core")
+        self.real_core()
         shutil.rmtree(self.home)
         code, plan = self.run_install("--apply")
         self.assertEqual(code, 1)
@@ -1516,7 +1559,7 @@ class SettingsFragments(InstallerTest):
 
     def registered(self) -> tuple[Path, str]:
         """Install the repo's real core fragment over the user's own hooks; (the user's settings file, the command)."""
-        shutil.copytree(REPO / "core", self.repo / "core")
+        self.real_core()
         self.write_home({"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command",
                                                                                  "command": "mine.sh"}]}]}})
         code, plan = self.run_install("--apply")
@@ -1545,8 +1588,7 @@ class SettingsFragments(InstallerTest):
 
     def test_a_gate_in_the_workspace_denies_a_call_from_a_repo_under_it(self):
         _, command = self.registered()
-        (self.home / "hooks").mkdir()
-        shutil.copy(REPO / "global" / "hooks" / "run_gates.py", self.home / "hooks" / "run_gates.py")
+        self.assertTrue((self.home / "hooks" / "run_gates.py").is_file())  # core installs the dispatcher
         write(self.ws1 / ".claude" / "hooks" / "gates" / "pre_tool_use" / "block.py", (
             'TOOLS = {"Bash"}\nMAIN_ONLY = True\n\n'
             'def check(event):\n'
@@ -1564,7 +1606,7 @@ class SettingsFragments(InstallerTest):
 
     def test_a_missing_dispatcher_lets_the_call_go_ahead_without_an_error(self):
         _, command = self.registered()
-        self.assertFalse((self.home / "hooks" / "run_gates.py").exists())
+        (self.home / "hooks" / "run_gates.py").unlink()
         event = {"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": "echo blocked"}}
         result = self.run_hook(command, self.ws1, event)
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "", ""))

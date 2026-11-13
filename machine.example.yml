@@ -1,12 +1,12 @@
-# Copy to machine.yml (untracked) and list what to install on this machine. This repo's global/ folder always installs
-# into ~/.claude, and its workspace/ folder into every workspace below.
+# Copy to machine.yml (untracked) and list what to install on this machine. This repo's core always installs: its global
+# core into ~/.claude, its workspace core into every workspace below.
 
 # Other toolbox repos to install: its toolbox.yml names its source folder and target, and its core/ and features/
 # folders install as feature folders (see README.md).
 toolboxes: []
 #  - ~/path/to/another-claude-toolbox
 
-# Workspaces the workspace/ folder installs into. Each needs a .claude/toolbox.local.yml; /setup-workspace writes it and
+# Workspaces the toolbox installs into. Each needs a .claude/toolbox.local.yml; /setup-workspace writes it and
 # adds the workspace here.
 workspaces: []
 #  - ~/path/to/workspace
@@ -15,4 +15,12 @@ workspaces: []
 # workspace feature is listed in the workspace's own .claude/toolbox.local.yml). Each feature's `requires` must be
 # listed too. A toolbox's core/ folder always installs.
 features: []
+#  - response-style
+#  - personal-styles
+#  - rule-git
+#  - rule-obsidian
+#  - rule-shell
 #  - discussion
+#  - setup-workspace
+#  - ship-toolbox-change
+#  - sync-toolbox

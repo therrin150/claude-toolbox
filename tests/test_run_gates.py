@@ -19,7 +19,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-HOOKS = Path(__file__).resolve().parents[1] / "global" / "hooks"
+HOOKS = Path(__file__).resolve().parents[1] / "core" / "global" / ".claude" / "hooks"
 SCRIPT = HOOKS / "run_gates.py"
 
 BLOCK_ECHO = '''

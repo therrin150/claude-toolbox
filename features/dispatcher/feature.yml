@@ -1,0 +1,3 @@
+name: dispatcher
+description: 'work-tasks and dispatch.py: start or resume several tasks at once.'
+target: workspace

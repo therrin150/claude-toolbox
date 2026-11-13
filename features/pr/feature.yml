@@ -1,0 +1,5 @@
+name: pr
+description: 'Pull requests: gh-create-pull-request, gh-merge-pull-request, finish-change, the pr-reporter agent and pr_report.py.'
+target: workspace
+requires:
+- worktrees

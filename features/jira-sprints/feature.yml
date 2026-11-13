@@ -1,0 +1,5 @@
+name: jira-sprints
+description: Resolve the current or next sprint from live Jira data (the jira-find-current-sprint skill).
+target: workspace
+needs:
+- tracker.jira

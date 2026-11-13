@@ -48,12 +48,7 @@ class Templates(InstallerTest):
 
     def setUp(self):
         super().setUp()
-        self.source = self.repo / "workspace"
-        write(self.source / ".claude" / "agents" / "filer.md.tmpl", TEMPLATE)
-        write(self.source / "features.yml", yaml.safe_dump({
-            "services-lock": [".claude/skills/lock-local-services"],
-            "jira": [".claude/agents/filer.md.tmpl"],
-        }))
+        self.source = self.feature("jira", files={".claude/agents/filer.md.tmpl": TEMPLATE})
         write(self.ws1 / CONFIG, jira_config("one", "atlassian", ["jira"]))
         write(self.ws2 / CONFIG, jira_config("two", "atlassian-personal", ["jira"]))
 

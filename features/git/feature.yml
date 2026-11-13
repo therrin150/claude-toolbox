@@ -1,0 +1,6 @@
+name: git
+description: 'Commit, draft commit messages and publish a change: git-commit, git-draft-commit-message, publish-change,
+  git-delete-merged-branches, the git write gate, the diff-summarizer agent and diff_summary.py.'
+target: workspace
+requires:
+- worktrees
