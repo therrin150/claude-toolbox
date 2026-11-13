@@ -13,6 +13,9 @@ tasks folder.
 `tickets/` folder (`type: defect`) and file it with `create-tickets`, or ask the `jira-creator` agent to file it
 directly; under `none` there is no tracker to file it in. Say which and stop.
 
+A defect lives in the tasks folder while it is open. When it's done, `tasks.py set <KEY> status=done` moves it into a
+discussion's `tickets/` folder, and makes a discussion for it when it came from none.
+
 ## 1. Gather
 
 From the description you were given, fill in what a session needs to reproduce and fix it:

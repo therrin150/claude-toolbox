@@ -16,4 +16,5 @@ Last thing, once the task is done: read the `Weekly · all models` window from `
 unless `plan.status` is `ok`), run
 `<bin>/session_usage.py --task <work id> --weekly-percent <percentUsed> --weekly-resets-at <resetsAt>`,
 and show its `markdown` as is: the tokens table, then each session's Claude, you and total time. It writes `usage` and
-`usage_total` (tokens, cost and time) to the record and carries its own caveats.
+`usage_total` (tokens, cost and time) to the record, which by now lives in its discussion's `tickets/` folder
+(`finish-change`'s cleanup moved it); the work id finds it there. It carries its own caveats.

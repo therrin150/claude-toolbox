@@ -72,6 +72,16 @@ script writes.
   blocks the stories that need it through their `depends_on`.
 - **The publish folder**, `<tasks>/.publish/<work id>/`, holds the approved commit messages, the announcement text and
   each stop's report as last presented, so a fresh session can re-present a stop.
+- **A finished record goes home.** When a record's status becomes `done` (`tasks.py set <id> status=done`, which
+  `finish-change`'s cleanup runs; `tasks.py rehome <id>` or `rehome --done` does the same by hand), it moves out of the
+  tasks folder into its discussion's `tickets/` folder, so the tasks folder holds only the active backlog. A record
+  made from a draft gets its draft name back (`NN-<slug>.md`); one made from a plan, or with no discussion at all,
+  keeps its own name. A record with no discussion gets one made for it (`<discussions>/<YYYY>/<MM>/<created
+  date>-<slug>/`, with a stub `plan.md` whose `status` is `done`), and its `source` and `source_doc` point there. The
+  move repairs the wikilinks that named it, and the key's `<KEY>/` folder goes when it is empty. The work id stays the
+  key or the slug (the `NN-` prefix isn't part of it): `get`, `set`, `queue`, `check`, `depends_on` and the usage
+  report all still find the record there. Only `done` notes in `tickets/` are records; a draft's status is `draft` or
+  `approved`. The publish folder stays in the tasks folder.
 - **Epics carry no `depends_on`.** Blocking stays story to story, so stories in different epics run in parallel.
 
 ## Discussion drafts

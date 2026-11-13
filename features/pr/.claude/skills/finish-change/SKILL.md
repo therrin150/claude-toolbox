@@ -65,13 +65,15 @@ count.
    ```
 
    It removes the worktrees (refusing one with uncommitted files), deletes the merged local branches and sets the
-   record `done`. A refused worktree leaves the task open: say which and why. A record whose `cycle` is
+   record `done`, which moves the record into its discussion's `tickets/` folder (a discussion is made for one that
+   has none), so the tasks folder keeps only active work. Its `doc` then names the new path; a later step finds the
+   record by work id as before. A refused worktree leaves the task open: say which and why. A record whose `cycle` is
    `shared-library` isn't done: the output says `next: release`, so tell the user it waits for the release and
    `work-task` picks it up.
 5. **Forget the review**, only when `local-review-ui` is installed: `python3 .claude/skills/local-review-ui/scripts/review.py
    forget <work id> --delete-comments`, then `python3 .claude/skills/local-review-ui/scripts/review.py prune` for the
    reviews whose repos are gone.
-6. **Report** a table of repo, PR and merge commit, then what cleanup removed and the record's status.
+6. **Report** a table of repo, PR and merge commit, then what cleanup removed and the record's status and where it now lives.
 
 For the details of a merge (admin merges, a PR that fell behind, a failed merge), `gh-merge-pull-request` is the
 reference; this skill uses the same `publish.py` steps. It never runs git or GitHub writes itself.

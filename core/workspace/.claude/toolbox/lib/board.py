@@ -157,7 +157,7 @@ def check(store: records.Store, tracker=None) -> dict:
         if record.work_id in seen:
             problem("duplicate-key", record.path, f"{record.work_id} is also {seen[record.work_id].path}")
         seen.setdefault(record.work_id, record)
-        if record.key and not record.path.name.startswith(f"{record.work_id}-"):
+        if record.key and not record.archived and not record.path.name.startswith(f"{record.work_id}-"):
             problem("key-mismatch", record.path, f"work id is {record.work_id}, but the file name doesn't start "
                                                  "with it")
         for name in ("status", "owner", "stage"):

@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Read and write a workspace's task records. Finds the workspace from the current directory (see lib/config.py).
 
+A record in the tasks folder is active; when it is done it goes home to its discussion's tickets/ folder (see
+`rehome`), and is still found by work id, key, slug or path.
+
 Every command prints JSON. Every command that writes takes --dry-run, which prints what it would do and writes
 nothing. A command the workspace's tracker doesn't do fails with the reason.
 
@@ -21,6 +24,9 @@ Any tracker:
   append <ref> <field> <value> ...    Add to worktrees, sessions, prs or depends_on, skipping values already there
   set-list <ref> <field> [<value> ...]  Replace one of those lists; no values empties it
   log <ref> <text>                    Append a dated entry to the record's `## Log`
+  rehome <ref> | --done               Move a done record into its discussion's tickets/ folder (making the
+                                      discussion when it has none) and repair links; --done does every done record
+                                      still in the tasks folder. `set status=done` does this itself
 
   file <discussion> --keyless         Turn every approved draft into a keyless record, <tasks>/<slug>.md, for work
                                       that never goes to the tracker: draft numbers in depends_on become slugs,
@@ -63,7 +69,7 @@ import records  # noqa: E402
 import trackers  # noqa: E402
 
 OK, FAILED, USAGE = 0, 1, 2
-WRITES = {"context", "set", "append", "set-list", "log", "import", "file", "next-key", "create-defect"}
+WRITES = {"context", "set", "rehome", "append", "set-list", "log", "import", "file", "next-key", "create-defect"}
 
 
 def emit(value) -> None:
@@ -117,7 +123,16 @@ def run(args, store: records.Store, tracker: trackers.Tracker):
     if command == "set":
         record = store.find(args.ref)
         values = store.set_fields(record, pairs(args.pairs), dry)
-        return done({"doc": str(record.path), "set": values, "write_back": tracker.write_back(record, values)})
+        out = {"set": values, "write_back": tracker.write_back(record, values)}
+        if values.get("status") == "done":  # a finished record goes home to its discussion
+            out["rehome"] = store.rehome(record, dry)
+        return done({"doc": str(record.path), **out})
+    if command == "rehome":
+        if args.all_done == bool(args.ref):
+            raise records.TaskError("rehome: name a record, or pass --done for every done record in the tasks folder")
+        if args.all_done:
+            return done({"rehomed": store.rehome_done(dry)})
+        return done(store.rehome(store.find(args.ref), dry))
     if command == "append":
         record = store.find(args.ref)
         name, values = list_args(args)
@@ -189,6 +204,9 @@ def parser() -> argparse.ArgumentParser:
     sub = add("log", "append a dated entry to the record's ## Log")
     sub.add_argument("ref", help="work id or record path")
     sub.add_argument("text", nargs="+")
+    sub = add("rehome", "move a done record into its discussion's tickets/ folder")
+    sub.add_argument("ref", nargs="?", help="work id or record path")
+    sub.add_argument("--done", dest="all_done", action="store_true", help="every done record in the tasks folder")
     sub = add("import", "make a record from a saved Jira issue response (jira tracker)")
     sub.add_argument("key")
     sub.add_argument("--issue", required=True, help="the saved issue response, as JSON")

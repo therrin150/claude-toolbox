@@ -4,6 +4,11 @@ Every task has a task record in the vault's tasks folder (config `vault.tasks`):
 with a key, `<tasks>/<slug>.md` without one. A keyed record from before the key folders, `<tasks>/<KEY>-<slug>.md`, is
 still found. The work id is the record's key when it has one, else its file name's stem.
 
+A record is finished when its status is `done`, and then it goes home: `rehome` moves it into its discussion's
+`tickets/` folder (the discussion it came from, or a new one made for it), so the tasks folder holds only the active
+backlog. Archived records are still found by work id, key, slug or path, and still count for `depends_on`, keys and
+usage; `check` and `file` treat a `done` note in `tickets/` as a record, never a draft.
+
 A slice is a limited-scope run of a keyed ticket: a copy of the ticket's record with a `slice` number, in the ticket's
 key folder as `<KEY>.<n>-<slug>.md`, titled for its scope, with a `## Scope` section saying what part of the ticket it
 covers. Its work id is `<KEY>.<n>`. The ticket's own record (no `slice`) is the one a bare key names, and it covers
@@ -122,7 +127,14 @@ class Record:
     def work_id(self) -> str:
         if self.key and self.slice:
             return f"{self.key}.{self.slice}"
-        return self.key or self.path.stem
+        if self.key:
+            return self.key
+        return NN_RE.sub("", self.path.stem, count=1) if self.archived else self.path.stem
+
+    @property
+    def archived(self) -> bool:
+        """True for a finished record that went home to its discussion's `tickets/` folder."""
+        return self.path.parent.name == TICKETS
 
     @property
     def type(self) -> str | None:
@@ -213,7 +225,9 @@ class Store:
     def is_record_path(self, path: Path) -> bool:
         path, tasks = Path(path).resolve(), self.tasks_dir.resolve()
         in_folder = path.parent == tasks or (path.parent.parent == tasks and KEY_RE.fullmatch(path.parent.name))
-        return path.suffix == ".md" and bool(in_folder) and not path.name.startswith(".")
+        if path.suffix == ".md" and in_folder and not path.name.startswith("."):
+            return True
+        return self.is_draft(path) and self._done_record(path) is not None
 
     def _in_discussions(self, path: Path) -> bool:
         return Path(path).resolve().is_relative_to(self.discussions_dir.resolve())
@@ -227,6 +241,8 @@ class Store:
 
     def discussion_of(self, record: Record) -> Path | None:
         """The discussion a record came from, by its `source_doc`: a plan's folder, or a draft's discussion."""
+        if record.archived:
+            return record.path.parent.parent
         source = record.fields.get("source_doc")
         if not source:
             return None
@@ -251,23 +267,42 @@ class Store:
             raise TaskError(f"{ref}: names {len(hits)} discussions: {', '.join(map(str, hits))}")
         raise TaskError(f"{ref}: no such discussion in {self.discussions_dir}")
 
+    def _done_record(self, path: Path) -> Record | None:
+        """The finished record a `tickets/` note is, or None for a draft (or a note that can't be read)."""
+        try:
+            fields, body = frontmatter.read(path)
+        except frontmatter.FrontmatterError:
+            return None
+        if fields.get("type") in TYPES and fields.get("status") == "done":
+            return Record(Path(path).resolve(), fields, body)
+        return None
+
     def drafts(self, discussion: Path) -> list[Path]:
+        """A discussion's drafts: its `tickets/` notes, less the finished records that went home there."""
         folder = Path(discussion) / TICKETS
-        return sorted(folder.glob("*.md")) if folder.is_dir() else []
+        return [p for p in sorted(folder.glob("*.md")) if self._done_record(p) is None] if folder.is_dir() else []
 
     def all_drafts(self) -> list[Path]:
         if not self.discussions_dir.is_dir():
             return []
-        return sorted(self.discussions_dir.rglob(f"{TICKETS}/*.md"))
+        return [p for p in sorted(self.discussions_dir.rglob(f"{TICKETS}/*.md")) if self._done_record(p) is None]
+
+    def archived(self) -> list[Record]:
+        """Every finished record that went home to a discussion's `tickets/` folder."""
+        if not self.discussions_dir.is_dir():
+            return []
+        found = (self._done_record(p) for p in sorted(self.discussions_dir.rglob(f"{TICKETS}/*.md")))
+        return [r for r in found if r is not None]
 
     # -----------------------------------------------------------------------------------------------------------------
     # Reading records
 
     def scan(self) -> Scan:
-        """Every task record in the tasks folder. Notes that aren't records (Backlog.md, a dashboard) are skipped;
+        """Every task record: those in the tasks folder, and the finished ones that went home to a discussion. Notes that aren't records (Backlog.md, a dashboard) are skipped;
         records whose frontmatter can't be read are listed as unreadable."""
         found = Scan()
         if not self.tasks_dir.is_dir():
+            found.records.extend(self.archived())
             return found
         keyed = [p for p in sorted(self.tasks_dir.glob("*/*.md")) if KEY_RE.fullmatch(p.parent.name)]
         for path in sorted(self.tasks_dir.glob("*.md")) + keyed:
@@ -280,6 +315,7 @@ class Store:
                 continue
             if fields.get("type") in TYPES:
                 found.records.append(Record(path.resolve(), fields, body))
+        found.records.extend(self.archived())
         return found
 
     def records(self) -> list[Record]:
@@ -312,7 +348,7 @@ class Store:
         return self._one([r for r in self.records() if r.slice and r.work_id == work_id], work_id)
 
     def by_stem(self, stem: str) -> Record | None:
-        return self._one([r for r in self.records() if r.path.stem == stem], stem)
+        return self._one([r for r in self.records() if r.path.stem == stem or (not r.key and r.work_id == stem)], stem)
 
     def by_source(self, source: Path) -> Record | None:
         """The record made from a draft or plan (its `source_doc`)."""
@@ -556,6 +592,108 @@ class Store:
         if not dry_run:
             frontmatter.write_atomic(record.path, new)
         return entry
+
+    # -----------------------------------------------------------------------------------------------------------------
+    # Going home
+
+    def home_target(self, record: Record) -> tuple[Path, Path, bool]:
+        """Where a finished record goes: (its new path, the discussion folder, whether that discussion is new).
+
+        The discussion it came from (`source_doc`), else one made for it, named for the record's summary and
+        created date. A draft's own file name comes back (`NN-<slug>.md`); a record made from a plan or with no
+        source, and a slice, keeps its name."""
+        discussion = self.discussion_of(record)
+        new = discussion is None or not discussion.is_dir()
+        if new:
+            discussion = self._new_discussion_path(record)
+        source = Path(str(record.fields.get("source_doc") or ""))
+        name = record.path.name
+        if not record.slice and source.parent.name == TICKETS and NN_RE.match(source.name) and source.suffix == ".md":
+            name = source.name
+        return discussion / TICKETS / name, discussion, new
+
+    def _new_discussion_path(self, record: Record) -> Path:
+        title = record.summary
+        if record.slice and record.key:  # a slice's discussion is its ticket's, named for the ticket
+            ticket = self.by_key(record.key)
+            title = ticket.summary if ticket else title
+        slug = slugify(title or record.work_id)
+        created = str(record.fields.get("created") or "")[:10]
+        try:
+            day = datetime.date.fromisoformat(created)
+        except ValueError:
+            day = datetime.date.today()
+        base = self.discussions_dir / f"{day:%Y}" / f"{day:%m}"
+        name = f"{day.isoformat()}-{slug}"
+        if record.slice:  # reuse the ticket's discussion when an earlier slice already made it
+            hits = sorted(base.glob(f"*-{slug}")) if base.is_dir() else []
+            if hits:
+                return hits[0]
+        return base / name
+
+    def rehome(self, record: Record, dry_run: bool = False) -> dict:
+        """Move a finished record into its discussion's `tickets/` folder, making the discussion when it has none,
+        and repair the wikilinks that named it. The caller holds the tasks lock. Refuses a record that isn't `done`
+        and a destination that is already taken."""
+        if record.archived:
+            return {"moved": False, "reason": "already in a discussion", "doc": str(record.path)}
+        if record.status != "done":
+            raise TaskError(f"{record.work_id}: status is {record.status}, and only a done record goes home")
+        target, discussion, new = self.home_target(record)
+        if target.exists():
+            raise TaskError(f"{record.work_id}: {target} already exists; move {record.path} by hand")
+        out = {"moved": True, "from": str(record.path), "doc": str(target), "discussion": str(discussion),
+               "discussion_created": new}
+        if dry_run:
+            return {**out, "dry_run": True}
+        old_stem, old_path = record.path.stem, self.rel(record.path).removesuffix(".md")
+        plan = discussion / PLAN
+        if new:
+            plan_text = self._stub_plan(record, discussion)
+            frontmatter.write_atomic(plan, plan_text)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        folder = record.path.parent
+        record.path.replace(target)
+        record.path = target.resolve()
+        if new:
+            frontmatter.update(target, {"source": self.link(plan, discussion.name), "source_doc": self.rel(plan)})
+            record.fields.update({"source": self.link(plan, discussion.name), "source_doc": self.rel(plan)})
+        if folder != self.tasks_dir and not any(folder.iterdir()):
+            folder.rmdir()  # the emptied <KEY>/ folder
+        renames = {old_stem: (target.stem, self.rel(target).removesuffix(".md"))}
+        out["links_repaired"] = self.repair_links_everywhere(renames, skip=target)
+        return out
+
+    def _stub_plan(self, record: Record, discussion: Path) -> str:
+        title = record.summary or record.work_id
+        fm = (f"type: plan\ntitle:{frontmatter.render_value(title)}\nslug: {slugify(title)}\nepic:\n"
+              f"created: {discussion.name[:10]}\nstatus: done\n")
+        body = (f"\n# {title}\n\nMade when {record.work_id} was finished, so its ticket doc has a discussion to "
+                "live in: the work had none. The ticket doc is in `tickets/`; add the design record here if it's "
+                "worth keeping.\n")
+        return frontmatter.compose(fm, body)
+
+    def repair_links_everywhere(self, renames: dict, skip: Path | None = None) -> list[str]:
+        """Fix wikilinks to a moved note in every note of the vault (Obsidian's own link updating never sees a move
+        made on disk); returns the notes it changed."""
+        touched = []
+        vault = self.vault_dir.resolve()
+        for path in sorted(vault.rglob("*.md")):
+            if any(part.startswith(".") for part in path.relative_to(vault).parts[:-1]) or path == skip:
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            fixed = repair_links(text, renames)
+            if fixed != text:
+                frontmatter.write_atomic(path, fixed)
+                touched.append(str(path))
+        return touched
+
+    def rehome_done(self, dry_run: bool = False) -> list[dict]:
+        """Rehome every finished record still in the tasks folder."""
+        return [self.rehome(r, dry_run) for r in self.records() if r.status == "done" and not r.archived]
 
     # -----------------------------------------------------------------------------------------------------------------
     # Locking
