@@ -16,7 +16,7 @@ exit 0 when it went ahead, 1 when it refused or failed (the reason prints as `re
       becomes `in-progress`, stage `implementing`, owner `claude`, once a worktree exists.
 
   check <work id> <mode>[,<mode>...]   (modes: build, unit, format, integration)
-      The areas to hand a `check-runner`, from the task's worktrees (as worktrees.py changes). Refuses when there is
+      The areas for `run_checks.py`, from the task's worktrees (as worktrees.py changes). Refuses when there is
       no change to check: no worktree, no changed file, or changes only in areas whose `files` globs the checks
       ignore. For integration, also refuses while the services lock is held, by another task or this change's own
       earlier run (the runner would be blocked either way; an expired lock is taken over by the run), naming the holder, and

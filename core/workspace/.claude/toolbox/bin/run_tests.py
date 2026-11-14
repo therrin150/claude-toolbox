@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Run areas' unit or integration tests, or their formatters, from the workspace config and print one brief report
-when they've finished. The script behind run-unit-tests and `check-runner`'s by-hand integration bracket; a session runs
+when they've finished. The script behind run-unit-tests and the by-hand integration bracket; a session runs
 it in the background and wakes once.
 
   run_tests.py unit|integration|format <area>[=<dir>]... [--test T] [--label L] [--jobs N]

@@ -1,15 +1,15 @@
-"""The checks gate: the main session never runs a build, tests, a formatter or the services lock itself.
+"""The checks gate: the main session never runs a build, tests or a formatter raw.
 
-Each of those puts raw output in the orchestrator's context, where it costs on every later request, so they belong to
-`check-runner` (its tools are Bash and Read, and it runs `run_checks.py`). Denied in the main session:
+Raw output in the orchestrator's context costs on every later request. `run_checks.py` runs the same commands, waits,
+and prints one trimmed JSON result (counts, each failure's assertion, no log path), so it is how a session runs a check.
+Denied in the main session:
 
-- `run_checks.py`, `run_tests.py` and `services_lock.py acquire` or `start`;
 - the config's `build`, `unit`, `format` and `integration` commands for any area, matched on the words before the first
   `{placeholder}` of each command in them;
 - raw `mvn`, `mvnw`, `gradle`, `gradlew`, and `npm`/`pnpm`/`yarn` `test`.
 
-A subagent is never denied (MAIN_ONLY), so `check-runner` can run all of it. The message names the mode to spawn it
-with.
+`run_checks.py`, `run_tests.py` and `services_lock.py` pass. A subagent is never denied (MAIN_ONLY). The message names
+the `run_checks.py` mode to use instead.
 """
 
 from __future__ import annotations
@@ -28,14 +28,13 @@ _spec = importlib.util.spec_from_file_location("_gate_commands", os.path.join(os
 cmd = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(cmd)
 
-MODES = ("build", "unit", "format", "integration")
 BUILD_TOOLS = {"mvn", "mvnw", "gradle", "gradlew"}
 NODE_TOOLS = {"npm", "pnpm", "yarn"}
 INTEGRATION_HINTS = ("integration", "failsafe", "-pvalidation")
 
 
 def tool_mode(words: list[str]) -> str:
-    """The check-runner mode a raw Maven or Gradle call is closest to; unknown goals read as a build."""
+    """The `run_checks.py` mode a raw Maven or Gradle call is closest to; unknown goals read as a build."""
     text = " ".join(words).lower()
     if any(hint in text for hint in INTEGRATION_HINTS):
         return "integration"
@@ -47,13 +46,8 @@ def tool_mode(words: list[str]) -> str:
 
 
 def denied_mode(simple: list[str], areas: list[tuple[str, str]]) -> str | None:
-    """The mode a check-runner should run this command under, or None if the main session may run it."""
+    """The `run_checks.py` mode this raw command stands for, or None if the main session may run it."""
     name, args = cmd.script_args(simple)
-    if name in ("run_checks.py", "run_tests.py"):
-        return next((a for a in args if a in MODES), "the mode that fits")
-    if name == "services_lock.py":
-        sub = next((a for a in args if not a.startswith("-")), None)
-        return "integration" if sub in ("acquire", "start") else None
     if name in BUILD_TOOLS:
         return tool_mode(args)
     if name in NODE_TOOLS:
@@ -83,8 +77,8 @@ def check(event: dict) -> str | None:
             mode = denied_mode(simple, areas)
         if mode:
             return (
-                f"`{' '.join(simple)[:80]}` is a check, and checks don't run in the main session: their output would "
-                f"stay in this context for every later request. Spawn `check-runner` with mode `{mode}` (the areas "
-                f"as <area>=<dir>, the bin path and the task in its prompt) and act on its report."
+                f"`{' '.join(simple)[:80]}` is a raw check run: its output would stay in this context for every "
+                f"later request. Run `<bin>/run_checks.py {mode} <area>=<dir>... --task <work id>` instead, in the "
+                f"foreground with a Bash timeout of 600000, and act on the JSON it prints (the `check-change` skill)."
             )
     return None

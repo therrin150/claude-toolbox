@@ -73,8 +73,8 @@ worktree (the workspace's skills and rules load only from there). `work-tasks` l
   conflict (`references/other-tasks.md`). With `block`, it is a STOP. Either way, a release that doesn't exist yet
   can't be isolated away (`other-tasks.md`, "Needs a Release").
 - **Waiting.** Never poll or sleep in the conversation, and never end a turn while a check or the verifier is still
-  running: nothing wakes a session that does. The runners (`check-change`, `verify-change`) run in the foreground and
-  their report returns in the same turn; if the host backgrounds one anyway, block on its output with `Monitor` until
+  running: nothing wakes a session that does. `check-change` (a script, `run_checks.py`) and `verify-change` run in the foreground and
+  their result returns in the same turn; if the host backgrounds one anyway, block on its output with `Monitor` until
   the report is in, then go on in that turn. Only waits on someone else end the turn and wake the session when they
   exit: the review waiter (`code-review.md`), `<bin>/watch_task.py prs` once the PRs are open, and
   `<bin>/watch_task.py pipeline` for a shared library's release (`merge.md`). Nothing else watches GitHub or CI.
@@ -103,12 +103,12 @@ STOP (record it, notify, explain in a few lines, wait) when:
 - a third attempt of a check fails in any area;
 - an integration check is `blocked` (a port held by another project's containers or process, a container runtime that
   is down, a services lock held elsewhere, a missing `start` command): the testing bracket is never skipped, and the
-  task is never advanced "unverified". Name the port and its holder from the runner's `notes`; the user clears it, and
+  task is never advanced "unverified". Name the port and its holder from the result's `notes`; the user clears it, and
   on their word the same check runs again. With `--unattended` too: it is a STOP, and the session ends its turn
   there with the task recorded as stopped;
 - an integration check is `blocked` (a port held by another project's containers or process, a container runtime that
   is down, a services lock held elsewhere, a missing `start` command): the testing bracket is never skipped, and the
-  task is never advanced "unverified". Name the port and its holder from the runner's `notes`; the user clears it, and
+  task is never advanced "unverified". Name the port and its holder from the result's `notes`; the user clears it, and
   on their word the same check runs again. With `--unattended` too: it is a STOP, and the session ends its turn
   there with the task recorded as stopped;
 - testing would need an unreleased build of a shared library against local services (Ground Rules);
@@ -211,24 +211,24 @@ Every place that runs the checks follows this, in whatever phase and session it 
 stop reads this file but not `work.md`, so the delegation lives here.
 
 - **Who runs them:** the `check-change` stage skill, for every check (format, unit tests, integration tests, and a
-  build when a step needs one). It hands the check to a `check-runner` agent, so the output and the integration
-  bracket's many mechanical steps stay out of this session's context. This session never runs `<bin>/run_checks.py`,
-  `<bin>/run_tests.py`, `<bin>/services_lock.py`, an area's `format`, `unit`, `build` or `integration` command,
-  `start-local-services`, `stop-local-services` or `run-unit-tests` itself, in any phase, and never reads a build, test
-  or service log.
+  build when a step needs one). It runs `<bin>/run_checks.py` in this session's foreground, which prints one trimmed
+  JSON result, so the raw output and the integration bracket's mechanical steps stay out of this session's context.
+  This session never runs an area's `format`, `unit`, `build` or `integration` command, raw `mvn`, `gradle` or
+  `npm test`, `start-local-services`, `stop-local-services` or `run-unit-tests` itself, in any phase, and never reads a
+  build, test or service log.
 - **Run it** with the Skill tool, args `<work id> <mode>` (`format`, `unit`, `build` or `integration`, or several
-  comma-separated such as `unit,integration`, which one runner runs in order), plus the failing tests when only some
+  comma-separated such as `unit,integration`, which run in order), plus the failing tests when only some
   need re-running, and only when `worktrees.py changes` lists areas that apply (`work.md`, "Which Checks Apply"): with
-  none, the checks are listed as skipped, not run. The skill runs the runner in the foreground and the report returns
+  none, the checks are listed as skipped, not run. The skill runs the script in the foreground and the result returns
   in the same turn; never end the turn to wait for it (Ground Rules, "Waiting").
-- **Its result** is the runner's report, `pass`, `fail` or `blocked`, with the counts and each failure's test,
+- **Its result** is the script's JSON, `pass`, `fail` or `blocked`, with the counts and each failure's test,
   assertion, expected/actual and trimmed stack and no log path, or the skill's own refusal. Act on it:
     - `pass`: done with that area.
     - `fail`: an attempt. Fix the code, then run `check-change` again for the check that failed, with `format`
       ahead of `unit` (`format,unit[,integration]`). At most three attempts per area, then STOP.
     - `blocked`, or a refusal because the services lock is held elsewhere: hook `blocked-bracket`. Not an attempt, and
       never skipped or reported as "not verified": by default it is a STOP (STOP Conditions), the only exception being
-      that the runner took over the user's expired manual lock (`notes`): notify them and go on.
+      that the script took over the user's expired manual lock (`notes`): notify them and go on.
     - `lock: NOT RELEASED`, in any result: STOP.
     - A takeover in `notes`: notify the user that their manual lock was taken over.
 

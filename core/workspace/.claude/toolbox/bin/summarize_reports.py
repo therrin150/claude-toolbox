@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Summarize a Maven build's surefire or failsafe reports: tests run, failed, and the first assertion or error line per
-failing test. Shared by run-unit-tests (surefire) and `check-runner`'s by-hand bracket (failsafe, through run_tests.py),
+failing test. Shared by run-unit-tests (surefire) and the by-hand bracket (failsafe, through run_tests.py),
 so both report the same way and nobody greps a build log by hand. Maven only; other build tools report through their own
 command's output.
 

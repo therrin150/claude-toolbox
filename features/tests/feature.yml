@@ -1,5 +1,5 @@
 name: tests
-description: 'Run a change''s checks: run-unit-tests, check-change, the check-runner agent and the checks and raw output
+description: 'Run a change''s checks: run-unit-tests, check-change and the checks and raw output
   gates.'
 target: workspace
 needs:

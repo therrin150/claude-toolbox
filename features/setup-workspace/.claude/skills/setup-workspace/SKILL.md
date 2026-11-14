@@ -52,7 +52,7 @@ Features come first, since they decide what else is asked. Present the suggested
 |---|---|---|---|
 | `git` | `git-commit`, `git-draft-commit-message`, `git-delete-merged-branches`, the git conventions rule, the `diff-summarizer` agent | `.git` | |
 | `verify` | `verify-change` and its `change-verifier` agent | `.git` | |
-| `tests` | `run-unit-tests`, the `check-runner` agent | `.git` | `workspace.areas` |
+| `tests` | `run-unit-tests`, `check-change` | `.git` | `workspace.areas` |
 | `worktrees` | `git-worktrees` | `.git` | |
 | `pr` | `gh-create-pull-request`, `gh-merge-pull-request`, the `pr-reporter` agent | `.git` with a GitHub origin | |
 | `tasks` | `work-task`, `propose-tickets`, `create-tickets`, `create-defect`, the ticket-docs rule | an Atlassian server | `tracker`, `vault` |

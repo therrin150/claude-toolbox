@@ -538,22 +538,23 @@ class SkillTextTest(unittest.TestCase):
         self.assertIn("## Wait for the Release", self.texts["merge.md"])
         self.assertIn("<bin>/watch_task.py pipeline <work id>", self.texts["merge.md"])
 
-    def test_the_integration_bracket_is_delegated_in_one_place_every_re_run_names(self):
-        # SKILL.md is the one file every session reads, so the delegation to `check-runner` lives there; a session
-        # resumed at a review stop reads code-review.md or publish-review.md but not work.md.
+    def test_the_integration_bracket_is_run_in_one_place_every_re_run_names(self):
+        # SKILL.md is the one file every session reads, so how checks run lives there; a session resumed at a
+        # review stop reads code-review.md or publish-review.md but not work.md.
         checks = self.skill.split("\n## Checks\n", 1)[1].split("\n## ", 1)[0]
-        self.assertIn("`check-runner`", checks)
+        flat_checks = " ".join(checks.split())
         self.assertIn("`check-change`", checks)
-        self.assertIn("never runs `<bin>/run_checks.py`", " ".join(checks.split()))
-        # The spawn itself is the stage skill's (check-change), not this skill's.
-        self.assertNotIn("subagent_type: check-runner", self.skill)
+        self.assertIn("runs `<bin>/run_checks.py` in this session's foreground", flat_checks)
+        self.assertIn("never runs an area's `format`, `unit`, `build` or `integration` command", flat_checks)
+        # The run itself is the stage skill's (check-change), not this skill's; no agent runs checks any more.
+        self.assertNotIn("check-runner", self.skill)
         self.assertNotIn("services-runner", self.skill)
         for name, text in self.texts.items():
             if name in ("SKILL.md", "extension-points.md"):
                 continue
             flat = " ".join(text.split())
             # No phase file carries the bracket's mechanics, or tells the session to run one itself.
-            self.assertNotIn("subagent_type: check-runner", flat, name)
+            self.assertNotIn("check-runner", flat, name)
             self.assertNotIn("services-runner", flat, name)
             self.assertNotIn("run_tests.py", flat, name)
             self.assertNotIn("services_lock.py", flat, name)

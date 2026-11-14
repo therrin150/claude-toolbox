@@ -92,13 +92,13 @@ class GateTest(unittest.TestCase):
 
     def assertDenied(self, message: str | None, mode: str | None = None) -> None:
         self.assertIsNotNone(message)
-        self.assertIn("check-runner", message)
+        self.assertIn("run_checks.py", message)
         if mode:
-            self.assertIn(f"mode `{mode}`", message)
+            self.assertIn(f"run_checks.py {mode} ", message)
 
     def assertDeniedRaw(self, message: str | None) -> None:
         self.assertIsNotNone(message)
-        self.assertIn("check-runner", message)
+        self.assertIn("run_checks.py", message)
         self.assertIn("raw", message)
 
 
@@ -125,15 +125,16 @@ class ChecksGateTest(GateTest):
         self.assertDenied(self.bash("sudo -u build mvn test"))
         self.assertDenied(self.bash("echo hi\nmvn test"))
 
-    def test_run_checks_and_services_lock(self) -> None:
-        self.assertDenied(self.bash("/ws/.claude/toolbox/bin/run_checks.py unit api=api --task T"), "unit")
-        self.assertDenied(self.bash("python3 /ws/.claude/toolbox/bin/run_checks.py format api=api"), "format")
-        self.assertDenied(self.bash("/ws/.claude/toolbox/bin/run_tests.py unit api=api --label T"), "unit")
-        self.assertDenied(self.bash("/ws/.claude/toolbox/bin/run_tests.py integration api=api"), "integration")
-        self.assertDenied(self.bash("/ws/.claude/toolbox/bin/services_lock.py acquire --task T"), "integration")
-        self.assertDenied(self.bash("python3 -I services_lock.py start api --token t"), "integration")
+    def test_run_checks_run_tests_and_services_lock_pass(self) -> None:
+        for command in ("/ws/.claude/toolbox/bin/run_checks.py unit api=api --task T",
+                        "python3 /ws/.claude/toolbox/bin/run_checks.py format api=api",
+                        "/ws/.claude/toolbox/bin/run_checks.py integration api=api --task T",
+                        "/ws/.claude/toolbox/bin/run_tests.py unit api=api --label T",
+                        "/ws/.claude/toolbox/bin/services_lock.py acquire --task T",
+                        "python3 -I services_lock.py start api --token t"):
+            self.assertIsNone(self.bash(command), command)
 
-    def test_other_services_lock_commands_pass(self) -> None:
+    def test_the_services_lock_commands_pass(self) -> None:
         for sub in ("status", "mine --task T", "release --token t", "stop --token t", "wait"):
             self.assertIsNone(self.bash(f"/ws/.claude/toolbox/bin/services_lock.py {sub}"), sub)
 
@@ -158,9 +159,8 @@ class ChecksGateTest(GateTest):
             self.assertIsNone(self.bash(command), command)
 
     def test_a_subagent_runs_the_same_check(self) -> None:
-        for command in ("python3 /ws/.claude/toolbox/bin/run_checks.py unit api=api", "mvn -q test", "make assemble",
-                        "/ws/.claude/toolbox/bin/services_lock.py acquire"):
-            self.assertIsNone(self.bash(command, agent_id="a1", agent_type="check-runner"), command)
+        for command in ("mvn -q test", "make assemble", "make verify TEST=FooTest"):
+            self.assertIsNone(self.bash(command, agent_id="a1", agent_type="worker"), command)
 
     def test_other_tools_pass(self) -> None:
         self.assertIsNone(self.run_gate("Read", {"command": "mvn test", "file_path": "pom.xml"}))
@@ -214,8 +214,8 @@ class RawOutputGateTest(GateTest):
 
     def test_a_subagent_reads_it(self) -> None:
         self.assertIsNone(self.run_gate("Read", {"file_path": "api/target/surefire-reports/FooTest.txt"},
-                                        agent_id="a1", agent_type="check-runner"))
-        self.assertIsNone(self.bash("cat api/target/surefire-reports/FooTest.txt", agent_type="check-runner"))
+                                        agent_id="a1", agent_type="worker"))
+        self.assertIsNone(self.bash("cat api/target/surefire-reports/FooTest.txt", agent_type="worker"))
 
 
 class GitWriteGateTest(GateTest):

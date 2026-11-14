@@ -3,7 +3,7 @@ subagent_stop/) and lib/report_contract.py.
 
 The gates run through the real dispatcher on hook input, the way Claude Code does, against a temporary workspace whose
 gate folders and `.claude/toolbox/lib` link the sources one file at a time and whose `.claude/toolbox/agents` holds the
-shipped check-runner template beside agents of the test's own.
+a fixture agent (`checker`) whose report template declares a log-path contract, beside agents of the test's own.
 
 Run from the repo root:
 
@@ -27,7 +27,26 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from toolbox_tree import CLAUDE as WORKSPACE_SRC, REPO  # noqa: E402
 DISPATCHER = REPO / "core" / "global" / ".claude" / "hooks" / "run_gates.py"
 LIB = WORKSPACE_SRC / "toolbox" / "lib"
-AGENTS = WORKSPACE_SRC / "toolbox" / "agents"
+
+TEMPLATE = """# checker Report
+
+Return only this block.
+
+```
+result: pass | fail | blocked
+mode: build | unit | format | integration
+```
+
+## Contract
+
+```contract
+require result: ^result: (pass|fail|blocked)\\s*$
+require mode: ^mode: (build|unit|format|integration)(,\\s*(build|unit|format|integration))*\\s*$
+forbid log path: (?:^|[\\s("'`=:])(?:[\\w.~/-]*/)?target/[\\w./-]+
+forbid log file: [\\w/~-]+\\.log(?=$|[\\s:,;)'"`])
+limit 25 stack frame lines: ^\\s*at [\\w$.<>/]+\\(
+```
+"""
 
 GOOD = """result: fail
 mode: unit
@@ -65,8 +84,7 @@ class ContractTest(unittest.TestCase):
                 (folder / src.name).symlink_to(src)
         (self.toolbox / "agents").mkdir(parents=True)
         (self.toolbox / "lib").symlink_to(LIB)
-        (self.toolbox / "agents" / "check-runner").symlink_to(AGENTS / "check-runner")
-        for name, text in (("plain", PLAIN), ("broken", BROKEN), ("badre", BAD_REGEX), ("other", OTHER)):
+        for name, text in (("checker", TEMPLATE), ("plain", PLAIN), ("broken", BROKEN), ("badre", BAD_REGEX), ("other", OTHER)):
             (self.toolbox / "agents" / name).mkdir()
             (self.toolbox / "agents" / name / "report.md").write_text(text, encoding="utf-8")
         (self.ws / "api").mkdir()
@@ -80,7 +98,7 @@ class ContractTest(unittest.TestCase):
         return subprocess.run([sys.executable, str(self.hooks / "run_gates.py")], input=json.dumps(event),
                               capture_output=True, text=True, timeout=30, env=self.env)
 
-    def handback(self, report, agent: str = "check-runner") -> str | None:
+    def handback(self, report, agent: str = "checker") -> str | None:
         """The denial reason for this handback, or None when it goes through."""
         result = self.dispatch({"hook_event_name": "PreToolUse", "tool_name": "SubagentHandback",
                                 "tool_input": {"message": report}, "agent_type": agent, "agent_id": "a1"})
@@ -101,7 +119,7 @@ class ContractTest(unittest.TestCase):
         path.write_text("\n".join(json.dumps(line) for line in lines), encoding="utf-8")
         return path
 
-    def stop(self, text, agent: str = "check-runner", transcript: object = "unset", **extra) -> str | None:
+    def stop(self, text, agent: str = "checker", transcript: object = "unset", **extra) -> str | None:
         """The block reason for this SubagentStop, or None when the agent may stop."""
         if transcript == "unset":
             transcript = self.transcript(handed_back=False)
@@ -127,7 +145,7 @@ class HandbackGateTest(ContractTest):
         reason = self.handback(bad)
         self.assertIn("log path", reason)
         self.assertIn("api/target/surefire-reports/OrderServiceTest.txt", reason)
-        self.assertIn("check-runner", reason)
+        self.assertIn("checker", reason)
         self.assertIsNone(self.handback(GOOD))
 
     def test_a_report_with_a_log_file_is_denied_naming_it(self) -> None:
@@ -185,7 +203,7 @@ class HandbackGateTest(ContractTest):
 
     def test_other_tools_are_not_looked_at(self) -> None:
         result = self.dispatch({"hook_event_name": "PreToolUse", "tool_name": "Bash",
-                                "tool_input": {"command": "ls"}, "agent_type": "check-runner"})
+                                "tool_input": {"command": "ls"}, "agent_type": "checker"})
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "", ""))
 
 
@@ -213,7 +231,7 @@ class StopGateTest(ContractTest):
     def test_an_unreadable_or_missing_transcript_stays_out_of_the_way(self) -> None:
         self.assertIsNone(self.stop("no fields", transcript=self.tmp / "gone.jsonl"))
         self.assertIsNone(self.stop("no fields", transcript=""))
-        event = {"hook_event_name": "SubagentStop", "agent_type": "check-runner", "last_assistant_message": "no fields"}
+        event = {"hook_event_name": "SubagentStop", "agent_type": "checker", "last_assistant_message": "no fields"}
         self.assertEqual(self.dispatch(event).stdout, "")
 
     def test_a_stop_that_continues_from_a_block_is_not_blocked_again(self) -> None:
@@ -231,12 +249,12 @@ class StopGateTest(ContractTest):
 
 
 class ShippedTemplateTest(unittest.TestCase):
-    """The check-runner template that ships declares a contract its own example report satisfies."""
+    """A report template with a contract: the fixture template declares one its filled reports satisfy."""
 
     def setUp(self) -> None:
         self.lib = load_lib()
-        self.template = (AGENTS / "check-runner" / "report.md").read_text(encoding="utf-8")
-        self.contract = self.lib.parse("check-runner", AGENTS / "check-runner" / "report.md", self.template)
+        self.template = TEMPLATE
+        self.contract = self.lib.parse("checker", Path("report.md"), self.template)
 
     def test_it_declares_a_contract(self) -> None:
         self.assertIsNotNone(self.contract)

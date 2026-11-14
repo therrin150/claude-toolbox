@@ -1,7 +1,7 @@
 # The By-Hand Bracket
 
-For an `integration` check in a workspace whose extensions change how services start (`procedure.md`, "Integration").
-`run_checks.py integration` can't apply them; you do, around the area's integration tests. One bracket: take the lock,
+For an `integration` check in a workspace whose extensions change how services start (`check-change`, "Integration").
+`run_checks.py integration` can't apply them; the session does, around the area's integration tests. One bracket: take the lock,
 start the services, run the tests, stop the services, release the lock. It's also the procedure the user's
 `/start-local-services` and `/stop-local-services` follow.
 

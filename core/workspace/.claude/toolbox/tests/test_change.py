@@ -776,14 +776,15 @@ class SkillTextTest(unittest.TestCase):
         self.assertIn("keyless record", text)
         self.assertIn("never checks that anything ran before it", text)
 
-    def test_check_names_its_refusals_and_delegates_to_the_runner(self):
+    def test_check_names_its_refusals_and_runs_the_script_in_the_foreground(self):
         text = " ".join((SKILLS / "check-change" / "SKILL.md").read_text().split())
         self.assertIn("no change to check", text)
         self.assertIn("services lock is held", text)
-        self.assertIn("`subagent_type: check-runner`", text)
+        self.assertIn("<bin>/run_checks.py <mode>", text)
+        self.assertIn("never `run_in_background`", text)
         self.assertIn("never that an earlier stage ran", text)
-        self.assertIn("Agent", self.head("check-change")["allowed-tools"])
-        self.assertTrue((CLAUDE / "agents" / "check-runner.md").is_file())
+        self.assertNotIn("Agent", self.head("check-change")["allowed-tools"])
+        self.assertFalse((CLAUDE / "agents" / "check-runner.md").exists())
 
     def test_review_names_its_refusal_and_opens_the_review_page(self):
         text = " ".join((SKILLS / "review-change" / "SKILL.md").read_text().split())

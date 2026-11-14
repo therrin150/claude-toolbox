@@ -102,12 +102,12 @@ class RunGatesTest(unittest.TestCase):
 
     def test_same_call_from_an_agent_runs(self) -> None:
         self.gate("block_echo", BLOCK_ECHO)
-        result = self.run_gates(bash("echo blocked", agent_id="a1", agent_type="check-runner"))
+        result = self.run_gates(bash("echo blocked", agent_id="a1", agent_type="worker"))
         self.assertIsNone(self.denial(result))
 
     def test_gate_without_main_only_applies_to_agents_too(self) -> None:
         self.gate("block_echo", BLOCK_ECHO.replace("MAIN_ONLY = True", "MAIN_ONLY = False"))
-        result = self.run_gates(bash("echo blocked", agent_type="check-runner"))
+        result = self.run_gates(bash("echo blocked", agent_type="worker"))
         self.assertIsNotNone(self.denial(result))
 
     def test_broken_gate_fails_open_and_names_itself_on_stderr(self) -> None:
@@ -177,9 +177,9 @@ class RunGatesTest(unittest.TestCase):
         (stop / "star.py").write_text(
             'TOOLS = {"*"}\nMAIN_ONLY = False\ndef check(event):\n    return "stop " + event["agent_type"]\n')
         (stop / "named.py").write_text('TOOLS = {"Bash"}\nMAIN_ONLY = False\ndef check(event):\n    return "named"\n')
-        event = {"hook_event_name": "SubagentStop", "agent_type": "check-runner", "last_assistant_message": "x"}
+        event = {"hook_event_name": "SubagentStop", "agent_type": "worker", "last_assistant_message": "x"}
         out = json.loads(self.run_gates(event).stdout)
-        self.assertEqual(out, {"decision": "block", "reason": "stop check-runner"})
+        self.assertEqual(out, {"decision": "block", "reason": "stop worker"})
         (stop / "star.py").unlink()
         self.assertEqual(self.run_gates(event).stdout, "")  # a gate naming a tool never sees a tool-less event
         self.gate("star", 'TOOLS = {"*"}\nMAIN_ONLY = True\ndef check(event):\n    return "any tool"\n')

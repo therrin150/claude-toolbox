@@ -48,7 +48,7 @@ scripts folder (SKILL.md). At each `hook <id>`, follow the extension docs at tha
 
 It reads each worktree's whole change against its branch point (committed, uncommitted and untracked, without touching
 the index) and prints, per worktree, `diff` (the stops' Diff line) and `files`, and overall `areas`, the areas whose
-checks apply as `<area>=<dir>` (the ones `check-change` hands its runner), and `skipped`, the areas with changes but
+checks apply as `<area>=<dir>` (the ones `check-change` runs), and `skipped`, the areas with changes but
 none their config's `files` globs count (a doc-only change to a repo whose checks look at code). Run it again whenever a round
 changes code. Per applying area:
 
@@ -75,7 +75,7 @@ check at both stops.
    `cycles.md` step 3 says (read it, if this session hasn't). Then hook `after-implementing`, before any check.
 3. **Format and tests** (hook `format`, then hook `unit-tests`, then hook `integration-tests`): set
    `stage=testing`, then one `check-change` call for the whole bracket, as SKILL.md "## Checks" says: mode
-   `format,unit,integration` (one runner runs the formatter, then the unit tests, then the integration tests, stopping
+   `format,unit,integration` (one call runs the formatter, then the unit tests, then the integration tests, stopping
    at the first that doesn't pass), with `integration` left off when no applying area has an `integration` command or
    the workspace lacks the `services-lock` feature, and `format` left off for areas with no `format` command. Format
    comes first so the code under test is the code that gets published and an area's own format check inside `unit`

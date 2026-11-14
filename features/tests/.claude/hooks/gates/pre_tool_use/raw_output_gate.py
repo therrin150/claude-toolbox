@@ -1,7 +1,7 @@
 """The raw output gate: the main session never reads local service logs, surefire or failsafe reports, or build logs.
 
-`check-runner` reads them through `run_checks.py`, which prints the failures with their assertions and trimmed traces,
-so raw output never needs to reach the orchestrator's context. Denied in the main session:
+`run_checks.py` reads them and prints the failures with their assertions and trimmed traces, so raw output never
+needs to reach the orchestrator's context. Denied in the main session:
 
 - Read of such a file, Grep with such a path or glob, and Bash commands that read one (`cat`, `tail`, `grep`, `sed`,
   ...) on it. Listing a folder (`ls target/surefire-reports`) shows no output and passes.
@@ -10,7 +10,7 @@ so raw output never needs to reach the orchestrator's context. Denied in the mai
   `gradle`, `npm-debug`, `surefire` or `failsafe` `.log`, and any `.log` under a `target`, `build`, `logs` or `locks`
   folder.
 
-A subagent is never denied (MAIN_ONLY). The message points to `check-runner`.
+A subagent is never denied (MAIN_ONLY). The message points to `run_checks.py`.
 """
 
 from __future__ import annotations
@@ -74,7 +74,7 @@ def check(event: dict) -> str | None:
     if path is None:
         return None
     return (
-        f"`{path[:100]}` is raw build, test or service output, which stays out of the main session's context. Spawn "
-        f"`check-runner` with the mode that produced it (`build`, `unit`, `format` or `integration`): its report "
+        f"`{path[:100]}` is raw build, test or service output, which stays out of the main session's context. Run "
+        f"`<bin>/run_checks.py` with the mode that produced it (`build`, `unit`, `format` or `integration`): its JSON "
         f"already carries each failure's assertion and trimmed stack trace."
     )

@@ -1,6 +1,6 @@
 ---
 name: start-local-services
-description: The user starts a checkout's local services (the config's per-area start commands) from the main checkout or a task's worktree, under the workspace's local-services lock, and gets PIDs, ports and the lock token `stop-local-services` needs. Agents run services through `check-runner`, never this skill.
+description: The user starts a checkout's local services (the config's per-area start commands) from the main checkout or a task's worktree, under the workspace's local-services lock, and gets PIDs, ports and the lock token `stop-local-services` needs. Checks run services through `run_checks.py integration`, never this skill.
 allowed-tools: Bash(*), Read, Grep, Glob
 disable-model-invocation: true
 ---
@@ -11,10 +11,10 @@ disable-model-invocation: true
 --apply` from the workspace root (its absolute path is in the toolbox-config rule). If it lists docs, read each and
 apply them at this skill's hooks ("Extension Points" below) as its `apply` text says.
 
-Every run holds the lock (`.claude/toolbox/agents/check-runner/bracket.md`, section 1) from before the first service
-starts until `stop-local-services` stops them, so two sessions never run the same services at once. A `check-runner`
-agent follows this procedure too, for an `integration` check in a workspace whose extensions change how services start;
-it has no Skill tool, so wherever this skill says `stop-local-services`, it stops as `bracket.md` section 4 says. The
+Every run holds the lock (`.claude/toolbox/references/services-bracket.md`, section 1) from before the first service
+starts until `stop-local-services` stops them, so two sessions never run the same services at once. `run_checks.py
+integration` follows this procedure too; a session runs the by-hand bracket (`services-bracket.md`) instead for an
+`integration` check in a workspace whose extensions change how services start. The
 commands to run are the config's, per area: `workspace.areas.<area>.start` and `.stop` (the `"*"` area's when an area
 has none). A workspace whose services start some other way replaces hook `start-the-services` in an extension; the lock
 steps around it stay.
@@ -43,7 +43,7 @@ steps around it stay.
   In a `single` workspace, the named area, or else every area with a `start` command (`toolbox.py config show
   workspace.areas`). An area's directory is its folder under the checkout: its `dir` when the config sets one (`.` is
   the checkout itself), else the folder named for it.
-- **Lock name**: as in `.claude/toolbox/agents/check-runner/bracket.md` ("The Lock").
+- **Lock name**: as in `.claude/toolbox/references/services-bracket.md` ("The Lock").
 
 If no area has a `start` command, report that `workspace.areas.<area>.start` isn't configured and stop, unless an
 extension replaces hook `start-the-services`: then the areas need no `start` command.
@@ -56,7 +56,7 @@ dependency that must not be a snapshot) in an extension. A failed check stops th
 ### Take the lock
 
 `.claude/toolbox/bin/services_lock.py acquire [name] --task <work id> --worktree <checkout> --ports <ports>`. Keep the
-`token`. If it is held, wait as `.claude/toolbox/agents/check-runner/bracket.md` describes ("Wait"), except that you
+`token`. If it is held, wait as `.claude/toolbox/references/services-bracket.md` describes ("Wait"), except that you
 may instead run the wait in the background (`run_in_background`) and end your turn, and after 45 minutes you tell the
 user whose lock it is (`owner`: task, worktree, expiry) rather than returning `blocked`. Start nothing until you hold
 it. Once you hold it, the clock is running: don't stop for the user until `stop-local-services` has released it.
