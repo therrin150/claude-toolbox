@@ -36,7 +36,7 @@ RULE_PATH = Path(".claude/rules/toolbox-config.md")
 TOOLBOX_PATH = Path(".claude/toolbox")
 ENV_WORKSPACE = "TOOLBOX_WORKSPACE"
 
-AREA_COMMANDS = ("build", "format", "unit", "integration", "start", "stop")
+AREA_COMMANDS = ("build", "format", "unit", "integration", "start", "stop", "prepare")
 ANY_AREA = "*"
 BRANCH_FIELDS = ("handle", "key", "slug")
 KEY_PREFIX = re.compile(r"^[A-Z][A-Z0-9]*$")

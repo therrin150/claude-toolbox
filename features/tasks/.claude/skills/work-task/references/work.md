@@ -73,31 +73,31 @@ check at both stops.
 2. **Implement** the change in the worktrees, following the workspace's rules, including anything carried from another
    in-flight task (`other-tasks.md`). In a consumers cycle, first pick up the release in each consumer worktree, as
    `cycles.md` step 3 says (read it, if this session hasn't). Then hook `after-implementing`, before any check.
-3. **Format** (hook `format`) every applying area that has a `format` command, before the first test run, so the
-   tests, `/code-review`, the verifier and the user all see formatted code: `check-change` in `format` mode, as SKILL.md
-   "## Checks" says. A formatter that rewrites whole files brings unrelated
-   lines into the diff; that's accepted. A failure (the formatter couldn't parse a file) is an attempt: fix and run it
-   again. It runs again on the areas touched by every later fix.
-4. **Unit tests** (hook `unit-tests`): set `stage=testing`, then `check-change` in `unit` mode, as SKILL.md
-   "## Checks" says (it covers every applying area), and end the turn until it wakes you.
-   Fix and re-run the failing areas only; at most three attempts per area, then STOP. After a fix, format again before
-   the re-run.
-5. **Integration tests** (hook `integration-tests`), for each applying area with an `integration` command, when the
-   workspace has the `services-lock` feature. First hook `before-integration-tests`: by default nothing to check
-   beyond what `start-local-services` checks itself. When a check an extension adds there fails (a network that must
-   be up, say), STOP and ask the user to fix it, and run `check-change` when they say it's done.
-
-   Run the bracket as SKILL.md "## Checks" says: `check-change` in `integration` mode, never by hand.
-6. **Review:** `/code-review` on the cycle's change (hook `code-review`), then the `verify-change` skill with the Skill
+3. **Format and tests** (hook `format`, then hook `unit-tests`, then hook `integration-tests`): set
+   `stage=testing`, then one `check-change` call for the whole bracket, as SKILL.md "## Checks" says: mode
+   `format,unit,integration` (one runner runs the formatter, then the unit tests, then the integration tests, stopping
+   at the first that doesn't pass), with `integration` left off when no applying area has an `integration` command or
+   the workspace lacks the `services-lock` feature, and `format` left off for areas with no `format` command. Format
+   comes first so the code under test is the code that gets published and an area's own format check inside `unit`
+   passes; a formatter that rewrites whole files brings unrelated lines into the diff, which is accepted. First hook
+   `before-integration-tests`: by default nothing to check beyond what `start-local-services` checks itself; when a
+   check an extension adds there fails (a network that must be up, say), STOP and ask the user to fix it.
+   Fix and re-run the failing areas and modes only, again as `format,unit[,integration]` so a fix is formatted before
+   it is tested; at most three attempts per area, then STOP. A `blocked` check (a port held outside the lock, a
+   container runtime that is down, a lock held elsewhere) is never skipped or passed over as "not verified": it is a
+   STOP (SKILL.md "## Checks").
+4. **Review:** `/code-review` on the cycle's change (hook `code-review`), then the `verify-change` skill with the Skill
    tool, args `<work id> <worktree>...` (hook `verify`), then the checks extensions add beside them (hook
-   `review-checks`). Sort every finding from all of them into one of three groups before changing anything:
+   `review-checks`). `/code-review` looks for bugs in the diff; `verify-change` is the one that judges the change
+   against the task's requirement, so neither replaces the other. Sort every finding from all of them into one of three groups before changing anything:
     - **Fix:** clearly right, inside the task's scope, and no behavior change beyond what the task asks for.
     - **Decline:** clearly wrong or not applicable (a false positive, already handled, outside the code changed, a bump
       of a dependency the config's `verify.ignore_bumps` names). You must be able to say why in one line.
     - **Ask:** anything else. If you hesitate at all (scope, judgment, a behavior change, a "probably"), it goes here.
+      With `--unattended`, decide it yourself and log the call (`unattended.md`).
 
-   Apply the **Fix** group together, format the touched areas, and re-run their unit tests (step 4) and, when a fix
-   reaches integration-tested code, the integration tests (step 5, run as SKILL.md "## Checks" says), so the rebuild
-   happens once. Don't stop for the **Ask** group: it becomes stop 1's Decisions, next to the code it's about. Never
-   decline a finding silently: declined ones appear on stop 1's `Declined` line.
-7. **Stop 1:** read `code-review.md` and follow it. Nothing is drafted yet.
+   Apply the **Fix** group together and re-run the bracket for the areas it touches (step 3, `format,unit[,integration]`) so the rebuild happens
+   once, and so the code the user reviews is formatted and tested as it will be published. Don't stop for the **Ask** group: it becomes stop 1's Decisions, next to the code it's about. Never decline a
+   finding silently: declined ones appear on stop 1's `Declined` line.
+5. **Stop 1:** read `code-review.md` and follow it. Nothing is drafted yet. With `--unattended`, there is no stop 1 or
+   stop 2: read `unattended.md` instead.

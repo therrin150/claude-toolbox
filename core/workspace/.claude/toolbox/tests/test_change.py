@@ -198,6 +198,34 @@ class SingleStage(Stage):
         self.assertTrue(self.change("check", "fix-shelf-rounding", "integration")["ok"])
 
 
+    def configure_prepare(self, command):
+        path = self.root / ".claude" / "toolbox.local.yml"
+        raw = yaml.safe_load(path.read_text())
+        raw["workspace"]["areas"]["app"]["prepare"] = command
+        path.write_text(yaml.safe_dump(raw))
+
+    def test_integration_check_runs_the_areas_prepare_command_in_the_worktree_first(self):
+        self.configure_prepare("touch prepared.txt")
+        self.change("start", "--summary", "Fix Shelf Rounding")
+        tree = self.root / ".worktrees" / "fix-shelf-rounding"
+        (tree / "app" / "src" / "Shelf.java").write_text("class Shelf { int c; }\n")
+        out = self.change("check", "fix-shelf-rounding", "unit,integration")
+        self.assertTrue((tree / "app" / "prepared.txt").exists())
+        self.assertEqual([p["status"] for p in out["prepared"]], ["ok"])
+        (tree / "app" / "prepared.txt").unlink()
+        self.change("check", "fix-shelf-rounding", "unit")  # unit alone prepares nothing
+        self.assertFalse((tree / "app" / "prepared.txt").exists())
+        self.assertEqual(self.change("prepare", "fix-shelf-rounding")["prepared"][0]["area"], "app")
+
+    def test_a_failing_prepare_refuses_the_integration_check_with_its_output(self):
+        self.configure_prepare("echo Docker is not running >&2; exit 1")
+        self.change("start", "--summary", "Fix Shelf Rounding")
+        (self.root / ".worktrees" / "fix-shelf-rounding" / "app" / "src" / "Shelf.java").write_text("class Shelf { int c; }\n")
+        out = self.change("check", "fix-shelf-rounding", "integration", code=1)
+        self.assertIn("Docker is not running", out["refused"])
+        self.assertEqual(self.change("prepare", "fix-shelf-rounding", code=1)["prepared"][0]["status"], "failed")
+
+
 class NestedStage(Stage):
     def setUp(self):
         super().setUp()

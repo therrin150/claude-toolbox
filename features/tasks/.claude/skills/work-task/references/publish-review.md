@@ -68,7 +68,7 @@ Check first that the task is still this session's (`hand-off.md`, step 2), then:
   and present stop 2 again.
 - **A code change:** say in one line that it goes back through the checks and both stops, set `status=in-progress
   owner=claude stage=implementing`, and go back to `work.md`'s "Each Cycle" step 2 (Implement) for the affected areas,
-  then on through format, unit tests, integration tests, `/code-review` and the verifier, stop 1 and stop 2 with fresh
+  then on through format, unit and integration tests, `/code-review` and the verifier, stop 1 and stop 2 with fresh
   drafts. The review id and its comments carry over, so stop 1 shows the earlier threads.
 - **Approval,** with nothing `Pending`: read `merge.md` and publish.
 - **Approval with something `Pending`:** nothing publishes until it's out (`other-tasks.md`, "Needs a

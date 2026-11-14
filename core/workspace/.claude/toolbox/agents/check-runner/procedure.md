@@ -5,6 +5,10 @@ What `check-runner` does for one spawn. The script does the running and the extr
 
 ## Run the Check
 
+The prompt's **mode** may be several, comma-separated (`unit,integration`): run them in that order, each as its own
+`run_checks.py` call below, and stop at the first that is not `pass`, leaving the later ones out of the report (`not run`).
+One report covers them all: a `mode` line and result block per mode run.
+
 ```bash
 <bin>/run_checks.py <mode> <area=dir>... [--test <test>] [--skip-tests] [--task <work id>] \
   [--ports <p1,p2>] [--health-url <url>]...
@@ -26,7 +30,9 @@ Judge these, from the JSON's `reason`, `build_errors`, `problem` and `tail` alon
 - **A Spring context that won't start, a missing property, an exception before any test:** `fail` with the exception
   line, when it is the checkout's code or config.
 - **A port already in use, or a service that fails the same way twice with nothing in the checkout to blame:**
-  `blocked`. The script never kills what holds a port, and neither do you.
+  `blocked`. The script never kills what holds a port, and neither do you. Name the port and who holds it in
+  `notes` (`lsof -nP -iTCP:<port> -sTCP:LISTEN`, or `docker ps --filter publish=<port> --format '{{.Names}}'`; read-only,
+  one call each). The caller must STOP on it: never describe it as skippable.
 - **A run that ran no tests, or an area with no command:** the script says `fail` or `skipped`; keep its word. A run
   that never reached its tests is never a pass.
 - **Anything you don't understand:** `blocked` with what you saw. A guess isn't an answer.

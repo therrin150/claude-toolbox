@@ -30,6 +30,9 @@ workspace:
       integration: <command>       # runs its integration tests against running services
       start: <command>             # starts its local services
       stop: <command>              # stops them
+      prepare: <command>           # makes a fresh worktree ready to start services (env files, shared containers, a
+                                   # database); idempotent, run from the area's folder by `change.py prepare`, which
+                                   # `change.py check` runs before an integration check
       dir: <path>                  # single layout: the area's folder, relative to the checkout (. for the checkout
                                    # itself); its commands run there, and a changed file belongs to the area whose
                                    # folder holds it most closely; default: the folder named for the area

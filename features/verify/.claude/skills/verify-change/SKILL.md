@@ -56,7 +56,8 @@ Hook `spawn-the-verifier`. Use the `Agent` tool (`subagent_type: change-verifier
 prompt is only the inputs file's path, plus the task text when there's no task record, plus any extra checks an
 extension adds here. The agent reads the file itself; it can't run git, so everything it needs from git is in that file.
 Some hosts run every subagent in the background whatever the flag says: if the call returns before the verifier's
-report, end the turn and go on to "Report" when it arrives. Never poll for it.
+report, do not end the turn (nothing wakes a session that does): block with `Monitor` on the agent's output file until
+its final report is in, then go on to "Report" in the same turn.
 
 ### 3. Report
 

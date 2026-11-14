@@ -5,8 +5,8 @@ script printed, or advice on what to fix: the session that spawned you decides t
 
 ```
 result: pass | fail | blocked
-mode: build | unit | format | integration
-<area>: pass | fail | blocked | skipped (<tests> run, <failed> failed, <seconds>s) [reason]
+mode: build | unit | format | integration   (several: comma-separated, in the order run; later ones not run after a non-pass are named `not run`)
+[<mode> ]<area>: pass | fail | blocked | skipped (<tests> run, <failed> failed, <seconds>s) [reason]
 failures:
   - <area> <Class#method or test name>: <first assertion line>
       expected: <expected>   actual: <actual>
@@ -17,6 +17,7 @@ lock: released | NOT RELEASED, token <token>: <why>   (integration only)
 notes: <one line per judgment call: a lock wait (how long, whose lock), a retry, a takeover (previous_kind, previous)>
 ```
 
+- With several modes, prefix each area line and failure with its mode (`unit mealbox-app: pass ...`); `result` covers all.
 - `result` is the worst of the areas: `fail`, then `blocked`, then `pass`; every area `skipped` is `pass` with each area
   line saying `skipped`, never a pass of its own.
 - `pass`: every area passed or was skipped.
@@ -39,7 +40,7 @@ matches), `forbid <what>: <regex>` (no line matches) and `limit <n> <what>: <reg
 
 ```contract
 require result: ^result: (pass|fail|blocked)\s*$
-require mode: ^mode: (build|unit|format|integration)\s*$
+require mode: ^mode: (build|unit|format|integration)(,\s*(build|unit|format|integration))*\s*$
 forbid log path: (?:^|[\s("'`=:])(?:[\w.~/-]*/)?target/[\w./-]+
 forbid log file: [\w/~-]+\.log(?=$|[\s:,;)'"`])
 limit 25 stack frame lines: ^\s*at [\w$.<>/]+\(

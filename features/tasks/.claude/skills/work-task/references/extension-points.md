@@ -16,9 +16,9 @@ headings freely, never an id. A default in a phase file is the text at the hook.
 | `plan-the-cycles` | `work.md` "Before the First Cycle", step 6 | that step, and `cycles.md` for a shared library | add, replace |
 | `after-implementing` | `work.md` "Each Cycle", after step 2, before format and tests | nothing | add |
 | `format` | `work.md` "Each Cycle", step 3 | `check-change` in `format` mode (SKILL.md "Checks") | add, skip |
-| `unit-tests` | `work.md` "Each Cycle", step 4 | `check-change` in `unit` mode (SKILL.md "Checks") | add, skip |
-| `before-integration-tests` | `work.md` "Each Cycle", step 5, before the first `check-change` run | nothing beyond `start-local-services`' own checks | add |
-| `integration-tests` | `work.md` "Each Cycle", step 5 | `check-change` in `integration` mode (SKILL.md "Checks") | add, skip |
+| `unit-tests` | `work.md` "Each Cycle", step 3 | `check-change` in `unit` (or `unit,integration`) mode (SKILL.md "Checks") | add, skip |
+| `before-integration-tests` | `work.md` "Each Cycle", step 3, before the first `check-change` run | nothing beyond `start-local-services`' own checks | add |
+| `integration-tests` | `work.md` "Each Cycle", step 3 | `check-change` in `integration` (or `unit,integration`) mode (SKILL.md "Checks") | add, skip |
 | `blocked-bracket` | SKILL.md "Checks": a `blocked` result, or a refusal for a lock held elsewhere | that bullet's `blocked` text | add, replace |
 | `code-review` | `work.md` "Each Cycle", step 6 | `/code-review` | add, skip |
 | `verify` | `work.md` "Each Cycle", step 6 | `verify-change` | add, skip |

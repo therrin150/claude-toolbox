@@ -92,7 +92,7 @@ Check first that the task is still this session's (`hand-off.md`, step 2), then:
 
 | Event | Do |
 |---|---|
-| `submitted` | `<review> read <work id>`. Per comment, change the code or answer. If code changed: format the touched areas and run their unit tests only (`check-change` in `unit` mode, as SKILL.md "## Checks" says; a failure is an attempt, three then STOP). Then reply on each thread with what changed and the test result (`<review> reply`; never resolve a thread, the user does). One line per comment in chat. Then start the waiter again, with a fresh hand-off time, and end with the short hand-off block |
+| `submitted` | `<review> read <work id>`. Per comment, change the code or answer. If code changed: run the touched areas' `format,unit` (`check-change`, as SKILL.md "## Checks" says; a failure is an attempt, three then STOP). Then reply on each thread with what changed and the test result (`<review> reply`; never resolve a thread, the user does). One line per comment in chat. Then start the waiter again, with a fresh hand-off time, and end with the short hand-off block |
 | The user answers in chat | `TaskStop` the waiter, apply the answer like a comment, reply on the matching threads, start the waiter again |
 | `done`, or "looks good" in chat | Answer any comment left (as `submitted`); ask in chat about any decision still unanswered (`<review> read <work id> --all --peek`: a thread "opened by Claude" with no reply) and wait for the answer, applied like a comment; then "Close Out the Review" |
 | `closed` | The review was already closed with nothing unread (a session resumed after "Done reviewing" that an earlier session had read): go on to "Close Out the Review" |
@@ -111,12 +111,13 @@ so the deadline moves with it).
 
 Reached on "Done reviewing" or "looks good". Nothing here commits, pushes or publishes: drafting isn't a git write.
 
-1. **Format** the areas changed since the last run (`work.md` step 3). A no-op when nothing changed; if it changed a
-   file, re-run that area's unit tests.
-2. **Integration tests**, as SKILL.md "## Checks" says (`check-change` in `integration` mode, never a bracket by
+1. **Integration tests**, as SKILL.md "## Checks" says (`check-change` in `integration` mode, never a bracket by
    hand), for each area that has them and whose code changed since its last pass, once, for all the rounds together; skip when none
-   did. A failure is an attempt (three, then STOP); fix, format, re-run the unit tests, then the integration tests
-   again.
+   did. A failure is an attempt (three, then STOP); fix, re-run `format,unit`, then the integration tests again. A
+   `blocked` result is a STOP, never a skip.
+2. **Format** is already part of every `format,unit` run, so nothing separate is left; confirm the last run's report
+   shows `format` passed on the code as it stands, and run `check-change` in `format` mode only for an area changed
+   since (a no-op when nothing changed; if it changed a file, re-run that area's unit tests).
 3. **Draft:** run the `publish-change` skill with the Skill tool, args `<work id> --draft-only`. It gates the publish
    (a checkout on the default branch, or a task with no diff, is refused: STOP), drafts each message and, when the
    config has `pr.announce` and `pr.required`, the announcement through `git-draft-commit-message`, and saves them in

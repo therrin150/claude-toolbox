@@ -15,11 +15,19 @@ exit 0 when it went ahead, 1 when it refused or failed (the reason prints as `re
       --repos is required in a nested workspace; --desc is required for a record with a key. A record still `todo`
       becomes `in-progress`, stage `implementing`, owner `claude`, once a worktree exists.
 
-  check <work id> <build|unit|format|integration>
+  check <work id> <mode>[,<mode>...]   (modes: build, unit, format, integration)
       The areas to hand a `check-runner`, from the task's worktrees (as worktrees.py changes). Refuses when there is
       no change to check: no worktree, no changed file, or changes only in areas whose `files` globs the checks
       ignore. For integration, also refuses while the services lock is held, by another task or this change's own
-      earlier run (the runner would be blocked either way; an expired lock is taken over by the run), naming the holder. Runs nothing itself.
+      earlier run (the runner would be blocked either way; an expired lock is taken over by the run), naming the holder, and
+      for integration runs each area's `prepare` command first (below), refusing when one fails.
+      Several modes (`unit,integration`) are one run by one runner, in that order. Runs nothing itself.
+
+  prepare <work id>
+      Runs each area's `prepare` command (config) in the task's worktrees, from the area's folder, so a fresh worktree
+      can start its services: env files, shared containers, a database. Commands must be idempotent. Prints each
+      area's `status` (ok or failed) with the last output lines of a failure, and exits 1 when one failed; the session
+      never works out the prep by hand. `check` runs it by itself before an integration check.
 
   review (<work id> | --checkouts a,b)
       The checkouts to hand `local-review-ui`. Refuses when there is nothing to review: no worktree, or no changed file
@@ -68,6 +76,14 @@ from gitgh import Failed  # noqa: E402
 
 OK, REFUSED, USAGE = 0, 1, 2
 MODES = ("build", "unit", "format", "integration")
+
+
+def modes(text: str) -> str:
+    """`unit` or `unit,integration`: every part a mode, none twice."""
+    parts = text.split(",")
+    if not all(part in MODES for part in parts) or len(set(parts)) != len(parts):
+        raise argparse.ArgumentTypeError(f"{text!r}: use modes from {', '.join(MODES)}, comma-separated, each once")
+    return text
 
 
 class Refused(Exception):
@@ -165,6 +181,36 @@ def hint(lock: dict, wid: str) -> str:
     return "wait for it or ask the user"
 
 
+PREPARE_TIMEOUT = 900
+
+
+def prepare(cfg: config.Config, wid: str) -> dict:
+    """Run every area's `prepare` command in the task's worktrees; ok is False when one failed."""
+    gitgh.check_work_id(wid)
+    checkouts = gitgh.task_worktrees(cfg, wid)
+    if not checkouts:
+        raise Refused(f"no change to prepare: {wid} has no worktree under {cfg.worktrees_dir}")
+    results = []
+    for co in checkouts:
+        for area in ([co.name] if cfg.nested else cfg.areas()):
+            command = cfg.command(area, "prepare")
+            if not command:
+                continue
+            folder = co.path if cfg.nested else co.path / cfg.area_dir(area)
+            entry = {"repo": co.name, "area": area, "dir": str(folder), "command": command}
+            try:
+                proc = subprocess.run(command, shell=True, cwd=folder, capture_output=True, text=True,
+                                      timeout=PREPARE_TIMEOUT)
+                lines = (proc.stdout + proc.stderr).strip().splitlines()
+                entry |= {"status": "ok" if proc.returncode == 0 else "failed", "exit": proc.returncode}
+                if proc.returncode:
+                    entry["output"] = lines[-15:]
+            except subprocess.TimeoutExpired:
+                entry |= {"status": "failed", "output": [f"timed out after {PREPARE_TIMEOUT}s"]}
+            results.append(entry)
+    return {"ok": all(r["status"] == "ok" for r in results), "work_id": wid, "prepared": results}
+
+
 def check(cfg: config.Config, wid: str, mode: str) -> dict:
     gitgh.check_work_id(wid)
     if not gitgh.task_worktrees(cfg, wid):
@@ -175,11 +221,20 @@ def check(cfg: config.Config, wid: str, mode: str) -> dict:
     if not found["areas"]:
         names = ", ".join(sorted({s["area"] for s in found["skipped"]})) or "none"
         raise Refused(f"no change to check: {wid}'s changes touch nothing an area's checks look at (skipped: {names})")
-    if mode == "integration":
+    if "integration" in mode.split(","):
         names = sorted({area.split("=", 1)[0] for area in found["areas"]}) if cfg.nested else [cfg.name]
         for lock in held_locks(names):
             raise Refused(f"the services lock {lock['name']} is held by {holder(lock)}; {hint(lock, wid)}")
-    return {"ok": True, "work_id": wid, "mode": mode, "areas": found["areas"], "skipped": found["skipped"],
+    prepared = []
+    if "integration" in mode.split(","):
+        done = prepare(cfg, wid)
+        prepared = done["prepared"]
+        if not done["ok"]:
+            bad = next(r for r in prepared if r["status"] == "failed")
+            raise Refused(f"preparing {bad['area']} failed ({bad['command']}): {' | '.join(bad.get('output', [])[-5:])}; "
+                          "a STOP: the user fixes it (Docker down, a missing env file), then the check runs again")
+    return {"ok": True, "work_id": wid, "mode": mode, "prepared": prepared, "areas": found["areas"],
+            "skipped": found["skipped"],
             "checkouts": [{"repo": co["repo"], "path": co["path"], "diff": co["diff"]} for co in found["checkouts"]],
             "bin": str(HERE)}
 
@@ -318,7 +373,9 @@ def parser() -> argparse.ArgumentParser:
     sub.add_argument("--desc", help="kebab-case description for the branch name")
     sub = commands.add_parser("check")
     sub.add_argument("id", help="work id")
-    sub.add_argument("mode", choices=MODES)
+    sub.add_argument("mode", type=modes, help="one mode, or several comma-separated (unit,integration), run in order")
+    sub = commands.add_parser("prepare")
+    sub.add_argument("id", help="work id")
     sub = commands.add_parser("review")
     sub.add_argument("id", nargs="?", help="work id")
     sub.add_argument("--checkouts", help="comma-separated repo names or paths, instead of the work id's worktrees")
@@ -340,6 +397,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "start":
             out = start(cfg, records.Store(cfg), args)
             code = REFUSED if any(r["status"] in ("refused", "failed") for r in out["results"]) else OK
+        elif args.command == "prepare":
+            out = prepare(cfg, args.id)
+            code = OK if out["ok"] else REFUSED
         elif args.command == "review":
             out, code = review(cfg, args.id, args.checkouts), OK
         elif args.command == "publish":

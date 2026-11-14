@@ -32,6 +32,7 @@ from the record in a small session instead of rebuilding a large one.
 /work-task <KEY | draft path | plan.md path>
 /work-task <KEY> --limited-scope <instructions>
 /work-task <work id>          # a resume
+/work-task <KEY> --unattended # no stops: the user approved publishing in advance (`references/unattended.md`)
 ```
 
 A user who opens a session with "work ABC-12" or "implement ABC-12" (the `session-types` rule) has given the same
@@ -47,6 +48,10 @@ arguments in words: take the key, draft or plan path from their message and star
   a `## Scope` section (Setup, step 2). Only the flag limits the scope: instructions or approvals given with a key and
   no flag never narrow it. A bare key names the ticket's own record, which covers whatever the done slices haven't.
   A slice resumes by its work id (`/work-task ABC-12.2`).
+
+- **`--unattended`:** the user is away and has approved, in advance and in this invocation, skipping both review stops
+  and committing and pushing once the checks and reviews pass. Only the flag (or the user's words saying so) grants
+  it; a task resumed without it keeps its stops. It changes who decides, not what is checked: `unattended.md`.
 
 One task per session. Parallel tasks are parallel sessions, each launched at the workspace root, never inside a
 worktree (the workspace's skills and rules load only from there). `work-tasks` launches a batch.
@@ -67,8 +72,11 @@ worktree (the workspace's skills and rules load only from there). `work-tasks` l
   task that isn't done, or a dependency found in the code, never holds it up: overlaps settle at merge time like any
   conflict (`references/other-tasks.md`). With `block`, it is a STOP. Either way, a release that doesn't exist yet
   can't be isolated away (`other-tasks.md`, "Needs a Release").
-- **Waiting.** Never poll or sleep in the conversation. Long runs go in the background and wake the session when they
-  exit: test runs, the review waiter (`code-review.md`), `<bin>/watch_task.py prs` once the PRs are open, and
+- **Waiting.** Never poll or sleep in the conversation, and never end a turn while a check or the verifier is still
+  running: nothing wakes a session that does. The runners (`check-change`, `verify-change`) run in the foreground and
+  their report returns in the same turn; if the host backgrounds one anyway, block on its output with `Monitor` until
+  the report is in, then go on in that turn. Only waits on someone else end the turn and wake the session when they
+  exit: the review waiter (`code-review.md`), `<bin>/watch_task.py prs` once the PRs are open, and
   `<bin>/watch_task.py pipeline` for a shared library's release (`merge.md`). Nothing else watches GitHub or CI.
 - **The tracker.** A `tasks.py set` that prints a non-null `write_back` moves the Jira issue too: follow
   `.claude/toolbox/references/jira-write-back.md` (a `jira-creator` spawn; the main session never writes to Jira).
@@ -93,6 +101,16 @@ STOP (record it, notify, explain in a few lines, wait) when:
 - a `depends_on` task isn't done and the config's `work.dependencies` is `block`;
 - the task is `in-progress` at `implementing` or `testing` and another session started it (ask whether to take over);
 - a third attempt of a check fails in any area;
+- an integration check is `blocked` (a port held by another project's containers or process, a container runtime that
+  is down, a services lock held elsewhere, a missing `start` command): the testing bracket is never skipped, and the
+  task is never advanced "unverified". Name the port and its holder from the runner's `notes`; the user clears it, and
+  on their word the same check runs again. With `--unattended` too: it is a STOP, and the session ends its turn
+  there with the task recorded as stopped;
+- an integration check is `blocked` (a port held by another project's containers or process, a container runtime that
+  is down, a services lock held elsewhere, a missing `start` command): the testing bracket is never skipped, and the
+  task is never advanced "unverified". Name the port and its holder from the runner's `notes`; the user clears it, and
+  on their word the same check runs again. With `--unattended` too: it is a STOP, and the session ends its turn
+  there with the task recorded as stopped;
 - testing would need an unreleased build of a shared library against local services (Ground Rules);
 - a lock, worktree, git, publish or watcher step reports something unexpected (`not-owner`, `refused`, `failed`,
   conflicts) that its skill or script says to report, and a stage skill refuses for a reason its phase file doesn't
@@ -144,6 +162,9 @@ are, so a resume lands back here. On the user's answer, log it (`tasks.py log <w
 
 ## Dispatch
 
+With `--unattended` (or a record whose `work_note` says it runs unattended), `references/unattended.md` replaces the
+two review rows below and `merge.md` follows its publish.
+
 | `status`, `stage` | Read | Start at |
 |---|---|---|
 | no record before this call, or `todo` | `references/work.md` | the beginning |
@@ -173,7 +194,7 @@ cycles, the attempt counts and the waits.
 |---|---|---|---|
 | Start | `start-change <work id> [--repos <a,b>] [--desc <kebab-desc>]` | `work.md` "Each Cycle", step 1 | worktrees added; `in-progress`, `implementing` |
 | Implement | none: this session | `work.md` "Each Cycle", step 2 | |
-| Check | `check-change <work id> <mode>` | `work.md` steps 3–5, and every re-run (SKILL.md "## Checks") | `testing` (set by `work.md`) |
+| Check | `check-change <work id> <mode>` | `work.md` step 3, and every re-run (SKILL.md "## Checks") | `testing` (set by `work.md`) |
 | Review | `review-change <work id> --no-browser --resume-hint "/work-task <work id>"` | `code-review.md` | `review`, `code-review` (set by `code-review.md`) |
 | Publish | `publish-change <work id> --draft-only`, then `--approved` | `code-review.md` "Close Out the Review", then `merge.md` "Publish" | `review`, `publish-review`; `awaiting-ci` (set by `publish.py`) |
 | Finish | `finish-change <work id>` | `merge.md` "Merge" | `done` (set by its cleanup) |
@@ -195,22 +216,23 @@ stop reads this file but not `work.md`, so the delegation lives here.
   `<bin>/run_tests.py`, `<bin>/services_lock.py`, an area's `format`, `unit`, `build` or `integration` command,
   `start-local-services`, `stop-local-services` or `run-unit-tests` itself, in any phase, and never reads a build, test
   or service log.
-- **Run it** with the Skill tool, args `<work id> <mode>` (`format`, `unit`, `build` or `integration`), plus the failing
-  tests when only some need re-running, and only when `worktrees.py changes` lists areas that apply (`work.md`,
-  "Which Checks Apply"): with none, the checks are listed as skipped, not run. The skill spawns the runner in the
-  background and ends your turn; the runner's report wakes you.
+- **Run it** with the Skill tool, args `<work id> <mode>` (`format`, `unit`, `build` or `integration`, or several
+  comma-separated such as `unit,integration`, which one runner runs in order), plus the failing tests when only some
+  need re-running, and only when `worktrees.py changes` lists areas that apply (`work.md`, "Which Checks Apply"): with
+  none, the checks are listed as skipped, not run. The skill runs the runner in the foreground and the report returns
+  in the same turn; never end the turn to wait for it (Ground Rules, "Waiting").
 - **Its result** is the runner's report, `pass`, `fail` or `blocked`, with the counts and each failure's test,
   assertion, expected/actual and trimmed stack and no log path, or the skill's own refusal. Act on it:
     - `pass`: done with that area.
-    - `fail`: an attempt. Fix the code, format, re-run its unit tests, then run `check-change` again for the check that
-      failed. At most three attempts per area, then STOP.
-    - `blocked`, or a refusal because the services lock is held elsewhere: hook `blocked-bracket`. By default: not an
-      attempt. If its reason is a STOP condition or something you can't clear yourself, STOP. If it took over the
-      user's expired manual lock (`notes`), notify them and go on.
+    - `fail`: an attempt. Fix the code, then run `check-change` again for the check that failed, with `format`
+      ahead of `unit` (`format,unit[,integration]`). At most three attempts per area, then STOP.
+    - `blocked`, or a refusal because the services lock is held elsewhere: hook `blocked-bracket`. Not an attempt, and
+      never skipped or reported as "not verified": by default it is a STOP (STOP Conditions), the only exception being
+      that the runner took over the user's expired manual lock (`notes`): notify them and go on.
     - `lock: NOT RELEASED`, in any result: STOP.
     - A takeover in `notes`: notify the user that their manual lock was taken over.
 
-Which areas need which check, and the hooks around them, are in `work.md` "Which Checks Apply" and steps 3–5; the places
+Which areas need which check, and the hooks around them, are in `work.md` "Which Checks Apply" and step 3; the places
 that re-run them later (the review stops, a change after the PRs are open, a release wait) say "the Checks" and mean this
 section.
 
